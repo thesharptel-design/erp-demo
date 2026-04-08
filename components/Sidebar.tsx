@@ -12,6 +12,7 @@ type MenuItem = {
 function getMenusByRole(roleName: string): MenuItem[] {
   const commonMenus: MenuItem[] = [
     { href: '/dashboard', label: '대시보드' },
+    { href: '/approvals', label: '기안/결재' },
   ]
 
   switch (roleName) {
@@ -26,9 +27,9 @@ function getMenusByRole(roleName: string): MenuItem[] {
         { href: '/production-orders', label: '생산지시관리' },
         { href: '/inventory', label: '재고조회' },
         { href: '/inventory-transactions', label: '재고이력' },
-        { href: '/approvals', label: '기안/결재' },
         { href: '/admin/user-permissions', label: '사용자권한관리' },
       ]
+
     case 'sales':
       return [
         ...commonMenus,
@@ -37,6 +38,7 @@ function getMenusByRole(roleName: string): MenuItem[] {
         { href: '/quotes', label: '견적서관리' },
         { href: '/inventory', label: '재고조회' },
       ]
+
     case 'purchase':
       return [
         ...commonMenus,
@@ -46,6 +48,7 @@ function getMenusByRole(roleName: string): MenuItem[] {
         { href: '/inventory', label: '재고조회' },
         { href: '/inventory-transactions', label: '재고이력' },
       ]
+
     case 'production':
       return [
         ...commonMenus,
@@ -55,11 +58,10 @@ function getMenusByRole(roleName: string): MenuItem[] {
         { href: '/inventory', label: '재고조회' },
         { href: '/inventory-transactions', label: '재고이력' },
       ]
+
     case 'approval':
-      return [
-        ...commonMenus,
-        { href: '/approvals', label: '기안/결재' },
-      ]
+      return [...commonMenus]
+
     default:
       return commonMenus
   }
@@ -73,6 +75,7 @@ export default function Sidebar() {
       const currentUser = await getCurrentUserPermissions()
       setUser(currentUser)
     }
+
     loadUser()
   }, [])
 
@@ -82,8 +85,12 @@ export default function Sidebar() {
     <aside className="hidden w-64 shrink-0 border-r border-gray-200 bg-white lg:block">
       <div className="border-b border-gray-200 px-6 py-6">
         <Link href="/dashboard" className="block">
-          <h1 className="text-xl font-bold tracking-tight text-gray-900">교육용 ERP</h1>
-          <p className="mt-1 text-sm text-gray-500">부서별 업무 흐름 실습</p>
+          <h1 className="text-xl font-bold tracking-tight text-gray-900">
+            교육용 ERP
+          </h1>
+          <p className="mt-1 text-sm text-gray-500">
+            부서별 업무 흐름 실습
+          </p>
         </Link>
       </div>
 
