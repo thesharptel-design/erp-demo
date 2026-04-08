@@ -9,15 +9,25 @@ type PurchaseOrderRow = {
   status: string
   total_amount: number
   remarks: string | null
-  customers: {
-    customer_name: string
-  } | null
-  app_users: {
-    user_name: string
-  } | null
+  customers:
+    | {
+        customer_name: string
+      }
+    | {
+        customer_name: string
+      }[]
+    | null
+  app_users:
+    | {
+        user_name: string
+      }
+    | {
+        user_name: string
+      }[]
+    | null
 }
 
-async function getPurchaseOrders() {
+async function getPurchaseOrders(): Promise<PurchaseOrderRow[]> {
   const { data, error } = await supabase
     .from('purchase_orders')
     .select(`
@@ -41,7 +51,27 @@ async function getPurchaseOrders() {
     return []
   }
 
-  return (data as PurchaseOrderRow[]) ?? []
+  return ((data ?? []) as unknown[]) as PurchaseOrderRow[]
+}
+
+function getCustomerName(
+  customers: PurchaseOrderRow['customers']
+) {
+  if (!customers) return '-'
+  if (Array.isArray(customers)) {
+    return customers[0]?.customer_name ?? '-'
+  }
+  return customers.customer_name ?? '-'
+}
+
+function getUserName(
+  appUsers: PurchaseOrderRow['app_users']
+) {
+  if (!appUsers) return '-'
+  if (Array.isArray(appUsers)) {
+    return appUsers[0]?.user_name ?? '-'
+  }
+  return appUsers.user_name ?? '-'
 }
 
 function getStatusLabel(status: string) {
@@ -127,10 +157,10 @@ export default async function PurchaseOrdersPage() {
                   </td>
                   <td className="px-5 py-4">{purchaseOrder.po_date}</td>
                   <td className="px-5 py-4">
-                    {purchaseOrder.customers?.customer_name ?? '-'}
+                    {getCustomerName(purchaseOrder.customers)}
                   </td>
                   <td className="px-5 py-4">
-                    {purchaseOrder.app_users?.user_name ?? '-'}
+                    {getUserName(purchaseOrder.app_users)}
                   </td>
                   <td className="px-5 py-4">
                     <span className={getStatusStyle(purchaseOrder.status)}>

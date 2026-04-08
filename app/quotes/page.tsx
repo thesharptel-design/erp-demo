@@ -9,15 +9,25 @@ type QuoteRow = {
   status: string
   total_amount: number
   remarks: string | null
-  customers: {
-    customer_name: string
-  } | null
-  app_users: {
-    user_name: string
-  } | null
+  customers:
+    | {
+        customer_name: string
+      }
+    | {
+        customer_name: string
+      }[]
+    | null
+  app_users:
+    | {
+        user_name: string
+      }
+    | {
+        user_name: string
+      }[]
+    | null
 }
 
-async function getQuotes() {
+async function getQuotes(): Promise<QuoteRow[]> {
   const { data, error } = await supabase
     .from('quotes')
     .select(`
@@ -41,7 +51,23 @@ async function getQuotes() {
     return []
   }
 
-  return (data as QuoteRow[]) ?? []
+  return ((data ?? []) as unknown[]) as QuoteRow[]
+}
+
+function getCustomerName(customers: QuoteRow['customers']) {
+  if (!customers) return '-'
+  if (Array.isArray(customers)) {
+    return customers[0]?.customer_name ?? '-'
+  }
+  return customers.customer_name ?? '-'
+}
+
+function getUserName(appUsers: QuoteRow['app_users']) {
+  if (!appUsers) return '-'
+  if (Array.isArray(appUsers)) {
+    return appUsers[0]?.user_name ?? '-'
+  }
+  return appUsers.user_name ?? '-'
 }
 
 function getStatusLabel(status: string) {
@@ -122,8 +148,8 @@ export default async function QuotesPage() {
                     </Link>
                   </td>
                   <td className="px-5 py-4">{quote.quote_date}</td>
-                  <td className="px-5 py-4">{quote.customers?.customer_name ?? '-'}</td>
-                  <td className="px-5 py-4">{quote.app_users?.user_name ?? '-'}</td>
+                  <td className="px-5 py-4">{getCustomerName(quote.customers)}</td>
+                  <td className="px-5 py-4">{getUserName(quote.app_users)}</td>
                   <td className="px-5 py-4">
                     <span className={getStatusStyle(quote.status)}>
                       {getStatusLabel(quote.status)}
