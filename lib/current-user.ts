@@ -1,0 +1,1 @@
+export const CURRENT_LOGIN_ID = 'admin'

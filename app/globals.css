@@ -1,0 +1,311 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ===== ERP UI Common ===== */
+
+.erp-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.erp-page-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+@media (min-width: 640px) {
+  .erp-page-header-row {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+}
+
+.erp-page-title {
+  font-size: 1.875rem;
+  line-height: 2.25rem;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  color: rgb(17 24 39);
+}
+
+.erp-page-desc {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: rgb(107 114 128);
+}
+
+.erp-back-link {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: rgb(107 114 128);
+}
+
+.erp-back-link:hover {
+  color: rgb(55 65 81);
+}
+
+.erp-card {
+  overflow: hidden;
+  border-radius: 1rem;
+  border: 1px solid rgb(229 231 235);
+  background: white;
+  padding: 1.5rem;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+
+.erp-card-title {
+  margin-bottom: 1rem;
+  font-size: 1.25rem;
+  line-height: 1.75rem;
+  font-weight: 600;
+  color: rgb(17 24 39);
+}
+
+.erp-info-bar {
+  margin-bottom: 1rem;
+  border-radius: 0.875rem;
+  background: rgb(249 250 251);
+  padding: 0.875rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: rgb(75 85 99);
+}
+
+.erp-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+
+@media (min-width: 768px) {
+  .erp-grid-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.erp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.erp-label {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+  color: rgb(55 65 81);
+}
+
+.erp-input,
+.erp-select,
+.erp-textarea {
+  width: 100%;
+  border-radius: 0.875rem;
+  border: 1px solid rgb(209 213 219);
+  background: white;
+  padding: 0.875rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: rgb(17 24 39);
+  outline: none;
+}
+
+.erp-input:focus,
+.erp-select:focus,
+.erp-textarea:focus {
+  border-color: rgb(17 24 39);
+}
+
+.erp-input:disabled,
+.erp-select:disabled,
+.erp-textarea:disabled {
+  background: rgb(243 244 246);
+  color: rgb(107 114 128);
+}
+
+.erp-readonly-box {
+  border-radius: 0.875rem;
+  border: 1px solid rgb(229 231 235);
+  background: rgb(249 250 251);
+  padding: 0.875rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.erp-btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.erp-btn-primary,
+.erp-btn-secondary,
+.erp-btn-danger,
+.erp-btn-disabled {
+  display: inline-flex;
+  height: 2.75rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.875rem;
+  padding: 0 1rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  font-weight: 500;
+}
+
+.erp-btn-primary {
+  background: black;
+  color: white;
+}
+
+.erp-btn-primary:disabled {
+  opacity: 0.5;
+}
+
+.erp-btn-secondary {
+  border: 1px solid rgb(209 213 219);
+  background: white;
+  color: rgb(55 65 81);
+}
+
+.erp-btn-secondary:disabled {
+  opacity: 0.5;
+}
+
+.erp-btn-danger {
+  border: 1px solid rgb(252 165 165);
+  background: white;
+  color: rgb(220 38 38);
+}
+
+.erp-btn-danger:disabled {
+  opacity: 0.5;
+}
+
+.erp-alert-error,
+.erp-alert-success,
+.erp-alert-info {
+  border-radius: 0.875rem;
+  padding: 0.875rem 1rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+}
+
+.erp-alert-error {
+  background: rgb(254 242 242);
+  color: rgb(220 38 38);
+}
+
+.erp-alert-success {
+  background: rgb(240 253 244);
+  color: rgb(21 128 61);
+}
+
+.erp-alert-info {
+  background: rgb(239 246 255);
+  color: rgb(29 78 216);
+}
+
+.erp-lines-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.erp-line-card {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+  border-radius: 0.875rem;
+  border: 1px solid rgb(229 231 235);
+  padding: 1rem;
+}
+
+@media (min-width: 768px) {
+  .erp-line-card {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+.erp-total-box {
+  margin-top: 1.5rem;
+  border-radius: 0.875rem;
+  background: rgb(249 250 251);
+  padding: 0.875rem 1rem;
+  text-align: right;
+  font-size: 1.125rem;
+  line-height: 1.75rem;
+  font-weight: 600;
+  color: rgb(17 24 39);
+}
+
+/* ===== ERP Status Badge ===== */
+
+.erp-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  font-weight: 600;
+}
+
+.erp-badge-draft {
+  background: rgb(243 244 246);
+  color: rgb(55 65 81);
+}
+
+.erp-badge-progress {
+  background: rgb(219 234 254);
+  color: rgb(29 78 216);
+}
+
+.erp-badge-review {
+  background: rgb(254 249 195);
+  color: rgb(161 98 7);
+}
+
+.erp-badge-done {
+  background: rgb(220 252 231);
+  color: rgb(21 128 61);
+}
+
+.erp-badge-danger {
+  background: rgb(254 226 226);
+  color: rgb(220 38 38);
+}
+
+.erp-badge-warning {
+  background: rgb(254 243 199);
+  color: rgb(180 83 9);
+}
