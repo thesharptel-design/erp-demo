@@ -13,6 +13,7 @@ function getMenusByRole(roleName: string): MenuItem[] {
   const commonMenus: MenuItem[] = [
     { href: '/dashboard', label: '대시보드' },
     { href: '/approvals', label: '기안/결재' },
+    { href: '/qc', label :'QC관리'},
   ]
 
   switch (roleName) {

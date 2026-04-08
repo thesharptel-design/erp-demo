@@ -55,6 +55,11 @@ type InventoryRow = {
   current_qty: number
 }
 
+type QcRequestRow = {
+  id: number
+  result_status: 'pending' | 'pass' | 'fail'
+}
+
 type SupabaseErrorLike = {
   code?: string
   message: string
@@ -79,7 +84,7 @@ function getProductionOrderErrorMessage(error: SupabaseErrorLike) {
     return '네트워크 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.'
   }
 
-  return '생산지시 저장 중 오류가 발생했습니다. 다시 시도해 주세요.'
+  return '생산지시 처리 중 오류가 발생했습니다. 다시 시도해 주세요.'
 }
 
 function getStatusLabel(status: string) {
@@ -93,6 +98,18 @@ function getStatusLabel(status: string) {
     default:
       return status
   }
+}
+
+function makeQcNo() {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  const hh = String(now.getHours()).padStart(2, '0')
+  const mm = String(now.getMinutes()).padStart(2, '0')
+  const ss = String(now.getSeconds()).padStart(2, '0')
+
+  return `QC-${y}${m}${d}-${hh}${mm}${ss}`
 }
 
 export default function ProductionOrderDetailPage({
@@ -122,8 +139,11 @@ export default function ProductionOrderDetailPage({
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
   const [actionMessage, setActionMessage] = useState('')
-  const [showActionButtons, setShowActionButtons] = useState(true)
   const [canProdComplete, setCanProdComplete] = useState(false)
+  const [canReceiveStock, setCanReceiveStock] = useState(false)
+
+  const [qcRequestId, setQcRequestId] = useState<number | null>(null)
+  const [qcResultStatus, setQcResultStatus] = useState<'pending' | 'pass' | 'fail' | ''>('')
 
   useEffect(() => {
     async function loadData() {
@@ -141,6 +161,7 @@ export default function ProductionOrderDetailPage({
         { data: itemsData, error: itemsError },
         { data: bomsData, error: bomsError },
         { data: usersData, error: usersError },
+        { data: qcData, error: qcError },
         permissions,
       ] = await Promise.all([
         supabase.from('production_orders').select('*').eq('id', id).single(),
@@ -158,6 +179,11 @@ export default function ProductionOrderDetailPage({
           .from('app_users')
           .select('id, user_name, login_id')
           .order('user_name'),
+        supabase
+          .from('qc_requests')
+          .select('id, result_status')
+          .eq('production_order_id', id)
+          .maybeSingle(),
         getCurrentUserPermissions(),
       ])
 
@@ -167,7 +193,7 @@ export default function ProductionOrderDetailPage({
         return
       }
 
-      if (itemsError || bomsError || usersError) {
+      if (itemsError || bomsError || usersError || qcError) {
         setErrorMessage('기초 데이터를 불러오지 못했습니다.')
         setIsLoading(false)
         return
@@ -189,7 +215,17 @@ export default function ProductionOrderDetailPage({
       setItems((itemsData as Item[]) ?? [])
       setBoms((bomsData as Bom[]) ?? [])
       setUsers((usersData as AppUser[]) ?? [])
-      setCanProdComplete(permissions?.can_prod_complete ?? false)
+
+      setCanProdComplete(
+        permissions?.role_name === 'admin' || permissions?.can_prod_complete || false
+      )
+      setCanReceiveStock(
+        permissions?.role_name === 'admin' || permissions?.can_receive_stock || false
+      )
+
+      const qc = (qcData as QcRequestRow | null) ?? null
+      setQcRequestId(qc?.id ?? null)
+      setQcResultStatus(qc?.result_status ?? '')
 
       setIsLoading(false)
     }
@@ -206,6 +242,9 @@ export default function ProductionOrderDetailPage({
     () => boms.filter((bom) => bom.parent_item_id === itemId),
     [boms, itemId]
   )
+
+  const isCompleted = status === 'completed'
+  const canInbound = isCompleted && qcResultStatus === 'pass'
 
   function handleFinishedItemChange(value: string) {
     const nextItemId = value ? Number(value) : ''
@@ -272,6 +311,54 @@ export default function ProductionOrderDetailPage({
     router.refresh()
   }
 
+  async function handleCreateQcRequest() {
+    if (!prodId) {
+      setErrorMessage('생산지시 정보가 올바르지 않습니다.')
+      return
+    }
+
+    if (!itemId) {
+      setErrorMessage('품목 정보가 올바르지 않습니다.')
+      return
+    }
+
+    if (qcRequestId) {
+      setErrorMessage('이미 QC 의뢰가 생성되어 있습니다.')
+      return
+    }
+
+    setErrorMessage('')
+    setSuccessMessage('')
+    setActionMessage('')
+
+    const qcNo = makeQcNo()
+
+    const { data, error } = await supabase
+      .from('qc_requests')
+      .insert({
+        qc_no: qcNo,
+        production_order_id: prodId,
+        item_id: itemId,
+        request_date: new Date().toISOString().slice(0, 10),
+        result_status: 'pending',
+        result_comment: null,
+        result_date: null,
+      })
+      .select('id, result_status')
+      .single()
+
+    if (error || !data) {
+      console.error('qc create error:', error)
+      setErrorMessage(`QC 의뢰 생성 오류: ${error?.message ?? '알 수 없는 오류'}`)
+      return
+    }
+
+    setQcRequestId(data.id)
+    setQcResultStatus(data.result_status as 'pending' | 'pass' | 'fail')
+    setActionMessage(`QC 의뢰 ${qcNo}가 생성되었습니다. 현재 상태는 검사대기입니다.`)
+    router.refresh()
+  }
+
   async function handleStartProduction() {
     if (!prodId) {
       setErrorMessage('생산지시 정보가 올바르지 않습니다.')
@@ -298,9 +385,7 @@ export default function ProductionOrderDetailPage({
     }
 
     setStatus('in_progress')
-    setActionMessage(
-      `생산지시 ${prodNo}가 생산중 상태로 변경되었습니다. 교육용 ERP로 실제 생산 시작 처리는 구현하지 않았습니다.`
-    )
+    setActionMessage(`생산지시 ${prodNo}가 생산중 상태로 변경되었습니다.`)
     router.refresh()
   }
 
@@ -315,6 +400,47 @@ export default function ProductionOrderDetailPage({
       return
     }
 
+    if (status === 'completed') {
+      setErrorMessage('이미 생산완료 처리된 지시입니다.')
+      return
+    }
+
+    setErrorMessage('')
+    setSuccessMessage('')
+    setActionMessage('')
+
+    const { error } = await supabase
+      .from('production_orders')
+      .update({
+        status: 'completed',
+        completed_qty: Number(planQty) || 0,
+      })
+      .eq('id', prodId)
+
+    if (error) {
+      setErrorMessage(getProductionOrderErrorMessage(error))
+      return
+    }
+
+    setStatus('completed')
+    setCompletedQty(String(Number(planQty) || 0))
+    setActionMessage(
+      `생산지시 ${prodNo}가 작업 완료 처리되었습니다. QC 합격 후 입고처리를 진행하십시오.`
+    )
+    router.refresh()
+  }
+
+  async function handleInboundProduction() {
+    if (!prodId) {
+      setErrorMessage('생산지시 정보가 올바르지 않습니다.')
+      return
+    }
+
+    if (!canReceiveStock) {
+      setErrorMessage('현재 사용자에게는 입고 처리 권한이 없습니다.')
+      return
+    }
+
     if (!bomId) {
       setErrorMessage('연결된 BOM 정보가 없습니다.')
       return
@@ -325,8 +451,18 @@ export default function ProductionOrderDetailPage({
       return
     }
 
-    if (status === 'completed') {
-      setErrorMessage('이미 생산완료 처리된 지시입니다.')
+    if (status !== 'completed') {
+      setErrorMessage('생산완료 후 입고처리가 가능합니다.')
+      return
+    }
+
+    if (!qcRequestId) {
+      setErrorMessage('QC 의뢰가 없어 입고처리할 수 없습니다.')
+      return
+    }
+
+    if (qcResultStatus !== 'pass') {
+      setErrorMessage('QC 합격 결과가 있어야 입고처리가 가능합니다.')
       return
     }
 
@@ -498,28 +634,11 @@ export default function ProductionOrderDetailPage({
       return
     }
 
-    const { error: prodUpdateError } = await supabase
-      .from('production_orders')
-      .update({
-        status: 'completed',
-        completed_qty: planQtyNumber,
-      })
-      .eq('id', prodId)
-
-    if (prodUpdateError) {
-      setErrorMessage(getProductionOrderErrorMessage(prodUpdateError))
-      return
-    }
-
-    setStatus('completed')
-    setCompletedQty(String(planQtyNumber))
     setActionMessage(
-      `생산지시 ${prodNo}가 완료되었습니다. 자재가 차감되고 완제품이 입고 처리되었습니다.`
+      `생산지시 ${prodNo}가 QC 합격 후 입고 처리되었습니다. 자재 차감 및 완제품 재고 반영이 완료되었습니다.`
     )
     router.refresh()
   }
-
-  const isCompleted = status === 'completed'
 
   if (isLoading) {
     return (
@@ -538,7 +657,7 @@ export default function ProductionOrderDetailPage({
         <div>
           <h1 className="erp-page-title">생산지시 상세 / 수정</h1>
           <p className="erp-page-desc">
-            생산지시 기본정보를 수정하고 생산 진행/완료를 처리합니다.
+            생산지시 기본정보를 수정하고 생산 진행, QC, 입고를 처리합니다.
           </p>
         </div>
       </div>
@@ -549,6 +668,21 @@ export default function ProductionOrderDetailPage({
             생산지시번호: <span className="font-medium">{prodNo}</span>
             <span className="mx-2">/</span>
             상태: <span className="font-medium">{getStatusLabel(status)}</span>
+          </div>
+
+          <div className="erp-info-bar">
+            QC 상태:{' '}
+            <span className="font-medium">
+              {!qcRequestId
+                ? '미의뢰'
+                : qcResultStatus === 'pending'
+                ? '검사대기'
+                : qcResultStatus === 'pass'
+                ? '합격'
+                : qcResultStatus === 'fail'
+                ? '불합격'
+                : '-'}
+            </span>
           </div>
 
           <h2 className="erp-card-title">기본정보</h2>
@@ -617,7 +751,7 @@ export default function ProductionOrderDetailPage({
                 type="number"
                 value={completedQty}
                 onChange={(e) => setCompletedQty(e.target.value)}
-                disabled={isCompleted}
+                disabled
                 className="erp-input"
               />
             </div>
@@ -664,27 +798,41 @@ export default function ProductionOrderDetailPage({
             {isSaving ? '저장 중...' : '저장'}
           </button>
 
-          {showActionButtons && (
-            <>
-              <button
-                type="button"
-                onClick={handleStartProduction}
-                disabled={isCompleted}
-                className="erp-btn-secondary"
-              >
-                생산시작
-              </button>
+          <button
+            type="button"
+            onClick={handleCreateQcRequest}
+            disabled={!!qcRequestId}
+            className="erp-btn-secondary"
+          >
+            QC 의뢰 생성
+          </button>
 
-              <button
-                type="button"
-                onClick={handleCompleteProduction}
-                disabled={isCompleted || !canProdComplete}
-                className="erp-btn-secondary"
-              >
-                생산완료
-              </button>
-            </>
-          )}
+          <button
+            type="button"
+            onClick={handleStartProduction}
+            disabled={isCompleted}
+            className="erp-btn-secondary"
+          >
+            생산시작
+          </button>
+
+          <button
+            type="button"
+            onClick={handleCompleteProduction}
+            disabled={isCompleted || !canProdComplete}
+            className="erp-btn-secondary"
+          >
+            생산완료
+          </button>
+
+          <button
+            type="button"
+            onClick={handleInboundProduction}
+            disabled={!canInbound || !canReceiveStock}
+            className="erp-btn-secondary"
+          >
+            입고처리
+          </button>
 
           <Link href="/production-orders" className="erp-btn-secondary">
             목록으로
