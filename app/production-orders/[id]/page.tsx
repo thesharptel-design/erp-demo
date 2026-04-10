@@ -47,6 +47,7 @@ type ProductionOrder = {
   status: string
   user_id: string
   remarks: string | null
+  inbound_completed: boolean
 }
 
 type InventoryRow = {
@@ -57,7 +58,14 @@ type InventoryRow = {
 
 type QcRequestRow = {
   id: number
+  qc_no: string
+  qc_type: 'raw_material' | 'sample' | 'final_product'
+  qc_status: 'requested' | 'received' | 'testing' | 'pass' | 'fail' | 'hold'
   result_status: 'pending' | 'pass' | 'fail'
+  sample_qty: number | null
+  tester_name: string | null
+  result_date: string | null
+  result_comment: string | null
 }
 
 type SupabaseErrorLike = {
@@ -87,7 +95,7 @@ function getProductionOrderErrorMessage(error: SupabaseErrorLike) {
   return '생산지시 처리 중 오류가 발생했습니다. 다시 시도해 주세요.'
 }
 
-function getStatusLabel(status: string) {
+function getProductionStatusLabel(status: string) {
   switch (status) {
     case 'planned':
       return '생산예정'
@@ -95,6 +103,38 @@ function getStatusLabel(status: string) {
       return '생산중'
     case 'completed':
       return '생산완료'
+    default:
+      return status
+  }
+}
+
+function getQcTypeLabel(qcType: string) {
+  switch (qcType) {
+    case 'raw_material':
+      return '원자재 QC'
+    case 'sample':
+      return '샘플 QC'
+    case 'final_product':
+      return '완제품 QC'
+    default:
+      return qcType
+  }
+}
+
+function getQcStatusLabel(status: string) {
+  switch (status) {
+    case 'requested':
+      return '의뢰됨'
+    case 'received':
+      return '접수됨'
+    case 'testing':
+      return '시험중'
+    case 'pass':
+      return '합격'
+    case 'fail':
+      return '불합격'
+    case 'hold':
+      return '보류'
     default:
       return status
   }
@@ -129,6 +169,7 @@ export default function ProductionOrderDetailPage({
   const [status, setStatus] = useState('planned')
   const [userId, setUserId] = useState('')
   const [remarks, setRemarks] = useState('')
+  const [inboundCompleted, setInboundCompleted] = useState(false)
 
   const [items, setItems] = useState<Item[]>([])
   const [boms, setBoms] = useState<Bom[]>([])
@@ -143,7 +184,13 @@ export default function ProductionOrderDetailPage({
   const [canReceiveStock, setCanReceiveStock] = useState(false)
 
   const [qcRequestId, setQcRequestId] = useState<number | null>(null)
-  const [qcResultStatus, setQcResultStatus] = useState<'pending' | 'pass' | 'fail' | ''>('')
+  const [qcNo, setQcNo] = useState('')
+  const [qcType, setQcType] = useState<'raw_material' | 'sample' | 'final_product' | ''>('')
+  const [qcStatus, setQcStatus] = useState<'requested' | 'received' | 'testing' | 'pass' | 'fail' | 'hold' | ''>('')
+  const [sampleQty, setSampleQty] = useState<number | null>(null)
+  const [testerName, setTesterName] = useState('')
+  const [qcResultDate, setQcResultDate] = useState<string | null>(null)
+  const [qcResultComment, setQcResultComment] = useState('')
 
   useEffect(() => {
     async function loadData() {
@@ -181,7 +228,17 @@ export default function ProductionOrderDetailPage({
           .order('user_name'),
         supabase
           .from('qc_requests')
-          .select('id, result_status')
+          .select(`
+            id,
+            qc_no,
+            qc_type,
+            qc_status,
+            result_status,
+            sample_qty,
+            tester_name,
+            result_date,
+            result_comment
+          `)
           .eq('production_order_id', id)
           .maybeSingle(),
         getCurrentUserPermissions(),
@@ -211,6 +268,7 @@ export default function ProductionOrderDetailPage({
       setStatus(typedProd.status)
       setUserId(typedProd.user_id)
       setRemarks(typedProd.remarks ?? '')
+      setInboundCompleted(typedProd.inbound_completed ?? false)
 
       setItems((itemsData as Item[]) ?? [])
       setBoms((bomsData as Bom[]) ?? [])
@@ -225,7 +283,13 @@ export default function ProductionOrderDetailPage({
 
       const qc = (qcData as QcRequestRow | null) ?? null
       setQcRequestId(qc?.id ?? null)
-      setQcResultStatus(qc?.result_status ?? '')
+      setQcNo(qc?.qc_no ?? '')
+      setQcType(qc?.qc_type ?? '')
+      setQcStatus(qc?.qc_status ?? '')
+      setSampleQty(qc?.sample_qty ?? null)
+      setTesterName(qc?.tester_name ?? '')
+      setQcResultDate(qc?.result_date ?? null)
+      setQcResultComment(qc?.result_comment ?? '')
 
       setIsLoading(false)
     }
@@ -244,7 +308,7 @@ export default function ProductionOrderDetailPage({
   )
 
   const isCompleted = status === 'completed'
-  const canInbound = isCompleted && qcResultStatus === 'pass'
+  const canInbound = isCompleted && qcStatus === 'pass' && !inboundCompleted
 
   function handleFinishedItemChange(value: string) {
     const nextItemId = value ? Number(value) : ''
@@ -331,20 +395,34 @@ export default function ProductionOrderDetailPage({
     setSuccessMessage('')
     setActionMessage('')
 
-    const qcNo = makeQcNo()
+    const newQcNo = makeQcNo()
 
     const { data, error } = await supabase
       .from('qc_requests')
       .insert({
-        qc_no: qcNo,
+        qc_no: newQcNo,
         production_order_id: prodId,
         item_id: itemId,
         request_date: new Date().toISOString().slice(0, 10),
+        qc_type: 'sample',
+        qc_status: 'requested',
         result_status: 'pending',
+        sample_qty: null,
+        tester_name: null,
         result_comment: null,
         result_date: null,
       })
-      .select('id, result_status')
+      .select(`
+        id,
+        qc_no,
+        qc_type,
+        qc_status,
+        result_status,
+        sample_qty,
+        tester_name,
+        result_date,
+        result_comment
+      `)
       .single()
 
     if (error || !data) {
@@ -354,8 +432,14 @@ export default function ProductionOrderDetailPage({
     }
 
     setQcRequestId(data.id)
-    setQcResultStatus(data.result_status as 'pending' | 'pass' | 'fail')
-    setActionMessage(`QC 의뢰 ${qcNo}가 생성되었습니다. 현재 상태는 검사대기입니다.`)
+    setQcNo(data.qc_no)
+    setQcType(data.qc_type)
+    setQcStatus(data.qc_status)
+    setSampleQty(data.sample_qty ?? null)
+    setTesterName(data.tester_name ?? '')
+    setQcResultDate(data.result_date ?? null)
+    setQcResultComment(data.result_comment ?? '')
+    setActionMessage(`QC 의뢰 ${newQcNo}가 생성되었습니다. 현재 상태는 의뢰됨입니다.`)
     router.refresh()
   }
 
@@ -461,8 +545,13 @@ export default function ProductionOrderDetailPage({
       return
     }
 
-    if (qcResultStatus !== 'pass') {
-      setErrorMessage('QC 합격 결과가 있어야 입고처리가 가능합니다.')
+    if (qcStatus !== 'pass') {
+      setErrorMessage('QC 합격 상태여야 입고처리가 가능합니다.')
+      return
+    }
+
+    if (inboundCompleted) {
+      setErrorMessage('이미 입고처리된 생산지시입니다.')
       return
     }
 
@@ -634,6 +723,19 @@ export default function ProductionOrderDetailPage({
       return
     }
 
+    const { error: inboundUpdateError } = await supabase
+      .from('production_orders')
+      .update({
+        inbound_completed: true,
+      })
+      .eq('id', prodId)
+
+    if (inboundUpdateError) {
+      setErrorMessage(getProductionOrderErrorMessage(inboundUpdateError))
+      return
+    }
+
+    setInboundCompleted(true)
     setActionMessage(
       `생산지시 ${prodNo}가 QC 합격 후 입고 처리되었습니다. 자재 차감 및 완제품 재고 반영이 완료되었습니다.`
     )
@@ -667,22 +769,15 @@ export default function ProductionOrderDetailPage({
           <div className="erp-info-bar">
             생산지시번호: <span className="font-medium">{prodNo}</span>
             <span className="mx-2">/</span>
-            상태: <span className="font-medium">{getStatusLabel(status)}</span>
+            상태: <span className="font-medium">{getProductionStatusLabel(status)}</span>
           </div>
 
           <div className="erp-info-bar">
-            QC 상태:{' '}
-            <span className="font-medium">
-              {!qcRequestId
-                ? '미의뢰'
-                : qcResultStatus === 'pending'
-                ? '검사대기'
-                : qcResultStatus === 'pass'
-                ? '합격'
-                : qcResultStatus === 'fail'
-                ? '불합격'
-                : '-'}
-            </span>
+            QC 상태: <span className="font-medium">{qcRequestId ? getQcStatusLabel(qcStatus) : '미의뢰'}</span>
+          </div>
+
+          <div className="erp-info-bar">
+            입고 상태: <span className="font-medium">{inboundCompleted ? '입고완료' : '미입고'}</span>
           </div>
 
           <h2 className="erp-card-title">기본정보</h2>
@@ -783,6 +878,57 @@ export default function ProductionOrderDetailPage({
               />
             </div>
           </div>
+        </div>
+
+        <div className="erp-card">
+          <h2 className="erp-card-title">QC 결과</h2>
+
+          <div className="erp-grid-2">
+            <div className="erp-field">
+              <label className="erp-label">QC번호</label>
+              <div className="erp-readonly-box">{qcNo || '-'}</div>
+            </div>
+
+            <div className="erp-field">
+              <label className="erp-label">QC유형</label>
+              <div className="erp-readonly-box">{qcType ? getQcTypeLabel(qcType) : '-'}</div>
+            </div>
+
+            <div className="erp-field">
+              <label className="erp-label">QC 상태</label>
+              <div className="erp-readonly-box">
+                {qcRequestId ? getQcStatusLabel(qcStatus) : '미의뢰'}
+              </div>
+            </div>
+
+            <div className="erp-field">
+              <label className="erp-label">결과일</label>
+              <div className="erp-readonly-box">{qcResultDate ?? '-'}</div>
+            </div>
+
+            <div className="erp-field">
+              <label className="erp-label">샘플 수량</label>
+              <div className="erp-readonly-box">{sampleQty ?? '-'}</div>
+            </div>
+
+            <div className="erp-field">
+              <label className="erp-label">시험자</label>
+              <div className="erp-readonly-box">{testerName || '-'}</div>
+            </div>
+
+            <div className="erp-field md:col-span-2">
+              <label className="erp-label">결과 의견</label>
+              <div className="erp-readonly-box">{qcResultComment || '-'}</div>
+            </div>
+          </div>
+
+          {qcRequestId && (
+            <div className="mt-4">
+              <Link href={`/qc/${qcRequestId}`} className="erp-btn-secondary">
+                QC 상세 보기
+              </Link>
+            </div>
+          )}
         </div>
 
         {errorMessage && <div className="erp-alert-error">{errorMessage}</div>}

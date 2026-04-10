@@ -2,7 +2,10 @@
 
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
-import { getCurrentUserPermissions, type CurrentUserPermissions } from '@/lib/permissions'
+import {
+  getCurrentUserPermissions,
+  type CurrentUserPermissions,
+} from '@/lib/permissions'
 
 type MenuItem = {
   href: string
@@ -13,7 +16,7 @@ function getMenusByRole(roleName: string): MenuItem[] {
   const commonMenus: MenuItem[] = [
     { href: '/dashboard', label: '대시보드' },
     { href: '/approvals', label: '기안/결재' },
-    { href: '/qc', label :'QC관리'},
+    { href: '/qc', label: 'QC관리' },
   ]
 
   switch (roleName) {
@@ -83,15 +86,13 @@ export default function Sidebar() {
   const menus = getMenusByRole(user?.role_name ?? '')
 
   return (
-    <aside className="hidden w-64 shrink-0 border-r border-gray-200 bg-white lg:block">
+    <aside className="w-64 shrink-0 border-r border-gray-200 bg-white">
       <div className="border-b border-gray-200 px-6 py-6">
         <Link href="/dashboard" className="block">
           <h1 className="text-xl font-bold tracking-tight text-gray-900">
             교육용 ERP
           </h1>
-          <p className="mt-1 text-sm text-gray-500">
-            부서별 업무 흐름 실습
-          </p>
+          <p className="mt-1 text-sm text-gray-500">부서별 업무 흐름 실습</p>
         </Link>
       </div>
 
@@ -105,7 +106,7 @@ export default function Sidebar() {
             <Link
               key={menu.href}
               href={menu.href}
-              className="group flex items-center rounded-xl px-3 py-2.5 text-sm font-medium text-gray-700 transition hover:bg-gray-100 hover:text-gray-900"
+              className="group flex items-center rounded-xl px-3 py-3 text-sm font-medium text-gray-700 transition hover:bg-gray-100 hover:text-gray-900"
             >
               <span className="h-2 w-2 rounded-full bg-gray-300 transition group-hover:bg-gray-500" />
               <span className="ml-3">{menu.label}</span>

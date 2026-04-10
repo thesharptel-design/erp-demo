@@ -1,45 +1,16 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { useEffect, useState } from 'react'
 import { getCurrentUserPermissions, type CurrentUserPermissions } from '@/lib/permissions'
 
-function getRoleLabel(roleName: string) {
-  switch (roleName) {
-    case 'admin':
-      return '관리자'
-    case 'sales':
-      return '영업'
-    case 'purchase':
-      return '구매'
-    case 'production':
-      return '생산'
-    case 'approval':
-      return '결재'
-    default:
-      return roleName || '-'
-  }
+type Props = {
+  onMenuClick?: () => void
 }
 
-function getDeptLabel(roleName: string) {
-  switch (roleName) {
-    case 'admin':
-      return '관리부'
-    case 'sales':
-      return '영업부'
-    case 'purchase':
-      return '구매부'
-    case 'production':
-      return '생산부'
-    case 'approval':
-      return '결재부'
-    default:
-      return '부서미정'
-  }
-}
-
-export default function Header() {
+export default function Header({ onMenuClick }: Props) {
   const router = useRouter()
   const [user, setUser] = useState<CurrentUserPermissions | null>(null)
 
@@ -58,31 +29,47 @@ export default function Header() {
   }
 
   return (
-    <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/95 backdrop-blur">
-      <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-6">
-        <div>
-          <h1 className="text-base font-semibold text-gray-900">교육용 ERP</h1>
-          <p className="text-xs text-gray-500">실습용 데모 시스템</p>
+    <header className="border-b border-gray-200 bg-white">
+      <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onMenuClick}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-white text-lg text-gray-700 lg:hidden"
+            aria-label="메뉴 열기"
+          >
+            ☰
+          </button>
+
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center rounded-xl px-3 py-2 text-sm font-medium text-gray-900 hover:bg-gray-100"
+          >
+            교육용 ERP
+          </Link>
         </div>
 
-        <div className="flex items-center gap-4">
-          {user ? (
-            <div className="text-right">
-              <p className="text-sm font-medium text-gray-800">
-                {user.user_name}
-              </p>
-              <p className="text-xs text-gray-500">
-                {getDeptLabel(user.role_name)} / {getRoleLabel(user.role_name)} / {user.login_id}
-              </p>
-            </div>
-          ) : (
-            <div className="text-sm text-gray-500">사용자 정보 없음</div>
-          )}
+        <div className="flex items-center gap-2">
+          <Link
+            href="/dashboard"
+            className="inline-flex h-10 items-center justify-center rounded-xl border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            홈
+          </Link>
+
+          <div className="hidden text-right sm:block">
+            <p className="text-sm font-semibold text-gray-900">
+              {user?.user_name ?? '사용자'}
+            </p>
+            <p className="text-xs text-gray-500">
+              {user?.dept_name ?? '-'} / {user?.role_name ?? '-'} / {user?.login_id ?? '-'}
+            </p>
+          </div>
 
           <button
             type="button"
             onClick={handleLogout}
-            className="erp-btn-secondary"
+            className="inline-flex h-10 items-center justify-center rounded-xl border border-gray-200 bg-white px-3 text-sm font-medium text-gray-700 hover:bg-gray-50"
           >
             로그아웃
           </button>

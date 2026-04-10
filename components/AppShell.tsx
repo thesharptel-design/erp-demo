@@ -17,11 +17,12 @@ export default function AppShell({ children }: Props) {
 
   const [isLoading, setIsLoading] = useState(true)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   useEffect(() => {
     let mounted = true
 
-    async function checkSession() {
+    async function loadSession() {
       const {
         data: { session },
       } = await supabase.auth.getSession()
@@ -32,15 +33,13 @@ export default function AppShell({ children }: Props) {
       setIsLoading(false)
     }
 
-    checkSession()
+    loadSession()
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return
-
       setIsLoggedIn(!!session?.user)
-      setIsLoading(false)
     })
 
     return () => {
@@ -61,6 +60,10 @@ export default function AppShell({ children }: Props) {
       router.replace('/dashboard')
     }
   }, [isLoading, isLoggedIn, pathname, router])
+
+  useEffect(() => {
+    setMobileMenuOpen(false)
+  }, [pathname])
 
   if (pathname === '/login') {
     return <>{children}</>
@@ -87,12 +90,27 @@ export default function AppShell({ children }: Props) {
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen bg-gray-50">
       <Sidebar />
+
+      {mobileMenuOpen && (
+        <>
+          <button
+            type="button"
+            className="fixed inset-0 z-40 bg-black/30 lg:hidden"
+            onClick={() => setMobileMenuOpen(false)}
+            aria-label="메뉴 닫기"
+          />
+          <div className="fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-white shadow-xl lg:hidden">
+            <Sidebar />
+          </div>
+        </>
+      )}
+
       <div className="flex min-w-0 flex-1 flex-col">
-        <Header />
+        <Header onMenuClick={() => setMobileMenuOpen(true)} />
         <main className="flex-1">
-          <div className="mx-auto w-full max-w-7xl px-6 py-6">
+          <div className="mx-auto w-full max-w-7xl px-4 py-4 sm:px-6 sm:py-6">
             <CurrentUserBanner />
             {children}
           </div>

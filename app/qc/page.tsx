@@ -10,7 +10,11 @@ type QcRequestRow = {
   production_order_id: number
   item_id: number
   request_date: string
+  qc_type: 'raw_material' | 'sample' | 'final_product'
+  qc_status: 'requested' | 'received' | 'testing' | 'pass' | 'fail' | 'hold'
   result_status: 'pending' | 'pass' | 'fail'
+  sample_qty: number | null
+  tester_name: string | null
   result_comment: string | null
   result_date: string | null
   created_at: string
@@ -27,14 +31,33 @@ type ItemRow = {
   item_name: string
 }
 
+function getQcTypeLabel(qcType: string) {
+  switch (qcType) {
+    case 'raw_material':
+      return '원자재 QC'
+    case 'sample':
+      return '샘플 QC'
+    case 'final_product':
+      return '완제품 QC'
+    default:
+      return qcType
+  }
+}
+
 function getQcStatusLabel(status: string) {
   switch (status) {
-    case 'pending':
-      return '검사대기'
+    case 'requested':
+      return '의뢰됨'
+    case 'received':
+      return '접수됨'
+    case 'testing':
+      return '시험중'
     case 'pass':
       return '합격'
     case 'fail':
       return '불합격'
+    case 'hold':
+      return '보류'
     default:
       return status
   }
@@ -42,12 +65,18 @@ function getQcStatusLabel(status: string) {
 
 function getQcStatusStyle(status: string) {
   switch (status) {
-    case 'pending':
+    case 'requested':
+      return 'erp-badge erp-badge-draft'
+    case 'received':
       return 'erp-badge erp-badge-review'
+    case 'testing':
+      return 'erp-badge erp-badge-progress'
     case 'pass':
       return 'erp-badge erp-badge-done'
     case 'fail':
       return 'erp-badge erp-badge-danger'
+    case 'hold':
+      return 'erp-badge erp-badge-warning'
     default:
       return 'erp-badge erp-badge-draft'
   }
@@ -77,7 +106,11 @@ export default function QcPage() {
             production_order_id,
             item_id,
             request_date,
+            qc_type,
+            qc_status,
             result_status,
+            sample_qty,
+            tester_name,
             result_comment,
             result_date,
             created_at
@@ -104,14 +137,12 @@ export default function QcPage() {
         return
       }
 
-      const qcRows = ((qcData ?? []) as unknown[]) as QcRequestRow[]
-      const productionRows = ((productionData ?? []) as unknown[]) as ProductionOrderRow[]
-      const itemRows = ((itemData ?? []) as unknown[]) as ItemRow[]
-
-      setQcRequests(qcRows)
-      setProductionOrdersMap(new Map(productionRows.map((row) => [row.id, row.prod_no])))
+      setQcRequests((qcData as QcRequestRow[]) ?? [])
+      setProductionOrdersMap(
+        new Map(((productionData as ProductionOrderRow[]) ?? []).map((row) => [row.id, row.prod_no]))
+      )
       setItemsMap(
-        new Map(itemRows.map((row) => [row.id, `${row.item_code} / ${row.item_name}`]))
+        new Map(((itemData as ItemRow[]) ?? []).map((row) => [row.id, `${row.item_code} / ${row.item_name}`]))
       )
       setIsLoading(false)
     }
@@ -124,7 +155,7 @@ export default function QcPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">QC관리</h1>
         <p className="mt-1 text-sm text-gray-500">
-          생산지시에서 넘어온 샘플 QC 요청을 조회하고 결과를 관리합니다.
+          샘플 QC를 중심으로 QC 의뢰, 접수, 시험, 판정 결과를 관리합니다.
         </p>
       </div>
 
@@ -135,24 +166,26 @@ export default function QcPage() {
           <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
             <tr>
               <th className="px-5 py-4">QC번호</th>
+              <th className="px-5 py-4">QC유형</th>
               <th className="px-5 py-4">생산지시번호</th>
               <th className="px-5 py-4">품목</th>
+              <th className="px-5 py-4">샘플수량</th>
+              <th className="px-5 py-4">시험자</th>
               <th className="px-5 py-4">의뢰일</th>
               <th className="px-5 py-4">상태</th>
               <th className="px-5 py-4">결과일</th>
-              <th className="px-5 py-4">비고</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
               <tr>
-                <td colSpan={7} className="px-5 py-14 text-center text-sm text-gray-400">
+                <td colSpan={9} className="px-5 py-14 text-center text-sm text-gray-400">
                   QC 요청 데이터를 불러오는 중입니다.
                 </td>
               </tr>
             ) : qcRequests.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-5 py-14 text-center text-sm text-gray-400">
+                <td colSpan={9} className="px-5 py-14 text-center text-sm text-gray-400">
                   QC 요청 데이터가 없습니다.
                 </td>
               </tr>
@@ -160,27 +193,24 @@ export default function QcPage() {
               qcRequests.map((qc) => (
                 <tr key={qc.id} className="border-t border-gray-100">
                   <td className="px-5 py-4 font-medium">
-                    <Link
-                      href={`/qc/${qc.id}`}
-                      className="text-blue-600 hover:underline"
-                    >
+                    <Link href={`/qc/${qc.id}`} className="text-blue-600 hover:underline">
                       {qc.qc_no}
                     </Link>
                   </td>
+                  <td className="px-5 py-4">{getQcTypeLabel(qc.qc_type)}</td>
                   <td className="px-5 py-4">
                     {productionOrdersMap.get(qc.production_order_id) ?? '-'}
                   </td>
-                  <td className="px-5 py-4">
-                    {itemsMap.get(qc.item_id) ?? '-'}
-                  </td>
+                  <td className="px-5 py-4">{itemsMap.get(qc.item_id) ?? '-'}</td>
+                  <td className="px-5 py-4">{qc.sample_qty ?? '-'}</td>
+                  <td className="px-5 py-4">{qc.tester_name ?? '-'}</td>
                   <td className="px-5 py-4">{qc.request_date}</td>
                   <td className="px-5 py-4">
-                    <span className={getQcStatusStyle(qc.result_status)}>
-                      {getQcStatusLabel(qc.result_status)}
+                    <span className={getQcStatusStyle(qc.qc_status)}>
+                      {getQcStatusLabel(qc.qc_status)}
                     </span>
                   </td>
                   <td className="px-5 py-4">{qc.result_date ?? '-'}</td>
-                  <td className="px-5 py-4">{qc.result_comment ?? '-'}</td>
                 </tr>
               ))
             )}
