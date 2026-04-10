@@ -86,8 +86,8 @@ export default function Sidebar() {
   const menus = getMenusByRole(user?.role_name ?? '')
 
   return (
-    <aside className="w-64 shrink-0 border-r border-gray-200 bg-white">
-      <div className="border-b border-gray-200 px-6 py-6">
+    <aside className="h-full w-64 border-r border-gray-200 bg-white">
+      <div className="border-b border-gray-200 px-5 py-5">
         <Link href="/dashboard" className="block">
           <h1 className="text-xl font-bold tracking-tight text-gray-900">
             교육용 ERP

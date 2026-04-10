@@ -40,6 +40,7 @@ export default function AppShell({ children }: Props) {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return
       setIsLoggedIn(!!session?.user)
+      setIsLoading(false)
     })
 
     return () => {
@@ -90,31 +91,38 @@ export default function AppShell({ children }: Props) {
   }
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
-      <Sidebar />
+    <div className="min-h-screen bg-gray-50">
+      <div className="flex min-h-screen">
+        {/* 데스크톱 전용 사이드바 */}
+        <div className="hidden lg:block">
+          <Sidebar />
+        </div>
 
-      {mobileMenuOpen && (
-        <>
-          <button
-            type="button"
-            className="fixed inset-0 z-40 bg-black/30 lg:hidden"
-            onClick={() => setMobileMenuOpen(false)}
-            aria-label="메뉴 닫기"
-          />
-          <div className="fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] bg-white shadow-xl lg:hidden">
-            <Sidebar />
-          </div>
-        </>
-      )}
+        {/* 모바일 오버레이 메뉴 */}
+        {mobileMenuOpen && (
+          <>
+            <button
+              type="button"
+              className="fixed inset-0 z-40 bg-black/30 lg:hidden"
+              onClick={() => setMobileMenuOpen(false)}
+              aria-label="메뉴 닫기"
+            />
+            <div className="fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] lg:hidden">
+              <Sidebar />
+            </div>
+          </>
+        )}
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <Header onMenuClick={() => setMobileMenuOpen(true)} />
-        <main className="flex-1">
-          <div className="mx-auto w-full max-w-7xl px-4 py-4 sm:px-6 sm:py-6">
-            <CurrentUserBanner />
-            {children}
-          </div>
-        </main>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <Header onMenuClick={() => setMobileMenuOpen(true)} />
+
+          <main className="flex-1">
+            <div className="mx-auto w-full max-w-7xl px-4 py-4 sm:px-6 sm:py-6">
+              <CurrentUserBanner />
+              {children}
+            </div>
+          </main>
+        </div>
       </div>
     </div>
   )
