@@ -62,7 +62,7 @@ export default function Header({ onMenuClick }: Props) {
               {user?.user_name ?? '사용자'}
             </p>
             <p className="text-xs text-gray-500">
-              {user?.dept_name ?? '-'} / {user?.role_name ?? '-'} / {user?.login_id ?? '-'}
+              {user?.role_name ?? '-'} / {user?.login_id ?? '-'}
             </p>
           </div>
 
