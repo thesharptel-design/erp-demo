@@ -56,6 +56,8 @@ type InventoryRow = {
   id: number
   item_id: number
   current_qty: number
+  available_qty: number
+  quarantine_qty: number
 }
 
 type SupabaseErrorLike = {
@@ -83,6 +85,31 @@ function getPurchaseOrderErrorMessage(error: SupabaseErrorLike) {
   }
 
   return '발주서 저장 중 오류가 발생했습니다. 다시 시도해 주세요.'
+}
+
+function getPurchaseStatusLabel(status: string) {
+  switch (status) {
+    case 'draft':
+      return '초안'
+    case 'ordered':
+      return '발주완료'
+    case 'received':
+      return '입고완료'
+    default:
+      return status
+  }
+}
+
+function makeQcNo() {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = String(now.getMonth() + 1).padStart(2, '0')
+  const d = String(now.getDate()).padStart(2, '0')
+  const hh = String(now.getHours()).padStart(2, '0')
+  const mm = String(now.getMinutes()).padStart(2, '0')
+  const ss = String(now.getSeconds()).padStart(2, '0')
+
+  return `QC-${y}${m}${d}-${hh}${mm}${ss}`
 }
 
 export default function PurchaseOrderDetailPage({
@@ -192,7 +219,7 @@ export default function PurchaseOrderDetailPage({
       setCustomers((customersData as Customer[]) ?? [])
       setUsers((usersData as AppUser[]) ?? [])
       setItems((itemsData as Item[]) ?? [])
-      setCanReceiveStock(permissions?.can_receive_stock ?? false)
+      setCanReceiveStock(permissions?.role_name === 'admin' || permissions?.can_receive_stock || false)
 
       setIsLoading(false)
     }
@@ -405,11 +432,15 @@ export default function PurchaseOrderDetailPage({
     }
 
     const typedPoItems = (poItemsData as PurchaseOrderItem[]) ?? []
+    const now = new Date().toISOString()
 
     for (const line of typedPoItems) {
+      const item = itemMap.get(line.item_id)
+      const lineQty = Number(line.qty)
+
       const { data: inventoryRow, error: inventorySelectError } = await supabase
         .from('inventory')
-        .select('id, item_id, current_qty')
+        .select('id, item_id, current_qty, available_qty, quarantine_qty')
         .eq('item_id', line.item_id)
         .maybeSingle()
 
@@ -424,8 +455,10 @@ export default function PurchaseOrderDetailPage({
         const { error: inventoryUpdateError } = await supabase
           .from('inventory')
           .update({
-            current_qty: Number(current.current_qty) + Number(line.qty),
-            updated_at: new Date().toISOString(),
+            current_qty: Number(current.current_qty) + lineQty,
+            available_qty: Number(current.available_qty),
+            quarantine_qty: Number(current.quarantine_qty) + lineQty,
+            updated_at: now,
           })
           .eq('id', current.id)
 
@@ -438,8 +471,10 @@ export default function PurchaseOrderDetailPage({
           .from('inventory')
           .insert({
             item_id: line.item_id,
-            current_qty: Number(line.qty),
-            updated_at: new Date().toISOString(),
+            current_qty: lineQty,
+            available_qty: 0,
+            quarantine_qty: lineQty,
+            updated_at: now,
           })
 
         if (inventoryInsertError) {
@@ -451,19 +486,46 @@ export default function PurchaseOrderDetailPage({
       const { error: txError } = await supabase
         .from('inventory_transactions')
         .insert({
-          trans_date: new Date().toISOString(),
+          trans_date: now,
           trans_type: 'IN',
           item_id: line.item_id,
-          qty: Number(line.qty),
+          qty: lineQty,
           ref_table: 'purchase_orders',
           ref_id: poId,
-          remarks: `발주서 ${poNo} 입고처리`,
+          remarks: `발주서 ${poNo} 입고처리 (격리재고 적치)`,
           created_by: userId || null,
-          created_at: new Date().toISOString(),
+          created_at: now,
         })
 
       if (txError) {
         setErrorMessage(getPurchaseOrderErrorMessage(txError))
+        return
+      }
+
+      const qcNo = makeQcNo()
+
+      const { error: qcInsertError } = await supabase
+        .from('qc_requests')
+        .insert({
+          qc_no: qcNo,
+          qc_type: 'raw_material',
+          qc_status: 'requested',
+          result_status: 'pending',
+          production_order_id: null,
+          item_id: line.item_id,
+          source_table: 'purchase_orders',
+          source_id: poId,
+          request_date: now.slice(0, 10),
+          sample_qty: lineQty,
+          tester_name: null,
+          result_comment: item
+            ? `${item.item_name} 원자재 입고분 QC 의뢰`
+            : '원자재 입고분 QC 의뢰',
+          result_date: null,
+        })
+
+      if (qcInsertError) {
+        setErrorMessage(getPurchaseOrderErrorMessage(qcInsertError))
         return
       }
     }
@@ -480,7 +542,7 @@ export default function PurchaseOrderDetailPage({
 
     setStatus('received')
     setActionMessage(
-      `발주서 ${poNo}의 입고처리가 완료되었습니다. 재고와 재고이력이 반영되었습니다.`
+      `발주서 ${poNo}의 입고처리가 완료되었습니다. 원자재는 격리재고로 적치되었고, 원자재 QC 요청이 자동 생성되었습니다.`
     )
     router.refresh()
   }
@@ -512,7 +574,7 @@ export default function PurchaseOrderDetailPage({
           <div className="erp-info-bar">
             발주번호: <span className="font-medium">{poNo}</span>
             <span className="mx-2">/</span>
-            상태: <span className="font-medium">{status}</span>
+            상태: <span className="font-medium">{getPurchaseStatusLabel(status)}</span>
           </div>
 
           <h2 className="erp-card-title">기본정보</h2>

@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase'
 type QcRequest = {
   id: number
   qc_no: string
-  production_order_id: number
+  production_order_id: number | null
   item_id: number
   request_date: string
   qc_type: 'raw_material' | 'sample' | 'final_product'
@@ -18,6 +18,8 @@ type QcRequest = {
   tester_name: string | null
   result_comment: string | null
   result_date: string | null
+  source_table: string | null
+  source_id: number | null
 }
 
 type ProductionOrder = {
@@ -40,6 +42,20 @@ function getQcTypeLabel(qcType: string) {
     default:
       return qcType
   }
+}
+
+function getSourceLabel(sourceTable: string | null, sourceId: number | null) {
+  if (!sourceTable || !sourceId) return '-'
+
+  if (sourceTable === 'production_orders') {
+    return `생산지시 / ${sourceId}`
+  }
+
+  if (sourceTable === 'purchase_orders') {
+    return `발주서 / ${sourceId}`
+  }
+
+  return `${sourceTable} / ${sourceId}`
 }
 
 function getStatusButtonClass(
@@ -94,7 +110,9 @@ export default function QcDetailPage({
   const [prodNo, setProdNo] = useState('-')
   const [itemLabel, setItemLabel] = useState('-')
 
-  const [qcStatus, setQcStatus] = useState<'requested' | 'received' | 'testing' | 'pass' | 'fail' | 'hold'>('requested')
+  const [qcStatus, setQcStatus] = useState<
+    'requested' | 'received' | 'testing' | 'pass' | 'fail' | 'hold'
+  >('requested')
   const [sampleQty, setSampleQty] = useState('')
   const [testerName, setTesterName] = useState('')
   const [resultComment, setResultComment] = useState('')
@@ -106,58 +124,74 @@ export default function QcDetailPage({
 
   useEffect(() => {
     async function loadData() {
-      const resolvedParams = await params
-      const id = Number(resolvedParams.id)
+      try {
+        setIsLoading(true)
+        setErrorMessage('')
 
-      if (Number.isNaN(id)) {
-        setErrorMessage('잘못된 QC 경로입니다.')
-        setIsLoading(false)
-        return
-      }
+        const resolvedParams = await params
+        const id = Number(resolvedParams.id)
 
-      const { data, error } = await supabase
-        .from('qc_requests')
-        .select('*')
-        .eq('id', id)
-        .single()
+        if (Number.isNaN(id)) {
+          setErrorMessage('잘못된 QC 경로입니다.')
+          setIsLoading(false)
+          return
+        }
 
-      if (error || !data) {
-        setErrorMessage('QC 정보를 불러오지 못했습니다.')
-        setIsLoading(false)
-        return
-      }
+        const { data, error } = await supabase
+          .from('qc_requests')
+          .select('*')
+          .eq('id', id)
+          .single()
 
-      const qcRow = data as QcRequest
-      setQc(qcRow)
-      setQcStatus(qcRow.qc_status)
-      setSampleQty(qcRow.sample_qty ? String(qcRow.sample_qty) : '')
-      setTesterName(qcRow.tester_name ?? '')
-      setResultComment(qcRow.result_comment ?? '')
+        if (error || !data) {
+          setErrorMessage('QC 정보를 불러오지 못했습니다.')
+          setIsLoading(false)
+          return
+        }
 
-      const [{ data: prodData }, { data: itemData }] = await Promise.all([
-        supabase
-          .from('production_orders')
-          .select('prod_no')
-          .eq('id', qcRow.production_order_id)
-          .single(),
-        supabase
+        const qcRow = data as QcRequest
+
+        setQc(qcRow)
+        setQcStatus(qcRow.qc_status)
+        setSampleQty(qcRow.sample_qty !== null ? String(qcRow.sample_qty) : '')
+        setTesterName(qcRow.tester_name ?? '')
+        setResultComment(qcRow.result_comment ?? '')
+
+        if (qcRow.production_order_id) {
+          const { data: prodData } = await supabase
+            .from('production_orders')
+            .select('prod_no')
+            .eq('id', qcRow.production_order_id)
+            .single()
+
+          if (prodData) {
+            const prod = prodData as ProductionOrder
+            setProdNo(prod.prod_no)
+          } else {
+            setProdNo('-')
+          }
+        } else {
+          setProdNo('-')
+        }
+
+        const { data: itemData } = await supabase
           .from('items')
           .select('item_code, item_name')
           .eq('id', qcRow.item_id)
-          .single(),
-      ])
+          .single()
 
-      if (prodData) {
-        const prod = prodData as ProductionOrder
-        setProdNo(prod.prod_no)
+        if (itemData) {
+          const item = itemData as Item
+          setItemLabel(`${item.item_code} / ${item.item_name}`)
+        } else {
+          setItemLabel('-')
+        }
+      } catch (error) {
+        console.error(error)
+        setErrorMessage('QC 정보를 불러오는 중 오류가 발생했습니다.')
+      } finally {
+        setIsLoading(false)
       }
-
-      if (itemData) {
-        const item = itemData as Item
-        setItemLabel(`${item.item_code} / ${item.item_name}`)
-      }
-
-      setIsLoading(false)
     }
 
     loadData()
@@ -254,8 +288,20 @@ export default function QcDetailPage({
             </div>
 
             <div className="erp-field">
+              <label className="erp-label">원본 문서</label>
+              <div className="erp-readonly-box">
+                {getSourceLabel(qc.source_table, qc.source_id)}
+              </div>
+            </div>
+
+            <div className="erp-field">
               <label className="erp-label">의뢰일</label>
               <div className="erp-readonly-box">{qc.request_date}</div>
+            </div>
+
+            <div className="erp-field">
+              <label className="erp-label">현재 결과상태</label>
+              <div className="erp-readonly-box">{qc.result_status}</div>
             </div>
 
             <div className="erp-field md:col-span-2">
@@ -264,13 +310,15 @@ export default function QcDetailPage({
             </div>
 
             <div className="erp-field">
-              <label className="erp-label">샘플 수량</label>
+              <label className="erp-label">
+                {qc.qc_type === 'sample' ? '샘플 수량' : '검사 수량'}
+              </label>
               <input
                 type="number"
                 value={sampleQty}
                 onChange={(e) => setSampleQty(e.target.value)}
                 className="erp-input"
-                placeholder="예: 3"
+                placeholder={qc.qc_type === 'sample' ? '예: 2' : '예: 10'}
               />
             </div>
 
@@ -287,22 +335,46 @@ export default function QcDetailPage({
             <div className="erp-field md:col-span-2">
               <label className="erp-label">QC 상태</label>
               <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={() => setQcStatus('requested')} className={getStatusButtonClass(qcStatus, 'requested')}>
+                <button
+                  type="button"
+                  onClick={() => setQcStatus('requested')}
+                  className={getStatusButtonClass(qcStatus, 'requested')}
+                >
                   의뢰됨
                 </button>
-                <button type="button" onClick={() => setQcStatus('received')} className={getStatusButtonClass(qcStatus, 'received')}>
+                <button
+                  type="button"
+                  onClick={() => setQcStatus('received')}
+                  className={getStatusButtonClass(qcStatus, 'received')}
+                >
                   접수됨
                 </button>
-                <button type="button" onClick={() => setQcStatus('testing')} className={getStatusButtonClass(qcStatus, 'testing')}>
+                <button
+                  type="button"
+                  onClick={() => setQcStatus('testing')}
+                  className={getStatusButtonClass(qcStatus, 'testing')}
+                >
                   시험중
                 </button>
-                <button type="button" onClick={() => setQcStatus('pass')} className={getStatusButtonClass(qcStatus, 'pass')}>
+                <button
+                  type="button"
+                  onClick={() => setQcStatus('pass')}
+                  className={getStatusButtonClass(qcStatus, 'pass')}
+                >
                   합격
                 </button>
-                <button type="button" onClick={() => setQcStatus('fail')} className={getStatusButtonClass(qcStatus, 'fail')}>
+                <button
+                  type="button"
+                  onClick={() => setQcStatus('fail')}
+                  className={getStatusButtonClass(qcStatus, 'fail')}
+                >
                   불합격
                 </button>
-                <button type="button" onClick={() => setQcStatus('hold')} className={getStatusButtonClass(qcStatus, 'hold')}>
+                <button
+                  type="button"
+                  onClick={() => setQcStatus('hold')}
+                  className={getStatusButtonClass(qcStatus, 'hold')}
+                >
                   보류
                 </button>
               </div>
@@ -329,9 +401,14 @@ export default function QcDetailPage({
             {isSaving ? '저장 중...' : '결과 저장'}
           </button>
 
-          <Link href={`/production-orders/${qc.production_order_id}`} className="erp-btn-secondary">
-            생산지시 보기
-          </Link>
+          {qc.production_order_id && (
+            <Link
+              href={`/production-orders/${qc.production_order_id}`}
+              className="erp-btn-secondary"
+            >
+              생산지시 보기
+            </Link>
+          )}
 
           <Link href="/qc" className="erp-btn-secondary">
             QC 목록으로

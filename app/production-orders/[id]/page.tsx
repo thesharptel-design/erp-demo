@@ -54,6 +54,8 @@ type InventoryRow = {
   id: number
   item_id: number
   current_qty: number
+  available_qty: number | null
+  quarantine_qty: number | null
 }
 
 type QcRequestRow = {
@@ -186,7 +188,9 @@ export default function ProductionOrderDetailPage({
   const [qcRequestId, setQcRequestId] = useState<number | null>(null)
   const [qcNo, setQcNo] = useState('')
   const [qcType, setQcType] = useState<'raw_material' | 'sample' | 'final_product' | ''>('')
-  const [qcStatus, setQcStatus] = useState<'requested' | 'received' | 'testing' | 'pass' | 'fail' | 'hold' | ''>('')
+  const [qcStatus, setQcStatus] = useState<
+    'requested' | 'received' | 'testing' | 'pass' | 'fail' | 'hold' | ''
+  >('')
   const [sampleQty, setSampleQty] = useState<number | null>(null)
   const [testerName, setTesterName] = useState('')
   const [qcResultDate, setQcResultDate] = useState<string | null>(null)
@@ -194,104 +198,109 @@ export default function ProductionOrderDetailPage({
 
   useEffect(() => {
     async function loadData() {
-      const resolvedParams = await params
-      const id = Number(resolvedParams.id)
+      try {
+        const resolvedParams = await params
+        const id = Number(resolvedParams.id)
 
-      if (Number.isNaN(id)) {
-        setErrorMessage('잘못된 생산지시 경로입니다.')
+        if (Number.isNaN(id)) {
+          setErrorMessage('잘못된 생산지시 경로입니다.')
+          setIsLoading(false)
+          return
+        }
+
+        const [
+          { data: prod, error: prodError },
+          { data: itemsData, error: itemsError },
+          { data: bomsData, error: bomsError },
+          { data: usersData, error: usersError },
+          { data: qcData, error: qcError },
+          permissions,
+        ] = await Promise.all([
+          supabase.from('production_orders').select('*').eq('id', id).single(),
+          supabase
+            .from('items')
+            .select('id, item_code, item_name, item_type')
+            .eq('item_type', 'finished')
+            .order('item_name'),
+          supabase
+            .from('boms')
+            .select('id, parent_item_id, bom_code, version_no, status')
+            .eq('status', 'active')
+            .order('id'),
+          supabase
+            .from('app_users')
+            .select('id, user_name, login_id')
+            .order('user_name'),
+          supabase
+            .from('qc_requests')
+            .select(`
+              id,
+              qc_no,
+              qc_type,
+              qc_status,
+              result_status,
+              sample_qty,
+              tester_name,
+              result_date,
+              result_comment
+            `)
+            .eq('production_order_id', id)
+            .maybeSingle(),
+          getCurrentUserPermissions(),
+        ])
+
+        if (prodError || !prod) {
+          setErrorMessage('생산지시 정보를 불러오지 못했습니다.')
+          setIsLoading(false)
+          return
+        }
+
+        if (itemsError || bomsError || usersError || qcError) {
+          setErrorMessage('기초 데이터를 불러오지 못했습니다.')
+          setIsLoading(false)
+          return
+        }
+
+        const typedProd = prod as ProductionOrder
+
+        setProdId(typedProd.id)
+        setProdNo(typedProd.prod_no)
+        setProdDate(typedProd.prod_date)
+        setItemId(typedProd.item_id)
+        setBomId(typedProd.bom_id ?? '')
+        setPlanQty(String(typedProd.plan_qty))
+        setCompletedQty(String(typedProd.completed_qty))
+        setStatus(typedProd.status)
+        setUserId(typedProd.user_id)
+        setRemarks(typedProd.remarks ?? '')
+        setInboundCompleted(typedProd.inbound_completed ?? false)
+
+        setItems((itemsData as Item[]) ?? [])
+        setBoms((bomsData as Bom[]) ?? [])
+        setUsers((usersData as AppUser[]) ?? [])
+
+        setCanProdComplete(
+          permissions?.role_name === 'admin' || permissions?.can_prod_complete || false
+        )
+        setCanReceiveStock(
+          permissions?.role_name === 'admin' || permissions?.can_receive_stock || false
+        )
+
+        const qc = (qcData as QcRequestRow | null) ?? null
+        setQcRequestId(qc?.id ?? null)
+        setQcNo(qc?.qc_no ?? '')
+        setQcType(qc?.qc_type ?? '')
+        setQcStatus(qc?.qc_status ?? '')
+        setSampleQty(qc?.sample_qty ?? null)
+        setTesterName(qc?.tester_name ?? '')
+        setQcResultDate(qc?.result_date ?? null)
+        setQcResultComment(qc?.result_comment ?? '')
+      } catch (error) {
+        console.error(error)
+        setErrorMessage('생산지시 정보를 불러오는 중 오류가 발생했습니다.')
+      } finally {
         setIsLoading(false)
-        return
       }
-
-      const [
-        { data: prod, error: prodError },
-        { data: itemsData, error: itemsError },
-        { data: bomsData, error: bomsError },
-        { data: usersData, error: usersError },
-        { data: qcData, error: qcError },
-        permissions,
-      ] = await Promise.all([
-        supabase.from('production_orders').select('*').eq('id', id).single(),
-        supabase
-          .from('items')
-          .select('id, item_code, item_name, item_type')
-          .eq('item_type', 'finished')
-          .order('item_name'),
-        supabase
-          .from('boms')
-          .select('id, parent_item_id, bom_code, version_no, status')
-          .eq('status', 'active')
-          .order('id'),
-        supabase
-          .from('app_users')
-          .select('id, user_name, login_id')
-          .order('user_name'),
-        supabase
-          .from('qc_requests')
-          .select(`
-            id,
-            qc_no,
-            qc_type,
-            qc_status,
-            result_status,
-            sample_qty,
-            tester_name,
-            result_date,
-            result_comment
-          `)
-          .eq('production_order_id', id)
-          .maybeSingle(),
-        getCurrentUserPermissions(),
-      ])
-
-      if (prodError || !prod) {
-        setErrorMessage('생산지시 정보를 불러오지 못했습니다.')
-        setIsLoading(false)
-        return
-      }
-
-      if (itemsError || bomsError || usersError || qcError) {
-        setErrorMessage('기초 데이터를 불러오지 못했습니다.')
-        setIsLoading(false)
-        return
-      }
-
-      const typedProd = prod as ProductionOrder
-
-      setProdId(typedProd.id)
-      setProdNo(typedProd.prod_no)
-      setProdDate(typedProd.prod_date)
-      setItemId(typedProd.item_id)
-      setBomId(typedProd.bom_id ?? '')
-      setPlanQty(String(typedProd.plan_qty))
-      setCompletedQty(String(typedProd.completed_qty))
-      setStatus(typedProd.status)
-      setUserId(typedProd.user_id)
-      setRemarks(typedProd.remarks ?? '')
-      setInboundCompleted(typedProd.inbound_completed ?? false)
-
-      setItems((itemsData as Item[]) ?? [])
-      setBoms((bomsData as Bom[]) ?? [])
-      setUsers((usersData as AppUser[]) ?? [])
-
-      setCanProdComplete(
-        permissions?.role_name === 'admin' || permissions?.can_prod_complete || false
-      )
-      setCanReceiveStock(
-        permissions?.role_name === 'admin' || permissions?.can_receive_stock || false
-      )
-
-      const qc = (qcData as QcRequestRow | null) ?? null
-      setQcRequestId(qc?.id ?? null)
-      setQcNo(qc?.qc_no ?? '')
-      setQcType(qc?.qc_type ?? '')
-      setQcStatus(qc?.qc_status ?? '')
-      setSampleQty(qc?.sample_qty ?? null)
-      setTesterName(qc?.tester_name ?? '')
-      setQcResultDate(qc?.result_date ?? null)
-      setQcResultComment(qc?.result_comment ?? '')
-
-      setIsLoading(false)
     }
 
     loadData()
@@ -308,7 +317,10 @@ export default function ProductionOrderDetailPage({
   )
 
   const isCompleted = status === 'completed'
-  const canInbound = isCompleted && qcStatus === 'pass' && !inboundCompleted
+  const completedQtyNumber = Number(completedQty) || 0
+  const effectiveInboundQty = completedQtyNumber > 0 ? completedQtyNumber : Number(planQty) || 0
+  const canCreateFinalQc = isCompleted && !qcRequestId
+  const canInbound = isCompleted && qcType === 'final_product' && qcStatus === 'pass' && !inboundCompleted
 
   function handleFinishedItemChange(value: string) {
     const nextItemId = value ? Number(value) : ''
@@ -391,6 +403,11 @@ export default function ProductionOrderDetailPage({
       return
     }
 
+    if (status !== 'completed') {
+      setErrorMessage('완제품 QC는 생산완료 후에 생성할 수 있습니다.')
+      return
+    }
+
     setErrorMessage('')
     setSuccessMessage('')
     setActionMessage('')
@@ -404,7 +421,7 @@ export default function ProductionOrderDetailPage({
         production_order_id: prodId,
         item_id: itemId,
         request_date: new Date().toISOString().slice(0, 10),
-        qc_type: 'sample',
+        qc_type: 'final_product',
         qc_status: 'requested',
         result_status: 'pending',
         sample_qty: null,
@@ -439,7 +456,7 @@ export default function ProductionOrderDetailPage({
     setTesterName(data.tester_name ?? '')
     setQcResultDate(data.result_date ?? null)
     setQcResultComment(data.result_comment ?? '')
-    setActionMessage(`QC 의뢰 ${newQcNo}가 생성되었습니다. 현재 상태는 의뢰됨입니다.`)
+    setActionMessage(`완제품 QC 의뢰 ${newQcNo}가 생성되었습니다. 현재 상태는 의뢰됨입니다.`)
     router.refresh()
   }
 
@@ -493,11 +510,13 @@ export default function ProductionOrderDetailPage({
     setSuccessMessage('')
     setActionMessage('')
 
+    const completedQtyValue = Number(planQty) || 0
+
     const { error } = await supabase
       .from('production_orders')
       .update({
         status: 'completed',
-        completed_qty: Number(planQty) || 0,
+        completed_qty: completedQtyValue,
       })
       .eq('id', prodId)
 
@@ -507,9 +526,9 @@ export default function ProductionOrderDetailPage({
     }
 
     setStatus('completed')
-    setCompletedQty(String(Number(planQty) || 0))
+    setCompletedQty(String(completedQtyValue))
     setActionMessage(
-      `생산지시 ${prodNo}가 작업 완료 처리되었습니다. QC 합격 후 입고처리를 진행하십시오.`
+      `생산지시 ${prodNo}가 작업 완료 처리되었습니다. 완제품 QC 의뢰 생성 후 QC 합격 시 입고처리를 진행하십시오.`
     )
     router.refresh()
   }
@@ -541,12 +560,17 @@ export default function ProductionOrderDetailPage({
     }
 
     if (!qcRequestId) {
-      setErrorMessage('QC 의뢰가 없어 입고처리할 수 없습니다.')
+      setErrorMessage('완제품 QC 의뢰가 없어 입고처리할 수 없습니다.')
+      return
+    }
+
+    if (qcType !== 'final_product') {
+      setErrorMessage('완제품 QC만 입고처리 기준으로 사용할 수 있습니다.')
       return
     }
 
     if (qcStatus !== 'pass') {
-      setErrorMessage('QC 합격 상태여야 입고처리가 가능합니다.')
+      setErrorMessage('완제품 QC 합격 상태여야 입고처리가 가능합니다.')
       return
     }
 
@@ -555,12 +579,16 @@ export default function ProductionOrderDetailPage({
       return
     }
 
+    if (effectiveInboundQty <= 0) {
+      setErrorMessage('입고 수량이 올바르지 않습니다.')
+      return
+    }
+
     setErrorMessage('')
     setSuccessMessage('')
     setActionMessage('')
 
     const now = new Date().toISOString()
-    const planQtyNumber = Number(planQty) || 0
 
     const { data: bomItemsData, error: bomItemsError } = await supabase
       .from('bom_items')
@@ -576,11 +604,11 @@ export default function ProductionOrderDetailPage({
     const bomItems = (bomItemsData as BomItem[]) ?? []
 
     for (const bomItem of bomItems) {
-      const requiredQty = Number(bomItem.qty) * planQtyNumber
+      const requiredQty = Number(bomItem.qty) * effectiveInboundQty
 
       const { data: inventoryRow, error: inventorySelectError } = await supabase
         .from('inventory')
-        .select('id, item_id, current_qty')
+        .select('id, item_id, current_qty, available_qty, quarantine_qty')
         .eq('item_id', bomItem.child_item_id)
         .maybeSingle()
 
@@ -595,25 +623,26 @@ export default function ProductionOrderDetailPage({
       }
 
       const materialInventory = inventoryRow as InventoryRow
+      const availableQty = Number(materialInventory.available_qty ?? 0)
 
-      if (Number(materialInventory.current_qty) < requiredQty) {
+      if (availableQty < requiredQty) {
         const materialItem = itemMap.get(bomItem.child_item_id)
 
         setErrorMessage(
-          `자재 재고가 부족합니다. ${
+          `사용가능 자재가 부족합니다. ${
             materialItem?.item_name ?? '자재'
-          }의 필요수량은 ${requiredQty}, 현재고는 ${Number(materialInventory.current_qty)}입니다.`
+          }의 필요수량은 ${requiredQty}, 사용가능재고는 ${availableQty}입니다.`
         )
         return
       }
     }
 
     for (const bomItem of bomItems) {
-      const requiredQty = Number(bomItem.qty) * planQtyNumber
+      const requiredQty = Number(bomItem.qty) * effectiveInboundQty
 
       const { data: inventoryRow, error: inventorySelectError } = await supabase
         .from('inventory')
-        .select('id, item_id, current_qty')
+        .select('id, item_id, current_qty, available_qty, quarantine_qty')
         .eq('item_id', bomItem.child_item_id)
         .maybeSingle()
 
@@ -628,12 +657,19 @@ export default function ProductionOrderDetailPage({
       }
 
       const materialInventory = inventoryRow as InventoryRow
-      const newQty = Number(materialInventory.current_qty) - requiredQty
+      const currentQty = Number(materialInventory.current_qty ?? 0)
+      const availableQty = Number(materialInventory.available_qty ?? 0)
+      const quarantineQty = Number(materialInventory.quarantine_qty ?? 0)
+
+      const nextCurrentQty = currentQty - requiredQty
+      const nextAvailableQty = availableQty - requiredQty
 
       const { error: inventoryUpdateError } = await supabase
         .from('inventory')
         .update({
-          current_qty: newQty,
+          current_qty: nextCurrentQty,
+          available_qty: nextAvailableQty,
+          quarantine_qty: quarantineQty,
           updated_at: now,
         })
         .eq('id', materialInventory.id)
@@ -665,7 +701,7 @@ export default function ProductionOrderDetailPage({
 
     const { data: finishedInventoryRow, error: finishedInventorySelectError } = await supabase
       .from('inventory')
-      .select('id, item_id, current_qty')
+      .select('id, item_id, current_qty, available_qty, quarantine_qty')
       .eq('item_id', itemId)
       .maybeSingle()
 
@@ -676,11 +712,16 @@ export default function ProductionOrderDetailPage({
 
     if (finishedInventoryRow) {
       const finishedInventory = finishedInventoryRow as InventoryRow
+      const currentQty = Number(finishedInventory.current_qty ?? 0)
+      const availableQty = Number(finishedInventory.available_qty ?? 0)
+      const quarantineQty = Number(finishedInventory.quarantine_qty ?? 0)
 
       const { error: finishedUpdateError } = await supabase
         .from('inventory')
         .update({
-          current_qty: Number(finishedInventory.current_qty) + planQtyNumber,
+          current_qty: currentQty + effectiveInboundQty,
+          available_qty: availableQty + effectiveInboundQty,
+          quarantine_qty: quarantineQty,
           updated_at: now,
         })
         .eq('id', finishedInventory.id)
@@ -694,7 +735,9 @@ export default function ProductionOrderDetailPage({
         .from('inventory')
         .insert({
           item_id: itemId,
-          current_qty: planQtyNumber,
+          current_qty: effectiveInboundQty,
+          available_qty: effectiveInboundQty,
+          quarantine_qty: 0,
           updated_at: now,
         })
 
@@ -710,7 +753,7 @@ export default function ProductionOrderDetailPage({
         trans_date: now,
         trans_type: 'PROD_IN',
         item_id: itemId,
-        qty: planQtyNumber,
+        qty: effectiveInboundQty,
         ref_table: 'production_orders',
         ref_id: prodId,
         remarks: `생산지시 ${prodNo} 완제품입고`,
@@ -737,7 +780,7 @@ export default function ProductionOrderDetailPage({
 
     setInboundCompleted(true)
     setActionMessage(
-      `생산지시 ${prodNo}가 QC 합격 후 입고 처리되었습니다. 자재 차감 및 완제품 재고 반영이 완료되었습니다.`
+      `생산지시 ${prodNo}가 완제품 QC 합격 후 입고 처리되었습니다. 사용가능 자재 차감 및 완제품 재고 반영이 완료되었습니다.`
     )
     router.refresh()
   }
@@ -759,7 +802,7 @@ export default function ProductionOrderDetailPage({
         <div>
           <h1 className="erp-page-title">생산지시 상세 / 수정</h1>
           <p className="erp-page-desc">
-            생산지시 기본정보를 수정하고 생산 진행, QC, 입고를 처리합니다.
+            생산지시 기본정보를 수정하고 생산 진행, 완제품 QC, 입고를 처리합니다.
           </p>
         </div>
       </div>
@@ -773,7 +816,10 @@ export default function ProductionOrderDetailPage({
           </div>
 
           <div className="erp-info-bar">
-            QC 상태: <span className="font-medium">{qcRequestId ? getQcStatusLabel(qcStatus) : '미의뢰'}</span>
+            QC 상태:{' '}
+            <span className="font-medium">
+              {qcRequestId ? `${getQcTypeLabel(qcType)} / ${getQcStatusLabel(qcStatus)}` : '미의뢰'}
+            </span>
           </div>
 
           <div className="erp-info-bar">
@@ -907,7 +953,9 @@ export default function ProductionOrderDetailPage({
             </div>
 
             <div className="erp-field">
-              <label className="erp-label">샘플 수량</label>
+              <label className="erp-label">
+                {qcType === 'sample' ? '샘플 수량' : '검사 수량'}
+              </label>
               <div className="erp-readonly-box">{sampleQty ?? '-'}</div>
             </div>
 
@@ -947,10 +995,10 @@ export default function ProductionOrderDetailPage({
           <button
             type="button"
             onClick={handleCreateQcRequest}
-            disabled={!!qcRequestId}
+            disabled={!canCreateFinalQc}
             className="erp-btn-secondary"
           >
-            QC 의뢰 생성
+            완제품 QC 의뢰 생성
           </button>
 
           <button
