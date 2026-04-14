@@ -11,6 +11,8 @@ type ItemRow = {
 type InventoryRow = {
   item_id: number
   current_qty: number
+  available_qty?: number | null
+  quarantine_qty?: number | null
 }
 
 type ApprovalDocRow = {
@@ -26,6 +28,7 @@ type ProductionOrderRow = {
   prod_no: string
   status: string
   prod_date: string
+  inbound_completed?: boolean
   items: {
     item_name: string
   } | null
@@ -48,6 +51,14 @@ type InventoryTransactionRow = {
   trans_date: string
 }
 
+type QcRequestRow = {
+  id: number
+  qc_type: 'raw_material' | 'sample' | 'final_product'
+  qc_status: 'requested' | 'received' | 'testing' | 'pass' | 'fail' | 'hold'
+  result_status: 'pending' | 'pass' | 'fail'
+  request_date: string
+}
+
 async function getDashboardData() {
   const [
     { data: itemsData, error: itemsError },
@@ -56,6 +67,7 @@ async function getDashboardData() {
     { data: productionOrdersData, error: productionOrdersError },
     { data: purchaseOrdersData, error: purchaseOrdersError },
     { data: inventoryTransactionsData, error: inventoryTransactionsError },
+    { data: qcRequestsData, error: qcRequestsError },
   ] = await Promise.all([
     supabase
       .from('items')
@@ -63,7 +75,7 @@ async function getDashboardData() {
       .eq('is_active', true),
     supabase
       .from('inventory')
-      .select('item_id, current_qty'),
+      .select('item_id, current_qty, available_qty, quarantine_qty'),
     supabase
       .from('approval_docs')
       .select('id, doc_no, title, status, drafted_at')
@@ -75,6 +87,7 @@ async function getDashboardData() {
         prod_no,
         status,
         prod_date,
+        inbound_completed,
         items:item_id (
           item_name
         )
@@ -97,6 +110,10 @@ async function getDashboardData() {
       .from('inventory_transactions')
       .select('id, trans_type, trans_date')
       .order('id', { ascending: false }),
+    supabase
+      .from('qc_requests')
+      .select('id, qc_type, qc_status, result_status, request_date')
+      .order('id', { ascending: false }),
   ])
 
   if (itemsError) console.error('items error:', itemsError.message)
@@ -105,6 +122,7 @@ async function getDashboardData() {
   if (productionOrdersError) console.error('production_orders error:', productionOrdersError.message)
   if (purchaseOrdersError) console.error('purchase_orders error:', purchaseOrdersError.message)
   if (inventoryTransactionsError) console.error('inventory_transactions error:', inventoryTransactionsError.message)
+  if (qcRequestsError) console.error('qc_requests error:', qcRequestsError.message)
 
   return {
     items: (itemsData as ItemRow[]) ?? [],
@@ -113,6 +131,7 @@ async function getDashboardData() {
     productionOrders: (productionOrdersData as unknown as ProductionOrderRow[]) ?? [],
     purchaseOrders: (purchaseOrdersData as unknown as PurchaseOrderRow[]) ?? [],
     inventoryTransactions: (inventoryTransactionsData as InventoryTransactionRow[]) ?? [],
+    qcRequests: (qcRequestsData as QcRequestRow[]) ?? [],
   }
 }
 
@@ -214,30 +233,47 @@ export default async function DashboardPage() {
     productionOrders,
     purchaseOrders,
     inventoryTransactions,
+    qcRequests,
   } = await getDashboardData()
 
   const inventoryMap = new Map(
-    inventory.map((row) => [row.item_id, row.current_qty])
+    inventory.map((row) => [
+      row.item_id,
+      {
+        currentQty: Number(row.current_qty ?? 0),
+        availableQty: Number(row.available_qty ?? 0),
+        quarantineQty: Number(row.quarantine_qty ?? 0),
+      },
+    ])
   )
 
   const shortageCount = items.filter((item) => {
-    const currentQty = inventoryMap.get(item.id) ?? 0
-    return currentQty < (item.safety_stock_qty ?? 0)
+    const inventoryRow = inventoryMap.get(item.id)
+    const availableQty = inventoryRow?.availableQty ?? 0
+    return availableQty < Number(item.safety_stock_qty ?? 0)
   }).length
+
+  const quarantineItemCount = inventory.filter(
+    (row) => Number(row.quarantine_qty ?? 0) > 0
+  ).length
 
   const pendingApprovalCount = approvals.filter((doc) =>
     ['submitted', 'in_review'].includes(doc.status)
   ).length
 
-  const plannedProductionCount = productionOrders.filter((order) =>
-    ['planned', 'in_progress'].includes(order.status)
+  const pendingQcCount = qcRequests.filter((qc) =>
+    ['requested', 'received', 'testing', 'hold'].includes(qc.qc_status)
+  ).length
+
+  const pendingInboundProductionCount = productionOrders.filter(
+    (order) => order.status === 'completed' && !order.inbound_completed
   ).length
 
   const today = new Date().toISOString().slice(0, 10)
 
   const todayInboundCount = inventoryTransactions.filter((tx) => {
     const txDate = tx.trans_date.slice(0, 10)
-    return txDate === today && ['IN', 'PROD_IN'].includes(tx.trans_type)
+    return txDate === today && ['IN', 'PROD_IN', 'QC_RELEASE'].includes(tx.trans_type)
   }).length
 
   const recentApprovals = approvals.slice(0, 5)
@@ -250,18 +286,26 @@ export default async function DashboardPage() {
         <div>
           <h1 className="erp-page-title">대시보드</h1>
           <p className="erp-page-desc">
-            주요 업무 현황과 최근 처리 내역을 한눈에 확인합니다.
+            바이오형 업무 흐름 기준으로 구매, 생산, 품질, 재고 현황을 한눈에 확인합니다.
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         <div className="erp-card p-5">
-          <p className="text-sm font-medium text-gray-500">부족재고 품목</p>
+          <p className="text-sm font-medium text-gray-500">사용가능 부족 품목</p>
           <p className="mt-3 text-3xl font-bold tracking-tight text-gray-900">
             {shortageCount}
           </p>
-          <p className="mt-2 text-sm text-gray-500">안전재고 미만 품목 수</p>
+          <p className="mt-2 text-sm text-gray-500">안전재고 미만 기준</p>
+        </div>
+
+        <div className="erp-card p-5">
+          <p className="text-sm font-medium text-gray-500">격리재고 보유 품목</p>
+          <p className="mt-3 text-3xl font-bold tracking-tight text-gray-900">
+            {quarantineItemCount}
+          </p>
+          <p className="mt-2 text-sm text-gray-500">QC 해제 대기 품목 수</p>
         </div>
 
         <div className="erp-card p-5">
@@ -273,25 +317,33 @@ export default async function DashboardPage() {
         </div>
 
         <div className="erp-card p-5">
-          <p className="text-sm font-medium text-gray-500">생산대기 건수</p>
+          <p className="text-sm font-medium text-gray-500">QC 진행 대기</p>
           <p className="mt-3 text-3xl font-bold tracking-tight text-gray-900">
-            {plannedProductionCount}
+            {pendingQcCount}
           </p>
-          <p className="mt-2 text-sm text-gray-500">생산예정 / 생산중 건수</p>
+          <p className="mt-2 text-sm text-gray-500">의뢰 / 접수 / 시험 / 보류</p>
         </div>
 
         <div className="erp-card p-5">
-          <p className="text-sm font-medium text-gray-500">금일 입고 건수</p>
+          <p className="text-sm font-medium text-gray-500">미입고 생산완료</p>
+          <p className="mt-3 text-3xl font-bold tracking-tight text-gray-900">
+            {pendingInboundProductionCount}
+          </p>
+          <p className="mt-2 text-sm text-gray-500">완제품 QC 또는 입고 대기</p>
+        </div>
+
+        <div className="erp-card p-5">
+          <p className="text-sm font-medium text-gray-500">금일 재고 반영</p>
           <p className="mt-3 text-3xl font-bold tracking-tight text-gray-900">
             {todayInboundCount}
           </p>
-          <p className="mt-2 text-sm text-gray-500">입고 / 생산입고 기준</p>
+          <p className="mt-2 text-sm text-gray-500">입고 / 생산입고 / QC해제 기준</p>
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
         <div className="erp-card">
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-gray-900">최근 발주</h2>
             <Link href="/purchase-orders" className="text-sm text-blue-600 hover:underline">
               전체보기
@@ -326,7 +378,7 @@ export default async function DashboardPage() {
         </div>
 
         <div className="erp-card">
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-gray-900">최근 생산지시</h2>
             <Link href="/production-orders" className="text-sm text-blue-600 hover:underline">
               전체보기
@@ -361,7 +413,7 @@ export default async function DashboardPage() {
         </div>
 
         <div className="erp-card">
-          <div className="mb-4 flex items-center justify-between">
+          <div className="mb-4 flex items-center justify-between gap-3">
             <h2 className="text-lg font-semibold text-gray-900">최근 결재문서</h2>
             <Link href="/approvals" className="text-sm text-blue-600 hover:underline">
               전체보기
@@ -398,31 +450,43 @@ export default async function DashboardPage() {
         <div className="mb-4">
           <h2 className="text-lg font-semibold text-gray-900">빠른 이동</h2>
           <p className="mt-1 text-sm text-gray-500">
-            주요 메뉴로 바로 이동합니다.
+            현재 메뉴 구조에 맞는 주요 기능으로 바로 이동합니다.
           </p>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-          <Link href="/customers" className="erp-btn-secondary w-full">
-            거래처관리
-          </Link>
-          <Link href="/items" className="erp-btn-secondary w-full">
-            품목관리
-          </Link>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
           <Link href="/quotes" className="erp-btn-secondary w-full">
-            견적서관리
+            영업관리 / 견적서관리
           </Link>
           <Link href="/purchase-orders" className="erp-btn-secondary w-full">
-            발주서관리
+            구매관리 / 발주서관리
           </Link>
           <Link href="/production-orders" className="erp-btn-secondary w-full">
-            생산지시관리
+            생산관리 / 생산지시관리
+          </Link>
+          <Link href="/boms" className="erp-btn-secondary w-full">
+            생산관리 / BOM관리
+          </Link>
+          <Link href="/qc" className="erp-btn-secondary w-full">
+            품질관리 / QC관리
           </Link>
           <Link href="/inventory" className="erp-btn-secondary w-full">
-            재고조회
+            재고관리 / 재고현황
           </Link>
           <Link href="/inventory-transactions" className="erp-btn-secondary w-full">
-            재고이력
+            재고관리 / 입출고현황
+          </Link>
+          <Link href="/inventory-adjustments" className="erp-btn-secondary w-full">
+            재고관리 / 재고조정
+          </Link>
+          <Link href="/customers" className="erp-btn-secondary w-full">
+            기준정보 / 거래처관리
+          </Link>
+          <Link href="/items" className="erp-btn-secondary w-full">
+            기준정보 / 품목관리
+          </Link>
+          <Link href="/admin/user-permissions" className="erp-btn-secondary w-full">
+            기준정보 / 사용자권한관리
           </Link>
           <Link href="/approvals" className="erp-btn-secondary w-full">
             기안/결재

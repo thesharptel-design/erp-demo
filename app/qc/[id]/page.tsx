@@ -20,6 +20,7 @@ type QcRequest = {
   result_date: string | null
   source_table: string | null
   source_id: number | null
+  stock_released: boolean
 }
 
 type ProductionOrder = {
@@ -29,6 +30,14 @@ type ProductionOrder = {
 type Item = {
   item_code: string
   item_name: string
+}
+
+type InventoryRow = {
+  id: number
+  item_id: number
+  current_qty: number
+  available_qty: number
+  quarantine_qty: number
 }
 
 function getQcTypeLabel(qcType: string) {
@@ -56,6 +65,38 @@ function getSourceLabel(sourceTable: string | null, sourceId: number | null) {
   }
 
   return `${sourceTable} / ${sourceId}`
+}
+
+function getQcStatusLabel(status: string) {
+  switch (status) {
+    case 'requested':
+      return '의뢰됨'
+    case 'received':
+      return '접수됨'
+    case 'testing':
+      return '시험중'
+    case 'pass':
+      return '합격'
+    case 'fail':
+      return '불합격'
+    case 'hold':
+      return '보류'
+    default:
+      return status
+  }
+}
+
+function getResultStatusLabel(status: string) {
+  switch (status) {
+    case 'pending':
+      return '대기'
+    case 'pass':
+      return '합격'
+    case 'fail':
+      return '불합격'
+    default:
+      return status
+  }
 }
 
 function getStatusButtonClass(
@@ -121,12 +162,15 @@ export default function QcDetailPage({
   const [isSaving, setIsSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+  const [actionMessage, setActionMessage] = useState('')
 
   useEffect(() => {
     async function loadData() {
       try {
         setIsLoading(true)
         setErrorMessage('')
+        setSuccessMessage('')
+        setActionMessage('')
 
         const resolvedParams = await params
         const id = Number(resolvedParams.id)
@@ -139,7 +183,23 @@ export default function QcDetailPage({
 
         const { data, error } = await supabase
           .from('qc_requests')
-          .select('*')
+          .select(`
+            id,
+            qc_no,
+            production_order_id,
+            item_id,
+            request_date,
+            qc_type,
+            qc_status,
+            result_status,
+            sample_qty,
+            tester_name,
+            result_comment,
+            result_date,
+            source_table,
+            source_id,
+            stock_released
+          `)
           .eq('id', id)
           .single()
 
@@ -197,6 +257,106 @@ export default function QcDetailPage({
     loadData()
   }, [params])
 
+  async function releaseRawMaterialStockIfNeeded(nextQcStatus: QcRequest['qc_status']) {
+    if (!qc) return { released: false }
+
+    if (qc.qc_type !== 'raw_material') {
+      return { released: false }
+    }
+
+    if (nextQcStatus !== 'pass') {
+      return { released: false }
+    }
+
+    if (qc.stock_released) {
+      return { released: false, alreadyReleased: true }
+    }
+
+    const releaseQty = sampleQty ? Number(sampleQty) : Number(qc.sample_qty ?? 0)
+
+    if (!releaseQty || releaseQty <= 0) {
+      throw new Error('원자재 QC 합격 처리에는 검사 수량이 필요합니다.')
+    }
+
+    const { data: inventoryData, error: inventoryError } = await supabase
+      .from('inventory')
+      .select('id, item_id, current_qty, available_qty, quarantine_qty')
+      .eq('item_id', qc.item_id)
+      .single()
+
+    if (inventoryError || !inventoryData) {
+      throw new Error('재고 정보를 찾을 수 없습니다.')
+    }
+
+    const inventory = inventoryData as InventoryRow
+    const beforeCurrentQty = Number(inventory.current_qty || 0)
+    const beforeAvailableQty = Number(inventory.available_qty || 0)
+    const beforeQuarantineQty = Number(inventory.quarantine_qty || 0)
+
+    if (beforeQuarantineQty < releaseQty) {
+      throw new Error(
+        `격리재고가 부족합니다. 현재 격리재고 ${beforeQuarantineQty}, 전환 필요수량 ${releaseQty}`
+      )
+    }
+
+    const afterCurrentQty = beforeCurrentQty
+    const afterAvailableQty = beforeAvailableQty + releaseQty
+    const afterQuarantineQty = beforeQuarantineQty - releaseQty
+    const now = new Date().toISOString()
+
+    const { error: inventoryUpdateError } = await supabase
+      .from('inventory')
+      .update({
+        current_qty: afterCurrentQty,
+        available_qty: afterAvailableQty,
+        quarantine_qty: afterQuarantineQty,
+        updated_at: now,
+      })
+      .eq('id', inventory.id)
+
+    if (inventoryUpdateError) {
+      throw new Error(`재고 전환 오류: ${inventoryUpdateError.message}`)
+    }
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    const { error: txError } = await supabase
+      .from('inventory_transactions')
+      .insert({
+        trans_date: now,
+        trans_type: 'QC_RELEASE',
+        item_id: qc.item_id,
+        qty: releaseQty,
+        ref_table: 'qc_requests',
+        ref_id: qc.id,
+        remarks: `원자재 QC 합격으로 격리재고 해제 (available +${releaseQty}, quarantine -${releaseQty})`,
+        created_by: user?.id ?? null,
+        created_at: now,
+      })
+
+    if (txError) {
+      throw new Error(`재고이력 저장 오류: ${txError.message}`)
+    }
+
+    const { error: qcReleaseError } = await supabase
+      .from('qc_requests')
+      .update({
+        stock_released: true,
+      })
+      .eq('id', qc.id)
+
+    if (qcReleaseError) {
+      throw new Error(`QC 해제 상태 저장 오류: ${qcReleaseError.message}`)
+    }
+
+    return {
+      released: true,
+      releasedQty: releaseQty,
+    }
+  }
+
   async function handleSave(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
 
@@ -204,39 +364,71 @@ export default function QcDetailPage({
 
     setErrorMessage('')
     setSuccessMessage('')
+    setActionMessage('')
     setIsSaving(true)
 
-    const mappedResultStatus =
-      qcStatus === 'pass'
-        ? 'pass'
-        : qcStatus === 'fail'
-        ? 'fail'
-        : 'pending'
+    try {
+      const mappedResultStatus =
+        qcStatus === 'pass'
+          ? 'pass'
+          : qcStatus === 'fail'
+          ? 'fail'
+          : 'pending'
 
-    const { error } = await supabase
-      .from('qc_requests')
-      .update({
+      const nextResultDate =
+        qcStatus === 'pass' || qcStatus === 'fail'
+          ? new Date().toISOString().slice(0, 10)
+          : null
+
+      const { error } = await supabase
+        .from('qc_requests')
+        .update({
+          qc_status: qcStatus,
+          result_status: mappedResultStatus,
+          sample_qty: sampleQty ? Number(sampleQty) : null,
+          tester_name: testerName.trim() || null,
+          result_comment: resultComment.trim() || null,
+          result_date: nextResultDate,
+        })
+        .eq('id', qc.id)
+
+      if (error) {
+        throw new Error(`QC 결과 저장 오류: ${error.message}`)
+      }
+
+      const releaseResult = await releaseRawMaterialStockIfNeeded(qcStatus)
+
+      const refreshedQc: QcRequest = {
+        ...qc,
         qc_status: qcStatus,
         result_status: mappedResultStatus,
         sample_qty: sampleQty ? Number(sampleQty) : null,
         tester_name: testerName.trim() || null,
         result_comment: resultComment.trim() || null,
-        result_date:
-          qcStatus === 'pass' || qcStatus === 'fail'
-            ? new Date().toISOString().slice(0, 10)
-            : null,
-      })
-      .eq('id', qc.id)
+        result_date: nextResultDate,
+        stock_released: releaseResult.released ? true : qc.stock_released,
+      }
 
-    setIsSaving(false)
+      setQc(refreshedQc)
+      setSuccessMessage('QC 결과가 저장되었습니다.')
 
-    if (error) {
-      setErrorMessage(`QC 결과 저장 오류: ${error.message}`)
-      return
+      if (releaseResult.released) {
+        setActionMessage(
+          `원자재 QC 합격 처리와 함께 격리재고 ${releaseResult.releasedQty}가 사용가능재고로 전환되었습니다.`
+        )
+      } else if (releaseResult.alreadyReleased) {
+        setActionMessage('이 원자재 QC는 이미 재고 전환이 완료된 상태입니다.')
+      }
+
+      router.refresh()
+    } catch (error) {
+      console.error(error)
+      setErrorMessage(
+        error instanceof Error ? error.message : 'QC 저장 중 오류가 발생했습니다.'
+      )
+    } finally {
+      setIsSaving(false)
     }
-
-    setSuccessMessage('QC 결과가 저장되었습니다.')
-    router.refresh()
   }
 
   if (isLoading) {
@@ -301,7 +493,7 @@ export default function QcDetailPage({
 
             <div className="erp-field">
               <label className="erp-label">현재 결과상태</label>
-              <div className="erp-readonly-box">{qc.result_status}</div>
+              <div className="erp-readonly-box">{getResultStatusLabel(qc.result_status)}</div>
             </div>
 
             <div className="erp-field md:col-span-2">
@@ -331,6 +523,24 @@ export default function QcDetailPage({
                 placeholder="예: QC담당자"
               />
             </div>
+
+            {qc.qc_type === 'raw_material' && (
+              <>
+                <div className="erp-field">
+                  <label className="erp-label">재고 해제 상태</label>
+                  <div className="erp-readonly-box">
+                    {qc.stock_released ? '해제완료' : '미해제'}
+                  </div>
+                </div>
+
+                <div className="erp-field">
+                  <label className="erp-label">재고 반영 규칙</label>
+                  <div className="erp-readonly-box">
+                    합격 시 격리재고 → 사용가능재고 전환
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="erp-field md:col-span-2">
               <label className="erp-label">QC 상태</label>
@@ -395,6 +605,7 @@ export default function QcDetailPage({
 
         {errorMessage && <div className="erp-alert-error">{errorMessage}</div>}
         {successMessage && <div className="erp-alert-success">{successMessage}</div>}
+        {actionMessage && <div className="erp-alert-info">{actionMessage}</div>}
 
         <div className="erp-btn-row">
           <button type="submit" disabled={isSaving} className="erp-btn-primary">

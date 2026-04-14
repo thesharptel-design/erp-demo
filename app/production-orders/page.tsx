@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import ProtectedCreateButton from '@/components/ProtectedCreateButton'
 
@@ -25,10 +25,11 @@ type ItemRow = {
 
 type QcRequestRow = {
   id: number
-  production_order_id: number
+  production_order_id: number | null
   qc_no: string
   qc_type: 'raw_material' | 'sample' | 'final_product'
   qc_status: 'requested' | 'received' | 'testing' | 'pass' | 'fail' | 'hold'
+  result_status?: 'pending' | 'pass' | 'fail'
 }
 
 function getProductionStatusLabel(status: string) {
@@ -118,6 +119,11 @@ function getInboundStyle(inboundCompleted: boolean) {
     : 'erp-badge erp-badge-draft'
 }
 
+function getQcDisplayText(qc?: QcRequestRow) {
+  if (!qc) return '미의뢰'
+  return `${getQcTypeLabel(qc.qc_type)} / ${getQcStatusLabel(qc.qc_status)}`
+}
+
 export default function ProductionOrdersPage() {
   const [productionOrders, setProductionOrders] = useState<ProductionOrderRow[]>([])
   const [itemsMap, setItemsMap] = useState<Map<number, string>>(new Map())
@@ -127,72 +133,93 @@ export default function ProductionOrdersPage() {
 
   useEffect(() => {
     async function loadData() {
-      setErrorMessage('')
+      try {
+        setErrorMessage('')
+        setIsLoading(true)
 
-      const [
-        { data: ordersData, error: ordersError },
-        { data: itemsData, error: itemsError },
-        { data: qcData, error: qcError },
-      ] = await Promise.all([
-        supabase
-          .from('production_orders')
-          .select(`
-            id,
-            prod_no,
-            prod_date,
-            item_id,
-            plan_qty,
-            completed_qty,
-            status,
-            remarks,
-            inbound_completed
-          `)
-          .order('id', { ascending: false }),
+        const [
+          { data: ordersData, error: ordersError },
+          { data: itemsData, error: itemsError },
+          { data: qcData, error: qcError },
+        ] = await Promise.all([
+          supabase
+            .from('production_orders')
+            .select(`
+              id,
+              prod_no,
+              prod_date,
+              item_id,
+              plan_qty,
+              completed_qty,
+              status,
+              remarks,
+              inbound_completed
+            `)
+            .order('id', { ascending: false }),
 
-        supabase
-          .from('items')
-          .select('id, item_code, item_name'),
+          supabase
+            .from('items')
+            .select('id, item_code, item_name'),
 
-        supabase
-          .from('qc_requests')
-          .select('id, production_order_id, qc_no, qc_type, qc_status')
-          .order('id', { ascending: false }),
-      ])
+          supabase
+            .from('qc_requests')
+            .select('id, production_order_id, qc_no, qc_type, qc_status, result_status')
+            .not('production_order_id', 'is', null)
+            .order('id', { ascending: false }),
+        ])
 
-      if (ordersError || itemsError || qcError) {
-        console.error('production orders page load error:', {
-          ordersError,
-          itemsError,
-          qcError,
-        })
-        setErrorMessage('생산지시 데이터를 불러오지 못했습니다.')
-        setIsLoading(false)
-        return
-      }
-
-      const orderRows = (ordersData as ProductionOrderRow[]) ?? []
-      const itemRows = (itemsData as ItemRow[]) ?? []
-      const qcRows = (qcData as QcRequestRow[]) ?? []
-
-      const nextItemsMap = new Map<number, string>(
-        itemRows.map((row) => [row.id, `${row.item_code} / ${row.item_name}`])
-      )
-
-      const nextQcMap = new Map<number, QcRequestRow>()
-      for (const row of qcRows) {
-        if (!nextQcMap.has(row.production_order_id)) {
-          nextQcMap.set(row.production_order_id, row)
+        if (ordersError || itemsError || qcError) {
+          console.error('production orders page load error:', {
+            ordersError,
+            itemsError,
+            qcError,
+          })
+          setErrorMessage('생산지시 데이터를 불러오지 못했습니다.')
+          setIsLoading(false)
+          return
         }
-      }
 
-      setProductionOrders(orderRows)
-      setItemsMap(nextItemsMap)
-      setQcMap(nextQcMap)
-      setIsLoading(false)
+        const orderRows = (ordersData as ProductionOrderRow[]) ?? []
+        const itemRows = (itemsData as ItemRow[]) ?? []
+        const qcRows = (qcData as QcRequestRow[]) ?? []
+
+        const nextItemsMap = new Map<number, string>(
+          itemRows.map((row) => [row.id, `${row.item_code} / ${row.item_name}`])
+        )
+
+        const nextQcMap = new Map<number, QcRequestRow>()
+        for (const row of qcRows) {
+          if (!row.production_order_id) continue
+          if (!nextQcMap.has(row.production_order_id)) {
+            nextQcMap.set(row.production_order_id, row)
+          }
+        }
+
+        setProductionOrders(orderRows)
+        setItemsMap(nextItemsMap)
+        setQcMap(nextQcMap)
+      } catch (error) {
+        console.error('production orders page unexpected error:', error)
+        setErrorMessage('생산지시 데이터를 불러오는 중 오류가 발생했습니다.')
+      } finally {
+        setIsLoading(false)
+      }
     }
 
     loadData()
   }, [])
+
+  const rows = useMemo(() => {
+    return productionOrders.map((order) => {
+      const qc = qcMap.get(order.id)
+
+      return {
+        ...order,
+        itemLabel: itemsMap.get(order.item_id) ?? '-',
+        qc,
+      }
+    })
+  }, [productionOrders, itemsMap, qcMap])
 
   return (
     <div className="space-y-6">
@@ -200,7 +227,7 @@ export default function ProductionOrdersPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">생산지시관리</h1>
           <p className="mt-1 text-sm text-gray-500">
-            생산지시, QC 진행 상태, 입고 상태를 통합 조회합니다.
+            생산지시, 완제품 QC 진행 상태, 입고 상태를 통합 조회합니다.
           </p>
         </div>
 
@@ -214,81 +241,79 @@ export default function ProductionOrdersPage() {
       {errorMessage && <div className="erp-alert-error">{errorMessage}</div>}
 
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-            <tr>
-              <th className="px-5 py-4">생산지시번호</th>
-              <th className="px-5 py-4">생산일</th>
-              <th className="px-5 py-4">완제품</th>
-              <th className="px-5 py-4">계획수량</th>
-              <th className="px-5 py-4">완료수량</th>
-              <th className="px-5 py-4">생산상태</th>
-              <th className="px-5 py-4">QC유형</th>
-              <th className="px-5 py-4">QC상태</th>
-              <th className="px-5 py-4">입고상태</th>
-              <th className="px-5 py-4">비고</th>
-            </tr>
-          </thead>
-          <tbody>
-            {isLoading ? (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
               <tr>
-                <td colSpan={10} className="px-5 py-14 text-center text-sm text-gray-400">
-                  생산지시 데이터를 불러오는 중입니다.
-                </td>
+                <th className="px-5 py-4">생산지시번호</th>
+                <th className="px-5 py-4">생산일</th>
+                <th className="px-5 py-4">완제품</th>
+                <th className="px-5 py-4">계획수량</th>
+                <th className="px-5 py-4">완료수량</th>
+                <th className="px-5 py-4">생산상태</th>
+                <th className="px-5 py-4">QC유형</th>
+                <th className="px-5 py-4">QC상태</th>
+                <th className="px-5 py-4">입고상태</th>
+                <th className="px-5 py-4">비고</th>
               </tr>
-            ) : productionOrders.length === 0 ? (
-              <tr>
-                <td colSpan={10} className="px-5 py-14 text-center text-sm text-gray-400">
-                  생산지시 데이터가 없습니다.
-                </td>
-              </tr>
-            ) : (
-              productionOrders.map((order) => {
-                const qc = qcMap.get(order.id)
-
-                return (
-                  <tr key={order.id} className="border-t border-gray-100">
+            </thead>
+            <tbody>
+              {isLoading ? (
+                <tr>
+                  <td colSpan={10} className="px-5 py-14 text-center text-sm text-gray-400">
+                    생산지시 데이터를 불러오는 중입니다.
+                  </td>
+                </tr>
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="px-5 py-14 text-center text-sm text-gray-400">
+                    생산지시 데이터가 없습니다.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((row) => (
+                  <tr key={row.id} className="border-t border-gray-100">
                     <td className="px-5 py-4 font-medium">
                       <Link
-                        href={`/production-orders/${order.id}`}
+                        href={`/production-orders/${row.id}`}
                         className="text-blue-600 hover:underline"
                       >
-                        {order.prod_no}
+                        {row.prod_no}
                       </Link>
                     </td>
-                    <td className="px-5 py-4">{order.prod_date}</td>
-                    <td className="px-5 py-4">{itemsMap.get(order.item_id) ?? '-'}</td>
-                    <td className="px-5 py-4">{order.plan_qty}</td>
-                    <td className="px-5 py-4">{order.completed_qty}</td>
+                    <td className="px-5 py-4">{row.prod_date}</td>
+                    <td className="px-5 py-4">{row.itemLabel}</td>
+                    <td className="px-5 py-4">{row.plan_qty}</td>
+                    <td className="px-5 py-4">{row.completed_qty}</td>
                     <td className="px-5 py-4">
-                      <span className={getProductionStatusStyle(order.status)}>
-                        {getProductionStatusLabel(order.status)}
+                      <span className={getProductionStatusStyle(row.status)}>
+                        {getProductionStatusLabel(row.status)}
                       </span>
                     </td>
                     <td className="px-5 py-4">
-                      {qc ? getQcTypeLabel(qc.qc_type) : '-'}
+                      {row.qc ? getQcTypeLabel(row.qc.qc_type) : '-'}
                     </td>
                     <td className="px-5 py-4">
-                      {qc ? (
-                        <span className={getQcStatusStyle(qc.qc_status)}>
-                          {getQcStatusLabel(qc.qc_status)}
+                      {row.qc ? (
+                        <span className={getQcStatusStyle(row.qc.qc_status)}>
+                          {getQcStatusLabel(row.qc.qc_status)}
                         </span>
                       ) : (
                         <span className="erp-badge erp-badge-draft">미의뢰</span>
                       )}
                     </td>
                     <td className="px-5 py-4">
-                      <span className={getInboundStyle(order.inbound_completed)}>
-                        {getInboundLabel(order.inbound_completed)}
+                      <span className={getInboundStyle(row.inbound_completed)}>
+                        {getInboundLabel(row.inbound_completed)}
                       </span>
                     </td>
-                    <td className="px-5 py-4">{order.remarks ?? '-'}</td>
+                    <td className="px-5 py-4">{row.remarks ?? '-'}</td>
                   </tr>
-                )
-              })
-            )}
-          </tbody>
-        </table>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )

@@ -12,6 +12,7 @@ export type CurrentUserPermissions = {
   can_prod_complete: boolean
   can_approve: boolean
   can_manage_permissions: boolean
+  can_qc_manage: boolean
 }
 
 export async function getCurrentUserPermissions() {
@@ -37,7 +38,8 @@ export async function getCurrentUserPermissions() {
       can_receive_stock,
       can_prod_complete,
       can_approve,
-      can_manage_permissions
+      can_manage_permissions,
+      can_qc_manage
     `)
     .eq('email', user.email)
     .single()

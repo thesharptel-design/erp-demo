@@ -5,6 +5,8 @@ type InventoryRow = {
   id: number
   item_id: number
   current_qty: number
+  available_qty: number
+  quarantine_qty: number
 }
 
 type ItemRow = {
@@ -24,7 +26,7 @@ async function getInventoryPageData() {
   ] = await Promise.all([
     supabase
       .from('inventory')
-      .select('id, item_id, current_qty')
+      .select('id, item_id, current_qty, available_qty, quarantine_qty')
       .order('item_id'),
     supabase
       .from('items')
@@ -59,15 +61,40 @@ function getItemTypeLabel(itemType: string) {
   }
 }
 
-function getStockStatus(currentQty: number, safetyStockQty: number) {
-  if (currentQty <= 0) {
+function getStockStatus(
+  availableQty: number,
+  quarantineQty: number,
+  safetyStockQty: number
+) {
+  if (availableQty <= 0 && quarantineQty <= 0) {
     return {
       label: '재고없음',
       className: 'erp-badge erp-badge-danger',
     }
   }
 
-  if (currentQty < safetyStockQty) {
+  if (availableQty <= 0 && quarantineQty > 0) {
+    return {
+      label: '전량격리',
+      className: 'erp-badge erp-badge-warning',
+    }
+  }
+
+  if (availableQty > 0 && quarantineQty > 0) {
+    if (availableQty < safetyStockQty) {
+      return {
+        label: '부분격리/부족',
+        className: 'erp-badge erp-badge-warning',
+      }
+    }
+
+    return {
+      label: '부분격리',
+      className: 'erp-badge erp-badge-review',
+    }
+  }
+
+  if (availableQty < safetyStockQty) {
     return {
       label: '부족',
       className: 'erp-badge erp-badge-warning',
@@ -84,16 +111,34 @@ export default async function InventoryPage() {
   const { inventory, items } = await getInventoryPageData()
 
   const inventoryMap = new Map(
-    inventory.map((row) => [row.item_id, row.current_qty])
+    inventory.map((row) => [
+      row.item_id,
+      {
+        current_qty: Number(row.current_qty ?? 0),
+        available_qty: Number(row.available_qty ?? 0),
+        quarantine_qty: Number(row.quarantine_qty ?? 0),
+      },
+    ])
   )
 
   const rows = items.map((item) => {
-    const currentQty = inventoryMap.get(item.id) ?? 0
-    const stockStatus = getStockStatus(currentQty, item.safety_stock_qty ?? 0)
+    const inventoryRow = inventoryMap.get(item.id)
+
+    const currentQty = inventoryRow?.current_qty ?? 0
+    const availableQty = inventoryRow?.available_qty ?? 0
+    const quarantineQty = inventoryRow?.quarantine_qty ?? 0
+
+    const stockStatus = getStockStatus(
+      availableQty,
+      quarantineQty,
+      Number(item.safety_stock_qty ?? 0)
+    )
 
     return {
       ...item,
       currentQty,
+      availableQty,
+      quarantineQty,
       stockStatus,
     }
   })
@@ -103,65 +148,71 @@ export default async function InventoryPage() {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">재고조회</h1>
         <p className="mt-1 text-sm text-gray-500">
-          품목별 현재고와 안전재고를 확인합니다.
+          품목별 총재고, 사용가능재고, 격리재고와 안전재고를 확인합니다.
         </p>
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-            <tr>
-              <th className="px-5 py-4">품목코드</th>
-              <th className="px-5 py-4">품목명</th>
-              <th className="px-5 py-4">유형</th>
-              <th className="px-5 py-4">단위</th>
-              <th className="px-5 py-4">현재고</th>
-              <th className="px-5 py-4">안전재고</th>
-              <th className="px-5 py-4">재고상태</th>
-              <th className="px-5 py-4">사용여부</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
+        <div className="overflow-x-auto">
+          <table className="min-w-full text-sm">
+            <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
               <tr>
-                <td colSpan={8} className="px-5 py-14 text-center text-sm text-gray-400">
-                  재고 데이터가 없습니다.
-                </td>
+                <th className="px-5 py-4">품목코드</th>
+                <th className="px-5 py-4">품목명</th>
+                <th className="px-5 py-4">유형</th>
+                <th className="px-5 py-4">단위</th>
+                <th className="px-5 py-4">총재고</th>
+                <th className="px-5 py-4">사용가능재고</th>
+                <th className="px-5 py-4">격리재고</th>
+                <th className="px-5 py-4">안전재고</th>
+                <th className="px-5 py-4">재고상태</th>
+                <th className="px-5 py-4">사용여부</th>
               </tr>
-            ) : (
-              rows.map((row) => (
-                <tr key={row.id} className="border-t border-gray-100">
-                  <td className="px-5 py-4">
-                    <Link
-                      href={`/items/${row.id}`}
-                      className="text-blue-600 hover:underline"
-                    >
-                      {row.item_code}
-                    </Link>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="px-5 py-14 text-center text-sm text-gray-400">
+                    재고 데이터가 없습니다.
                   </td>
-                  <td className="px-5 py-4 font-medium">
-                    <Link
-                      href={`/items/${row.id}`}
-                      className="hover:underline"
-                    >
-                      {row.item_name}
-                    </Link>
-                  </td>
-                  <td className="px-5 py-4">{getItemTypeLabel(row.item_type)}</td>
-                  <td className="px-5 py-4">{row.unit}</td>
-                  <td className="px-5 py-4">{row.currentQty}</td>
-                  <td className="px-5 py-4">{row.safety_stock_qty}</td>
-                  <td className="px-5 py-4">
-                    <span className={row.stockStatus.className}>
-                      {row.stockStatus.label}
-                    </span>
-                  </td>
-                  <td className="px-5 py-4">{row.is_active ? '사용' : '미사용'}</td>
                 </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+              ) : (
+                rows.map((row) => (
+                  <tr key={row.id} className="border-t border-gray-100">
+                    <td className="px-5 py-4">
+                      <Link
+                        href={`/items/${row.id}`}
+                        className="text-blue-600 hover:underline"
+                      >
+                        {row.item_code}
+                      </Link>
+                    </td>
+                    <td className="px-5 py-4 font-medium">
+                      <Link
+                        href={`/items/${row.id}`}
+                        className="hover:underline"
+                      >
+                        {row.item_name}
+                      </Link>
+                    </td>
+                    <td className="px-5 py-4">{getItemTypeLabel(row.item_type)}</td>
+                    <td className="px-5 py-4">{row.unit}</td>
+                    <td className="px-5 py-4">{row.currentQty}</td>
+                    <td className="px-5 py-4">{row.availableQty}</td>
+                    <td className="px-5 py-4">{row.quarantineQty}</td>
+                    <td className="px-5 py-4">{row.safety_stock_qty}</td>
+                    <td className="px-5 py-4">
+                      <span className={row.stockStatus.className}>
+                        {row.stockStatus.label}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4">{row.is_active ? '사용' : '미사용'}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )
