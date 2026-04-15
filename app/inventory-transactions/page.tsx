@@ -1,227 +1,134 @@
-import Link from 'next/link'
-import { supabase } from '@/lib/supabase'
+'use client';
 
-type InventoryTransactionRow = {
-  id: number
-  trans_date: string
-  trans_type: string
-  item_id: number
-  qty: number
-  ref_table: string | null
-  ref_id: number | null
-  remarks: string | null
-  created_by: string | null
-  created_at: string
-}
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabase';
 
-type ItemRow = {
-  id: number
-  item_code: string
-  item_name: string
-  item_type: string
-  unit: string
-}
+export default function InventoryTransactionsPage() {
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState('ALL'); // ALL, INBOUND, OUTBOUND
 
-async function getInventoryTransactionPageData() {
-  const [
-    { data: transactionData, error: transactionError },
-    { data: itemsData, error: itemsError },
-  ] = await Promise.all([
-    supabase
-      .from('inventory_transactions')
-      .select(
-        'id, trans_date, trans_type, item_id, qty, ref_table, ref_id, remarks, created_by, created_at'
-      )
-      .order('id', { ascending: false }),
-    supabase
-      .from('items')
-      .select('id, item_code, item_name, item_type, unit')
-      .order('id'),
-  ])
+  useEffect(() => {
+    fetchTransactions();
+  }, []);
 
-  if (transactionError) {
-    console.error('inventory_transactions error:', transactionError.message)
-    return {
-      transactions: [],
-      items: [],
+  const fetchTransactions = async () => {
+    try {
+      setLoading(true);
+      
+      // 1. 수불부 데이터와 품목 정보 가져오기
+      const { data: txData, error } = await supabase
+        .from('inventory_transactions')
+        .select(`
+          *,
+          item:items(item_code, item_name, unit)
+        `)
+        .order('trans_date', { ascending: false });
+
+      if (error) throw error;
+
+      // 2. 작성자(처리자) 이름을 매핑하기 위해 유저 정보 가져오기
+      // (FK 에러 방지를 위해 안전하게 별도로 가져와서 매핑합니다)
+      const { data: usersData } = await supabase.from('app_users').select('id, user_name');
+      const userMap = new Map(usersData?.map(u => [u.id, u.user_name]) || []);
+
+      // 3. 데이터 병합
+      const mergedData = txData?.map(tx => ({
+        ...tx,
+        processor_name: userMap.get(tx.created_by) || '시스템'
+      })) || [];
+
+      setTransactions(mergedData);
+    } catch (err: any) {
+      console.error('데이터 로드 실패:', err.message);
+    } finally {
+      setLoading(false);
     }
-  }
+  };
 
-  if (itemsError) {
-    console.error('items error:', itemsError.message)
-    return {
-      transactions: [],
-      items: [],
-    }
-  }
+  // 구분(입출고) 한글 변환
+  const getTypeLabel = (type: string) => {
+    if (type === 'INBOUND') return <span className="px-2 py-1 bg-blue-100 text-blue-700 font-bold rounded text-xs">입고</span>;
+    if (type === 'OUTBOUND') return <span className="px-2 py-1 bg-red-100 text-red-700 font-bold rounded text-xs">출고</span>;
+    return <span className="px-2 py-1 bg-gray-100 text-gray-700 font-bold rounded text-xs">{type}</span>;
+  };
 
-  return {
-    transactions: (transactionData as InventoryTransactionRow[]) ?? [],
-    items: (itemsData as ItemRow[]) ?? [],
-  }
-}
+  // 출처 문서 한글 변환
+  const getRefLabel = (table: string, id: number) => {
+    if (!table) return '-';
+    if (table === 'outbound_requests') return `출고요청서 (ID: ${id})`;
+    if (table === 'purchase_orders') return `발주서 (ID: ${id})`;
+    if (table === 'production_orders') return `생산지시서 (ID: ${id})`;
+    return `${table} (${id})`;
+  };
 
-function getItemTypeLabel(itemType: string) {
-  switch (itemType) {
-    case 'finished':
-      return '완제품'
-    case 'raw_material':
-      return '원재료'
-    case 'sub_material':
-      return '부자재'
-    default:
-      return itemType
-  }
-}
-
-function getTransTypeLabel(transType: string) {
-  switch (transType) {
-    case 'IN':
-      return '입고(격리적치)'
-    case 'OUT':
-      return '출고'
-    case 'PROD_IN':
-      return '생산입고'
-    case 'MATL_OUT':
-      return '자재출고'
-    case 'ADJUST':
-      return '재고조정'
-    case 'QC_RELEASE':
-      return 'QC합격해제'
-    default:
-      return transType
-  }
-}
-
-function getTransTypeStyle(transType: string) {
-  switch (transType) {
-    case 'IN':
-      return 'erp-badge erp-badge-progress'
-    case 'OUT':
-      return 'erp-badge erp-badge-danger'
-    case 'PROD_IN':
-      return 'erp-badge erp-badge-done'
-    case 'MATL_OUT':
-      return 'erp-badge erp-badge-warning'
-    case 'ADJUST':
-      return 'erp-badge erp-badge-draft'
-    case 'QC_RELEASE':
-      return 'erp-badge erp-badge-review'
-    default:
-      return 'erp-badge erp-badge-draft'
-  }
-}
-
-function getRefLabel(refTable: string | null, refId: number | null) {
-  if (!refTable || !refId) return '-'
-
-  if (refTable === 'purchase_orders') {
-    return `발주서 / ${refId}`
-  }
-
-  if (refTable === 'production_orders') {
-    return `생산지시 / ${refId}`
-  }
-
-  if (refTable === 'qc_requests') {
-    return `QC / ${refId}`
-  }
-
-  return `${refTable} / ${refId}`
-}
-
-function getQtyDisplay(transType: string, qty: number) {
-  if (transType === 'OUT' || transType === 'MATL_OUT') {
-    return `-${qty}`
-  }
-
-  return `+${qty}`
-}
-
-export default async function InventoryTransactionsPage() {
-  const { transactions, items } = await getInventoryTransactionPageData()
-
-  const itemMap = new Map(items.map((item) => [item.id, item]))
+  // 필터링 적용
+  const filteredData = transactions.filter(tx => filter === 'ALL' || tx.trans_type === filter);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">재고이력</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          품목별 입고, 자재출고, 생산입고, QC 합격 해제 등 재고 변동 이력을 조회합니다.
-        </p>
+    <div className="p-8 max-w-7xl mx-auto text-gray-800 font-sans">
+      <header className="mb-8">
+        <h1 className="text-3xl font-black tracking-tighter">입출고 현황 (수불부)</h1>
+        <p className="text-gray-500 font-bold mt-2">창고에서 발생한 모든 자재의 입고 및 출고 이력을 확인합니다.</p>
+      </header>
+
+      {/* 필터 탭 */}
+      <div className="flex gap-2 mb-6">
+        <button onClick={() => setFilter('ALL')} className={`px-5 py-2.5 rounded-lg font-bold text-sm transition-colors ${filter === 'ALL' ? 'bg-black text-white' : 'bg-white border-2 border-gray-200 text-gray-500 hover:border-black'}`}>
+          전체 보기
+        </button>
+        <button onClick={() => setFilter('INBOUND')} className={`px-5 py-2.5 rounded-lg font-bold text-sm transition-colors ${filter === 'INBOUND' ? 'bg-blue-600 text-white border-2 border-blue-600' : 'bg-white border-2 border-gray-200 text-gray-500 hover:border-blue-600'}`}>
+          입고 내역
+        </button>
+        <button onClick={() => setFilter('OUTBOUND')} className={`px-5 py-2.5 rounded-lg font-bold text-sm transition-colors ${filter === 'OUTBOUND' ? 'bg-red-600 text-white border-2 border-red-600' : 'bg-white border-2 border-gray-200 text-gray-500 hover:border-red-600'}`}>
+          출고 내역
+        </button>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      {/* 데이터 테이블 */}
+      <section className="bg-white border-2 border-gray-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="min-w-full text-sm">
-            <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-gray-50 border-b-2 border-gray-200 text-gray-500">
               <tr>
-                <th className="px-5 py-4">일시</th>
-                <th className="px-5 py-4">품목코드</th>
-                <th className="px-5 py-4">품목명</th>
-                <th className="px-5 py-4">유형</th>
-                <th className="px-5 py-4">변동구분</th>
-                <th className="px-5 py-4">수량</th>
-                <th className="px-5 py-4">단위</th>
-                <th className="px-5 py-4">참조문서</th>
-                <th className="px-5 py-4">비고</th>
+                <th className="p-4 font-black">일시</th>
+                <th className="p-4 font-black text-center w-24">구분</th>
+                <th className="p-4 font-black">품목코드</th>
+                <th className="p-4 font-black">품목명</th>
+                <th className="p-4 font-black text-right w-32">수량</th>
+                <th className="p-4 font-black">근거 문서</th>
+                <th className="p-4 font-black">처리자</th>
               </tr>
             </thead>
-            <tbody>
-              {transactions.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="px-5 py-14 text-center text-sm text-gray-400">
-                    재고이력 데이터가 없습니다.
-                  </td>
-                </tr>
+            <tbody className="divide-y divide-gray-100">
+              {loading ? (
+                <tr><td colSpan={7} className="p-10 text-center font-bold text-gray-400">데이터를 불러오는 중입니다...</td></tr>
+              ) : filteredData.length === 0 ? (
+                <tr><td colSpan={7} className="p-10 text-center font-bold text-gray-400">입출고 내역이 없습니다.</td></tr>
               ) : (
-                transactions.map((tx) => {
-                  const item = itemMap.get(tx.item_id)
-
-                  return (
-                    <tr key={tx.id} className="border-t border-gray-100">
-                      <td className="px-5 py-4">
-                        {new Date(tx.trans_date).toLocaleString('ko-KR')}
-                      </td>
-                      <td className="px-5 py-4">
-                        <Link
-                          href={`/items/${tx.item_id}`}
-                          className="text-blue-600 hover:underline"
-                        >
-                          {item?.item_code ?? '-'}
-                        </Link>
-                      </td>
-                      <td className="px-5 py-4 font-medium">
-                        <Link
-                          href={`/items/${tx.item_id}`}
-                          className="hover:underline"
-                        >
-                          {item?.item_name ?? '-'}
-                        </Link>
-                      </td>
-                      <td className="px-5 py-4">
-                        {item ? getItemTypeLabel(item.item_type) : '-'}
-                      </td>
-                      <td className="px-5 py-4">
-                        <span className={getTransTypeStyle(tx.trans_type)}>
-                          {getTransTypeLabel(tx.trans_type)}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4">{getQtyDisplay(tx.trans_type, tx.qty)}</td>
-                      <td className="px-5 py-4">{item?.unit ?? '-'}</td>
-                      <td className="px-5 py-4">{getRefLabel(tx.ref_table, tx.ref_id)}</td>
-                      <td className="px-5 py-4 whitespace-pre-wrap">
-                        {tx.remarks ?? '-'}
-                      </td>
-                    </tr>
-                  )
-                })
+                filteredData.map((tx) => (
+                  <tr key={tx.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="p-4 font-bold text-gray-500">
+                      {new Date(tx.trans_date).toLocaleString('ko-KR', { 
+                        year: 'numeric', month: '2-digit', day: '2-digit', 
+                        hour: '2-digit', minute: '2-digit' 
+                      })}
+                    </td>
+                    <td className="p-4 text-center">{getTypeLabel(tx.trans_type)}</td>
+                    <td className="p-4 font-black text-gray-600">{tx.item?.item_code || '삭제된품목'}</td>
+                    <td className="p-4 font-bold">{tx.item?.item_name || '-'}</td>
+                    <td className={`p-4 font-black text-right text-lg ${tx.trans_type === 'INBOUND' ? 'text-blue-600' : 'text-red-500'}`}>
+                      {tx.trans_type === 'OUTBOUND' ? '-' : '+'}{tx.qty} <span className="text-xs text-gray-400 font-normal">{tx.item?.unit}</span>
+                    </td>
+                    <td className="p-4 font-bold text-gray-500">{getRefLabel(tx.ref_table, tx.ref_id)}</td>
+                    <td className="p-4 font-bold">{tx.processor_name}</td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
         </div>
-      </div>
+      </section>
     </div>
-  )
+  );
 }

@@ -1,372 +1,187 @@
-'use client'
+'use client';
 
-import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { useEffect, useMemo, useState } from 'react'
-import {
-  getCurrentUserPermissions,
-  type CurrentUserPermissions,
-} from '@/lib/permissions'
-
-type MenuChild = {
-  href: string
-  label: string
-  visible: (user: CurrentUserPermissions | null) => boolean
-}
-
-type MenuGroup = {
-  key: string
-  label: string
-  visible: (user: CurrentUserPermissions | null) => boolean
-  children: MenuChild[]
-}
-
-function canAccessQc(user: CurrentUserPermissions | null) {
-  if (!user) return false
-  return (
-    user.role_name === 'admin' ||
-    user.role_name === 'qc' ||
-    user.can_qc_manage === true ||
-    user.role_name === 'purchase' ||
-    user.role_name === 'production'
-  )
-}
-
-function canAccessInventory(user: CurrentUserPermissions | null) {
-  if (!user) return false
-  return ['admin', 'sales', 'purchase', 'production', 'qc'].includes(user.role_name)
-}
-
-function canAccessInventoryTransactions(user: CurrentUserPermissions | null) {
-  if (!user) return false
-  return ['admin', 'purchase', 'production', 'qc'].includes(user.role_name)
-}
-
-function canAccessInventoryAdjustments(user: CurrentUserPermissions | null) {
-  if (!user) return false
-  return (
-    ['admin', 'purchase', 'production', 'qc'].includes(user.role_name) ||
-    user.can_receive_stock === true ||
-    user.can_qc_manage === true
-  )
-}
-
-function canAccessCustomers(user: CurrentUserPermissions | null) {
-  if (!user) return false
-  return ['admin', 'sales', 'purchase'].includes(user.role_name)
-}
-
-function canAccessItems(user: CurrentUserPermissions | null) {
-  if (!user) return false
-  return ['admin', 'sales', 'purchase', 'production', 'qc'].includes(user.role_name)
-}
-
-function canAccessQuotes(user: CurrentUserPermissions | null) {
-  if (!user) return false
-  return ['admin', 'sales'].includes(user.role_name)
-}
-
-function canAccessPurchaseOrders(user: CurrentUserPermissions | null) {
-  if (!user) return false
-  return ['admin', 'purchase'].includes(user.role_name)
-}
-
-function canAccessProductionOrders(user: CurrentUserPermissions | null) {
-  if (!user) return false
-  return ['admin', 'production'].includes(user.role_name)
-}
-
-function canAccessBoms(user: CurrentUserPermissions | null) {
-  if (!user) return false
-  return ['admin', 'production'].includes(user.role_name)
-}
-
-function canAccessUserPermissions(user: CurrentUserPermissions | null) {
-  if (!user) return false
-  return user.role_name === 'admin' || user.can_manage_permissions === true
-}
-
-function isPathMatch(pathname: string, href: string) {
-  if (href === '/dashboard' || href === '/approvals') {
-    return pathname === href
-  }
-
-  return pathname === href || pathname.startsWith(`${href}/`)
-}
-
-const MENU_GROUPS: MenuGroup[] = [
-  {
-    key: 'sales',
-    label: '영업관리',
-    visible: (user) => canAccessQuotes(user),
-    children: [
-      {
-        href: '/quotes',
-        label: '견적서관리',
-        visible: (user) => canAccessQuotes(user),
-      },
-    ],
-  },
-  {
-    key: 'purchase',
-    label: '구매관리',
-    visible: (user) => canAccessPurchaseOrders(user),
-    children: [
-      {
-        href: '/purchase-orders',
-        label: '발주서관리',
-        visible: (user) => canAccessPurchaseOrders(user),
-      },
-    ],
-  },
-  {
-    key: 'production',
-    label: '생산관리',
-    visible: (user) => canAccessProductionOrders(user) || canAccessBoms(user),
-    children: [
-      {
-        href: '/production-orders',
-        label: '생산지시관리',
-        visible: (user) => canAccessProductionOrders(user),
-      },
-      {
-        href: '/boms',
-        label: 'BOM관리',
-        visible: (user) => canAccessBoms(user),
-      },
-    ],
-  },
-  {
-    key: 'quality',
-    label: '품질관리',
-    visible: (user) => canAccessQc(user),
-    children: [
-      {
-        href: '/qc',
-        label: 'QC관리',
-        visible: (user) => canAccessQc(user),
-      },
-    ],
-  },
-  {
-    key: 'inventory',
-    label: '재고관리',
-    visible: (user) =>
-      canAccessInventory(user) ||
-      canAccessInventoryTransactions(user) ||
-      canAccessInventoryAdjustments(user),
-    children: [
-      {
-        href: '/inventory',
-        label: '재고현황',
-        visible: (user) => canAccessInventory(user),
-      },
-      {
-        href: '/inventory-transactions',
-        label: '입출고현황',
-        visible: (user) => canAccessInventoryTransactions(user),
-      },
-      {
-        href: '/inventory-adjustments',
-        label: '재고조정',
-        visible: (user) => canAccessInventoryAdjustments(user),
-      },
-    ],
-  },
-  {
-    key: 'master',
-    label: '기준정보',
-    visible: (user) =>
-      canAccessCustomers(user) ||
-      canAccessItems(user) ||
-      canAccessUserPermissions(user),
-    children: [
-      {
-        href: '/customers',
-        label: '거래처관리',
-        visible: (user) => canAccessCustomers(user),
-      },
-      {
-        href: '/items',
-        label: '품목관리',
-        visible: (user) => canAccessItems(user),
-      },
-      {
-        href: '/admin/user-permissions',
-        label: '사용자권한관리',
-        visible: (user) => canAccessUserPermissions(user),
-      },
-    ],
-  },
-]
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabase';
 
 export default function Sidebar() {
-  const pathname = usePathname()
-  const [user, setUser] = useState<CurrentUserPermissions | null>(null)
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
+  const pathname = usePathname();
+  const router = useRouter();
+  
+  const [userData, setUserData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
+    '기안/결재': true,
+    '품질관리 (QC)': true,
+    '생산/재고 관리': true,
+  });
 
   useEffect(() => {
-    async function loadUser() {
-      const currentUser = await getCurrentUserPermissions()
-      setUser(currentUser)
-    }
-
-    loadUser()
-  }, [])
-
-  const visibleGroups = useMemo(() => {
-    return MENU_GROUPS
-      .filter((group) => group.visible(user))
-      .map((group) => ({
-        ...group,
-        children: group.children.filter((child) => child.visible(user)),
-      }))
-      .filter((group) => group.children.length > 0)
-  }, [user])
-
-  useEffect(() => {
-    if (visibleGroups.length === 0) return
-
-    setOpenGroups((prev) => {
-      const next = { ...prev }
-
-      for (const group of visibleGroups) {
-        const hasActiveChild = group.children.some((child) =>
-          isPathMatch(pathname, child.href)
-        )
-
-        if (typeof next[group.key] === 'undefined') {
-          next[group.key] = hasActiveChild
-        } else if (hasActiveChild) {
-          next[group.key] = true
-        }
+    async function getUserData() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data } = await supabase
+          .from('app_users')
+          .select('*')
+          .eq('id', session.user.id)
+          .single();
+        setUserData(data);
       }
+      setLoading(false);
+    }
+    getUserData();
+  }, []);
 
-      return next
-    })
-  }, [pathname, visibleGroups])
+  const toggleGroup = (title: string) => {
+    setOpenGroups(prev => ({ ...prev, [title]: !prev[title] }));
+  };
 
-  function toggleGroup(groupKey: string) {
-    setOpenGroups((prev) => ({
-      ...prev,
-      [groupKey]: !prev[groupKey],
-    }))
-  }
+  const hasPermission = (permKey: string | null) => {
+    if (loading) return false;
+    if (!userData) return false;
+    if (userData.role_name === 'admin') return true; 
+    return permKey ? !!userData[permKey] : true; 
+  };
 
-  const dashboardActive = isPathMatch(pathname, '/dashboard')
-  const approvalsActive = isPathMatch(pathname, '/approvals')
+  // 📂 이미지와 폴더 구조를 100% 매칭한 메뉴 구성
+  const menuGroups = [
+    {
+      title: '기안/결재',
+      items: [
+        { name: '결재문서함', href: '/approvals', perm: null },
+        { name: '출고요청서', href: '/outbound-requests', perm: 'can_po_create' },
+      ]
+    },
+    {
+      title: '영업/구매 관리',
+      items: [
+        { name: '견적서 관리', href: '/quotes', perm: 'can_quote_create' },
+        { name: '발주서 관리', href: '/purchase-orders', perm: 'can_po_create' },
+      ]
+    },
+    {
+      title: '품질관리 (QC)',
+      items: [
+        { name: '검사 대기(Quarantine)', href: '/qc', perm: 'can_qc_manage' }, // 폴더가 qc 하나일 경우 대비
+        { name: '품질 검사 내역', href: '/qc/history', perm: 'can_qc_manage' },
+      ]
+    },
+    {
+      title: '생산/재고 관리',
+      items: [
+        { name: '생산지시서', href: '/production-orders', perm: 'can_production_manage' },
+        { name: 'BOM 관리', href: '/boms', perm: 'can_production_manage' },
+        { name: '현재고 현황', href: '/inventory', perm: null },
+        { name: '입출고 현황', href: '/inventory-transactions', perm: null },
+        { name: '재고 실사/조정', href: '/inventory-adjustments', perm: 'can_manage_master' },
+      ]
+    },
+    {
+      title: '기준정보 (기초)',
+      items: [
+        { name: '고객사(거래처) 관리', href: '/customers', perm: 'can_manage_master' },
+        { name: '품목 마스터 관리', href: '/items', perm: 'can_manage_master' },
+      ]
+    },
+    {
+      title: 'ADMIN ONLY',
+      items: [
+        { name: '사용자 권한 설정', href: '/admin/user-permissions', perm: 'can_manage_permissions' },
+      ]
+    }
+  ];
 
   return (
-    <aside className="h-full w-64 border-r border-gray-200 bg-white">
-      <div className="border-b border-gray-200 px-5 py-5">
-        <Link href="/dashboard" className="block">
-          <h1 className="text-xl font-bold tracking-tight text-gray-900">
-            교육용 ERP
+    <aside className="w-64 bg-white border-r border-gray-200 min-h-screen flex flex-col text-black shadow-sm font-sans">
+      {/* 💡 로고 클릭 시 홈(대시보드)으로 이동 */}
+      <div className="p-6 border-b border-gray-50 bg-gray-50/20">
+        <Link href="/dashboard" className="group">
+          <h1 className="text-2xl font-black tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors">
+            BIO-ERP
           </h1>
-          <p className="mt-1 text-sm text-gray-500">부서별 업무 흐름 실습</p>
+        </Link>
+        {userData && (
+          <div className="mt-2 text-[11px] font-bold text-gray-400 uppercase tracking-tight">
+            {userData.user_name} / {userData.role_name}
+          </div>
+        )}
+      </div>
+
+      {/* 대시보드 독립 버튼 */}
+      <div className="px-4 pt-4 pb-2">
+        <Link
+          href="/dashboard"
+          className={`flex items-center px-4 py-3 text-sm font-bold rounded-md transition-all ${
+            pathname === '/dashboard' 
+              ? 'bg-blue-600 text-white shadow-md' 
+              : 'text-gray-700 hover:bg-gray-100'
+          }`}
+        >
+          📊 DASHBOARD
         </Link>
       </div>
 
-      <div className="px-3 py-4">
-        <p className="px-3 pb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
-          Menu
-        </p>
+      <nav className="flex-1 overflow-y-auto p-4 space-y-4">
+        {menuGroups.map((group) => {
+          if (group.title === 'ADMIN ONLY' && userData?.role_name !== 'admin') return null;
 
-        <nav className="space-y-1">
-          <Link
-            href="/dashboard"
-            className={[
-              'group flex items-center rounded-xl px-3 py-3 text-sm font-medium transition',
-              dashboardActive
-                ? 'bg-gray-100 text-gray-900'
-                : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900',
-            ].join(' ')}
-          >
-            <span
-              className={[
-                'h-2 w-2 rounded-full transition',
-                dashboardActive ? 'bg-gray-700' : 'bg-gray-300 group-hover:bg-gray-500',
-              ].join(' ')}
-            />
-            <span className="ml-3">대시보드</span>
-          </Link>
+          const isOpen = openGroups[group.title];
+          return (
+            <div key={group.title} className="space-y-1">
+              <button 
+                onClick={() => toggleGroup(group.title)}
+                className={`w-full flex items-center justify-between px-2 py-2 text-[15px] font-black transition-colors uppercase tracking-tight ${
+                  group.title === 'ADMIN ONLY' ? 'text-blue-600' : 'text-gray-900'
+                }`}
+              >
+                {group.title}
+                <span className="text-xl font-light">{isOpen ? '−' : '+'}</span>
+              </button>
 
-          <Link
-            href="/approvals"
-            className={[
-              'group flex items-center rounded-xl px-3 py-3 text-sm font-medium transition',
-              approvalsActive
-                ? 'bg-gray-100 text-gray-900'
-                : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900',
-            ].join(' ')}
-          >
-            <span
-              className={[
-                'h-2 w-2 rounded-full transition',
-                approvalsActive ? 'bg-gray-700' : 'bg-gray-300 group-hover:bg-gray-500',
-              ].join(' ')}
-            />
-            <span className="ml-3">기안/결재</span>
-          </Link>
+              {isOpen && (
+                <div className="space-y-0.5 ml-1 border-l-2 border-gray-100">
+                  {group.items.map((item) => {
+                    const enabled = hasPermission(item.perm);
+                    const isCurrent = pathname === item.href;
 
-          {visibleGroups.map((group) => {
-            const isOpen = openGroups[group.key] ?? false
-            const hasActiveChild = group.children.some((child) =>
-              isPathMatch(pathname, child.href)
-            )
-
-            return (
-              <div key={group.key}>
-                <button
-                  type="button"
-                  onClick={() => toggleGroup(group.key)}
-                  className={[
-                    'flex w-full items-center justify-between rounded-xl px-3 py-3 text-sm font-medium transition',
-                    hasActiveChild
-                      ? 'bg-gray-100 text-gray-900'
-                      : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900',
-                  ].join(' ')}
-                >
-                  <span className="flex items-center">
-                    <span
-                      className={[
-                        'h-2 w-2 rounded-full transition',
-                        hasActiveChild ? 'bg-gray-700' : 'bg-gray-300',
-                      ].join(' ')}
-                    />
-                    <span className="ml-3">{group.label}</span>
-                  </span>
-
-                  <span className="text-xs text-gray-400">{isOpen ? '−' : '+'}</span>
-                </button>
-
-                {isOpen && (
-                  <div className="mt-1 space-y-1 pl-6">
-                    {group.children.map((child) => {
-                      const isActive = isPathMatch(pathname, child.href)
-
-                      return (
-                        <Link
-                          key={child.href}
-                          href={child.href}
-                          className={[
-                            'block rounded-lg px-3 py-2 text-sm transition',
-                            isActive
-                              ? 'bg-gray-100 font-medium text-gray-900'
-                              : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900',
-                          ].join(' ')}
-                        >
-                          {child.label}
-                        </Link>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </nav>
+                    return (
+                      <div key={item.href}>
+                        {enabled ? (
+                          <Link
+                            href={item.href}
+                            className={`block px-4 py-2 text-[13px] transition-all ${
+                              isCurrent 
+                                ? 'text-blue-600 font-bold border-l-2 border-blue-600 ml-[-2px]' 
+                                : 'text-gray-500 hover:text-black'
+                            }`}
+                          >
+                            {item.name}
+                          </Link>
+                        ) : (
+                          <div className="flex justify-between items-center px-4 py-2 text-[13px] text-gray-300 italic select-none">
+                            <span>{item.name}</span>
+                            <span className="text-[8px] border border-gray-100 px-1 rounded">LOCKED</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </nav>
+      
+      <div className="p-4 border-t border-gray-50">
+        <button 
+          onClick={() => supabase.auth.signOut().then(() => router.push('/login'))}
+          className="w-full flex items-center gap-2 px-2 py-2 text-[11px] font-bold text-gray-400 hover:text-red-600 transition-colors uppercase"
+        >
+          Sign Out →
+        </button>
       </div>
     </aside>
-  )
+  );
 }
