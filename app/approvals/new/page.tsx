@@ -68,7 +68,7 @@ export default function NewApprovalPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
 
-  const [docType, setDocType] = useState('purchase_request')
+  const [docType, setDocType] = useState('draft_doc')
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [writerId, setWriterId] = useState('')
@@ -79,6 +79,8 @@ export default function NewApprovalPage() {
 
   useEffect(() => {
     async function loadData() {
+      const { data: { user } } = await supabase.auth.getUser()
+
       const [{ data: usersData, error: usersError }, { data: deptData, error: deptError }] =
         await Promise.all([
           supabase
@@ -106,14 +108,11 @@ export default function NewApprovalPage() {
       setUsers(fetchedUsers)
       setDepartments(fetchedDepartments)
 
-      // 기본값 세팅: 구매 담당 / 결재 담당 / 관리자
-      const defaultWriter = fetchedUsers.find((u) => u.login_id === 'purchase')
-      const defaultReviewer = fetchedUsers.find((u) => u.login_id === 'approval')
-      const defaultApprover = fetchedUsers.find((u) => u.login_id === 'admin')
-
-      if (defaultWriter) setWriterId(defaultWriter.id)
-      if (defaultReviewer) setReviewerId(defaultReviewer.id)
-      if (defaultApprover) setApproverId(defaultApprover.id)
+      if (user) {
+        setWriterId(user.id)
+      } else if (fetchedUsers.length > 0) {
+        setWriterId(fetchedUsers[0].id)
+      }
 
       setIsLoading(false)
     }
@@ -127,6 +126,9 @@ export default function NewApprovalPage() {
   )
 
   const selectedWriter = users.find((u) => u.id === writerId)
+  
+  // 🌟 결재자 목록에서 '나(기안자)'를 제외한 목록 생성
+  const selectableUsers = users.filter((u) => u.id !== writerId)
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -143,22 +145,19 @@ export default function NewApprovalPage() {
     }
 
     if (!writerId) {
-      setErrorMessage('작성자를 선택하십시오.')
+      setErrorMessage('작성자를 불러올 수 없습니다. 다시 로그인해 주세요.')
       return
     }
 
-    if (!reviewerId) {
-      setErrorMessage('1차 결재자를 선택하십시오.')
-      return
-    }
+    // 🌟 1차 결재자(검토자) 필수 체크 삭제! (선택사항으로 변경)
 
     if (!approverId) {
       setErrorMessage('최종 결재자를 선택하십시오.')
       return
     }
 
-    if (reviewerId === approverId) {
-      setErrorMessage('1차 결재자와 최종 결재자는 서로 달라야 합니다.')
+    if (reviewerId && reviewerId === approverId) {
+      setErrorMessage('검토자와 최종 결재자는 서로 달라야 합니다.')
       return
     }
 
@@ -199,25 +198,31 @@ export default function NewApprovalPage() {
 
     const docId = docData.id as number
 
-    // 2. 결재선 생성
-    const { error: linesError } = await supabase.from('approval_lines').insert([
-      {
+    // 🌟 2. 결재선 유동적 생성 (검토자가 없으면 최종 결재자가 1순위)
+    const linesToInsert = []
+
+    if (reviewerId) {
+      // 검토자가 있을 때
+      linesToInsert.push({
         approval_doc_id: docId,
         line_no: 1,
         approver_id: reviewerId,
         approver_role: 'review',
-        status: 'pending',
+        status: 'pending', // 지금 결재할 차례
         opinion: null,
-      },
-      {
-        approval_doc_id: docId,
-        line_no: 2,
-        approver_id: approverId,
-        approver_role: 'approve',
-        status: 'waiting',
-        opinion: null,
-      },
-    ])
+      })
+    }
+
+    linesToInsert.push({
+      approval_doc_id: docId,
+      line_no: reviewerId ? 2 : 1, // 검토자가 있으면 2번, 없으면 1번 라인
+      approver_id: approverId,
+      approver_role: 'approve',
+      status: reviewerId ? 'waiting' : 'pending', // 검토자가 있으면 대기, 없으면 바로 결재 차례
+      opinion: null,
+    })
+
+    const { error: linesError } = await supabase.from('approval_lines').insert(linesToInsert)
 
     if (linesError) {
       setIsSaving(false)
@@ -248,147 +253,157 @@ export default function NewApprovalPage() {
 
   if (isLoading) {
     return (
-      <div className="rounded-2xl bg-white p-8 shadow">
-        <p className="text-gray-500">기안서 등록 화면을 준비하는 중입니다...</p>
+      <div className="p-8 max-w-7xl mx-auto flex items-center justify-center min-h-screen">
+        <p className="text-gray-500 font-bold">기안서 등록 화면을 준비하는 중입니다...</p>
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <Link
-            href="/approvals"
-            className="text-sm text-gray-500 hover:text-gray-700"
-          >
-            ← 기안/결재 목록으로
-          </Link>
-          <h1 className="mt-2 text-3xl font-bold">기안서 등록</h1>
-          <p className="mt-1 text-gray-600">새로운 기안 문서를 작성하고 상신합니다.</p>
-        </div>
-      </div>
-
-      <form onSubmit={handleSubmit} className="rounded-2xl bg-white p-6 shadow">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+    <div className="p-8 max-w-7xl mx-auto font-sans bg-gray-50 min-h-screen">
+      <form onSubmit={handleSubmit}>
+        <div className="flex justify-between items-end mb-8 border-b border-gray-200 pb-4">
           <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">
-              문서유형
-            </label>
-            <select
-              value={docType}
-              onChange={(e) => setDocType(e.target.value)}
-              className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black"
+            <h1 className="text-3xl font-black tracking-tighter text-gray-900">기안서 등록</h1>
+            <p className="text-sm font-bold text-gray-500 mt-2">
+              {selectedWriter ? `${deptMap.get(selectedWriter.dept_id ?? -1) ?? '-'} | ${selectedWriter.user_name}` : '로딩중...'}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Link 
+              href="/approvals"
+              className="px-5 py-2.5 text-sm font-bold text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors flex items-center justify-center"
             >
-              <option value="purchase_request">구매품의</option>
-              <option value="draft_doc">일반기안</option>
-              <option value="leave_request">휴가신청</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">
-              작성자
-            </label>
-            <select
-              value={writerId}
-              onChange={(e) => setWriterId(e.target.value)}
-              className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black"
+              취소
+            </Link>
+            <button 
+              type="button"
+              className="px-5 py-2.5 text-sm font-bold text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors shadow-sm"
             >
-              <option value="">작성자 선택</option>
-              {users.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.user_name} / {deptMap.get(user.dept_id ?? -1) ?? '-'} / {user.role_name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="mb-2 block text-sm font-medium text-gray-700">
-              제목
-            </label>
-            <input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black"
-              placeholder="예: 교육용 시약 구매 품의"
-              required
-            />
-          </div>
-
-          <div className="md:col-span-2">
-            <label className="mb-2 block text-sm font-medium text-gray-700">
-              내용
-            </label>
-            <textarea
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              rows={8}
-              className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black"
-              placeholder="기안 내용을 입력하십시오."
-              required
-            />
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">
-              1차 결재자
-            </label>
-            <select
-              value={reviewerId}
-              onChange={(e) => setReviewerId(e.target.value)}
-              className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black"
+              임시 저장
+            </button>
+            <button 
+              type="submit"
+              disabled={isSaving}
+              className="px-5 py-2.5 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50"
             >
-              <option value="">1차 결재자 선택</option>
-              {users.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.user_name} / {deptMap.get(user.dept_id ?? -1) ?? '-'} / {user.role_name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">
-              최종 결재자
-            </label>
-            <select
-              value={approverId}
-              onChange={(e) => setApproverId(e.target.value)}
-              className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black"
-            >
-              <option value="">최종 결재자 선택</option>
-              {users.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.user_name} / {deptMap.get(user.dept_id ?? -1) ?? '-'} / {user.role_name}
-                </option>
-              ))}
-            </select>
+              {isSaving ? '저장 중...' : '작성 후 상신'}
+            </button>
           </div>
         </div>
 
         {errorMessage && (
-          <div className="mt-4 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600">
+          <div className="mb-6 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600 font-bold border border-red-200 shadow-sm">
             {errorMessage}
           </div>
         )}
 
-        <div className="mt-6 flex gap-3">
-          <button
-            type="submit"
-            disabled={isSaving}
-            className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
-          >
-            {isSaving ? '저장 중...' : '작성 후 상신'}
-          </button>
+        <div className="flex flex-col lg:flex-row gap-6">
+          <div className="flex-1 space-y-6">
+            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm">
+              <h2 className="text-lg font-black text-gray-800 mb-5">문서 정보</h2>
+              
+              <div className="space-y-4">
+                <div>
+                  <select 
+                    value={docType}
+                    onChange={(e) => setDocType(e.target.value)}
+                    className="w-full md:w-1/3 border border-gray-300 rounded-lg px-4 py-2.5 text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow bg-white"
+                  >
+                    <option value="draft_doc">일반기안</option>
+                    <option value="purchase_request">구매품의</option>
+                    <option value="leave_request">휴가신청</option>
+                  </select>
+                </div>
 
-          <Link
-            href="/approvals"
-            className="rounded-xl border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700"
-          >
-            취소
-          </Link>
+                <div>
+                  <input 
+                    type="text" 
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="기안 제목을 입력하세요 (예: 교육용 시약 구매 품의)" 
+                    className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <textarea 
+                    value={content}
+                    onChange={(e) => setContent(e.target.value)}
+                    placeholder="기안 내용을 상세히 입력하십시오." 
+                    className="w-full border border-gray-300 rounded-lg px-4 py-3 text-sm h-64 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow resize-none"
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="w-full lg:w-80 shrink-0">
+            <div className="bg-white border border-gray-200 rounded-xl p-6 shadow-sm sticky top-6">
+              <h2 className="text-lg font-black text-gray-800 mb-5">결재 라인</h2>
+              
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <span className="w-12 text-center bg-gray-100 text-gray-600 font-bold text-[11px] py-1.5 rounded uppercase tracking-wider">
+                    기안
+                  </span>
+                  <div className="flex-1 border border-gray-200 bg-gray-50 rounded px-3 py-2 text-sm text-gray-700 font-medium overflow-hidden text-ellipsis whitespace-nowrap">
+                    {selectedWriter ? selectedWriter.user_name : '로딩중...'}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <span className="w-12 text-center bg-blue-50 text-blue-600 font-bold text-[11px] py-1.5 rounded uppercase tracking-wider">
+                    검토
+                  </span>
+                  <select 
+                    value={reviewerId}
+                    onChange={(e) => setReviewerId(e.target.value)}
+                    className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none truncate"
+                  >
+                    <option value="">검토 생략 (선택 안 함)</option>
+                    {/* 🌟 나 자신을 제외한 목록 표출 */}
+                    {selectableUsers.map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.user_name} / {deptMap.get(user.dept_id ?? -1) ?? '-'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                
+                <button type="button" className="w-full border border-dashed border-gray-300 text-gray-400 text-xs font-bold py-2 rounded hover:bg-gray-50 hover:text-gray-600 transition-colors">
+                  + 검토 추가
+                </button>
+
+                <div className="flex items-center gap-3">
+                  <span className="w-12 text-center bg-blue-600 text-white font-bold text-[11px] py-1.5 rounded uppercase tracking-wider">
+                    결재
+                  </span>
+                  <select 
+                    value={approverId}
+                    onChange={(e) => setApproverId(e.target.value)}
+                    className="flex-1 border border-gray-300 rounded px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none truncate"
+                  >
+                    <option value="">최종 결재자 선택...</option>
+                    {/* 🌟 나 자신을 제외한 목록 표출 */}
+                    {selectableUsers.map((user) => (
+                      <option key={user.id} value={user.id}>
+                        {user.user_name} / {deptMap.get(user.dept_id ?? -1) ?? '-'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <button type="button" className="w-full border border-dashed border-gray-300 text-gray-400 text-xs font-bold py-2 rounded hover:bg-gray-50 hover:text-gray-600 transition-colors">
+                  + 결재 추가
+                </button>
+
+              </div>
+            </div>
+          </div>
+
         </div>
       </form>
     </div>

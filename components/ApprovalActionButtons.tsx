@@ -124,18 +124,23 @@ export default function ApprovalActionButtons({ docId, docNo, lines }: { docId: 
                 }]);
             }
 
-            // 수불부 (inventory_transactions) 기록 저장
-            await supabase
+            // 🌟 수불부 (inventory_transactions) 기록 저장 및 에러 강력 체크
+            const { error: txError } = await supabase
               .from('inventory_transactions')
               .insert([{
                 trans_date: now,
-                trans_type: 'OUTBOUND',      // 출고 타입
+                trans_type: 'OUT',
                 item_id: item.item_id,
                 qty: item.qty,
                 ref_table: 'outbound_requests', 
                 ref_id: reqData.id,
                 created_by: currentUser.id
               }]);
+              
+            if (txError) {
+              console.error("수불부 기록 에러:", txError);
+              throw new Error(`수불부 기록 실패! 원인: ${txError.message}`);
+            }
           }
         }
       } else {

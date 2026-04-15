@@ -50,7 +50,8 @@ export default function Sidebar() {
       title: '기안/결재',
       items: [
         { name: '결재문서함', href: '/approvals', perm: null },
-        { name: '출고요청서', href: '/outbound-requests', perm: 'can_po_create' },
+        // 💡 수정: 출고요청서의 perm을 null로 변경하여 전 직원 오픈!
+        { name: '출고요청서', href: '/outbound-requests', perm: null }, 
       ]
     },
     {
@@ -63,7 +64,7 @@ export default function Sidebar() {
     {
       title: '품질관리 (QC)',
       items: [
-        { name: '검사 대기(Quarantine)', href: '/qc', perm: 'can_qc_manage' }, // 폴더가 qc 하나일 경우 대비
+        { name: '검사 대기(Quarantine)', href: '/qc', perm: 'can_qc_manage' },
         { name: '품질 검사 내역', href: '/qc/history', perm: 'can_qc_manage' },
       ]
     },
