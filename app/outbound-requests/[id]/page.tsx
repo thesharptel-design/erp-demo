@@ -395,8 +395,7 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
             {/* 결재 처리 모듈 (재고 차감 로직 포함) */}
             {approvalDoc && approvalLines.length > 0 ? (
               <ApprovalActionButtons 
-                docId={approvalDoc.id} 
-                docNo={approvalDoc.doc_no} 
+                doc={approvalDoc}
                 lines={approvalLines} 
               />
             ) : (

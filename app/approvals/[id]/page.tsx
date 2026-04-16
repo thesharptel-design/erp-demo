@@ -204,8 +204,6 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
             <ApprovalActionButtons 
               doc={doc} 
               lines={lines} 
-              currentUserId={currentUserId || ''} 
-              currentUserRole={currentUserRole}
             />
 
             <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
