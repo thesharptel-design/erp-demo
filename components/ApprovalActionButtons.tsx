@@ -4,204 +4,202 @@ import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 
-type ApprovalLine = {
-  id: number;
-  approval_doc_id: number;
-  line_no: number;
-  approver_id: string;
-  approver_role: string;
-  status: string;
-  acted_at?: string | null;
-  opinion?: string | null;
-};
-
-export default function ApprovalActionButtons({ docId, docNo, lines }: { docId: number, docNo: string, lines: ApprovalLine[] }) {
+export default function ApprovalActionButtons({ doc, lines }: { doc: any, lines: any[] }) {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<any>(null);
-  const [opinion, setOpinion] = useState('');
   const [processing, setProcessing] = useState(false);
+  const [opinion, setOpinion] = useState('');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const fetchUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (user) setCurrentUser(user);
-    };
-    fetchUser();
+    async function init() {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const { data: profile } = await supabase.from('app_users').select('*').eq('id', session.user.id).single();
+        setCurrentUser(profile || session.user);
+      }
+      setLoading(false);
+    }
+    init();
   }, []);
 
-  if (!currentUser) return <div className="text-sm text-gray-500">사용자 확인 중...</div>;
+  if (loading) return <div className="p-4 text-xs font-bold text-gray-400 animate-pulse text-center">권한 확인 중...</div>;
+  if (!currentUser || !doc) return null;
 
-  const currentTurnLine = [...lines]
-    .sort((a, b) => a.line_no - b.line_no)
-    .find(line => line.status === 'waiting' || line.status === 'pending');
+  const myId = String(currentUser.id).toLowerCase();
+  const isWriter = String(doc?.writer_id || '').toLowerCase() === myId;
+  const isAdmin = String(currentUser?.role || '').toUpperCase() === 'ADMIN';
 
-  const isMyTurn = currentTurnLine && currentTurnLine.approver_id === currentUser.id;
+  const sortedLines = [...(lines || [])].sort((a, b) => a.line_no - b.line_no);
+  const pendingLine = sortedLines.find(l => l.status === 'pending');
+  const lastApprovedLine = [...sortedLines].reverse().find(l => l.status === 'approved');
+  
+  // 상황에 따른 현재 '공'
+  const activeLine = (doc.status === 'approved' || doc.remarks?.includes('취소 요청') || doc.remarks?.includes('취소완료')) 
+    ? (pendingLine || lastApprovedLine) 
+    : pendingLine;
 
-  const handleAction = async (action: 'approve' | 'reject') => {
-    // 💡 TypeScript 에러 4개를 한 번에 잠재우는 마법의 방어 코드
-    if (!currentTurnLine) return; 
+  const isMyTurn = activeLine && String(activeLine.approver_id).toLowerCase() === myId;
+  const isAnyLineApproved = lines?.some(l => l.status === 'approved');
 
-    if (!opinion && action === 'reject') {
-      return alert('반려 시에는 반드시 사유를 입력해야 합니다.');
-    }
-    if (!confirm(`${action === 'approve' ? '승인' : '반려'} 하시겠습니까?`)) return;
+  const updateDoc = async (data: any) => {
+    const { error } = await supabase.from('approval_docs').update(data).eq('id', doc.id);
+    if (error) throw error;
+  };
+
+  const handleRecall = async () => {
+    if (!confirm('기안을 회수하여 임시저장으로 되돌릴까요?')) return;
+    setProcessing(true);
+    try {
+      await updateDoc({ status: 'draft', remarks: '기안 회수됨', current_line_no: 1 });
+      await supabase.from('approval_lines').update({ status: 'waiting', acted_at: null, opinion: null }).eq('approval_doc_id', doc.id);
+      alert('회수되었습니다.');
+      router.refresh();
+    } catch (e: any) { alert('오류: ' + e.message); }
+    finally { setProcessing(false); }
+  };
+
+  const handleRequestCancel = async () => {
+    const reason = prompt('취소 사유를 입력하세요 (필수):');
+    if (!reason || reason.length < 2) return alert('사유를 입력해주세요.');
+    setProcessing(true);
+    try {
+      await updateDoc({ remarks: '취소 요청 중', content: `${doc?.content || ''}\n\n[취소 요청 사유]: ${reason}` });
+      alert('결재권자에게 취소 요청이 전달되었습니다.');
+      router.refresh();
+    } catch (e: any) { alert('오류: ' + e.message); }
+    finally { setProcessing(false); }
+  };
+
+  // 🌟 [핵심 변경] 검토자/결재자 역할 분리 저장
+  const handleApproveCancellation = async () => {
+    if (!activeLine) return;
+    if (!opinion.trim()) return alert('취소 승인 의견을 아래 칸에 필수로 입력해주세요.');
 
     setProcessing(true);
     try {
-      const newStatus = action === 'approve' ? 'approved' : 'rejected';
-      const now = new Date().toISOString();
-
-      // 1. 결재선(approval_lines) 상태 업데이트
-      const { error: lineError } = await supabase
-        .from('approval_lines')
-        .update({ status: newStatus, acted_at: now, opinion: opinion })
-        .eq('id', currentTurnLine.id);
-      if (lineError) throw new Error(`결재선 업데이트 실패: ${lineError.message}`);
-
-      // 2. 결재 이력(approval_histories) 저장
-      const { error: historyError } = await supabase
-        .from('approval_histories')
-        .insert([{
-          approval_doc_id: docId,
-          approval_line_id: currentTurnLine.id,
-          actor_id: currentUser.id,
-          action_type: action,
-          action_comment: opinion
-        }]);
-      if (historyError) throw new Error(`결재이력 저장 실패: ${historyError.message}`);
-
-      // 3. 최종 결재자 여부 확인
-      const isLastApprover = Math.max(...lines.map(l => l.line_no)) === currentTurnLine.line_no;
-
-      if (action === 'reject') {
-        await supabase.from('approval_docs').update({ status: 'rejected', completed_at: now }).eq('id', docId);
-        await supabase.from('outbound_requests').update({ status: 'rejected' }).eq('approval_doc_id', docId);
-      } 
-      else if (isLastApprover && action === 'approve') {
-        // 🌟 최종 승인 시: 문서 승인 처리 + 재고 차감 로직 실행 🌟
-        await supabase.from('approval_docs').update({ status: 'approved', completed_at: now }).eq('id', docId);
-        
-        // 출고요청서 마스터 가져오기
-        const { data: reqData, error: reqError } = await supabase
-          .from('outbound_requests')
-          .update({ status: 'approved' })
-          .eq('approval_doc_id', docId)
-          .select('id').single();
-          
-        // 💡 TypeScript 에러 방어: reqData가 없을 경우 에러 던지기
-        if (reqError || !reqData) throw new Error(`출고요청서 조회 실패: ${reqError?.message}`);
-
-        // 출고 요청된 품목 리스트 가져오기
-        const { data: reqItems } = await supabase
-          .from('outbound_request_items')
-          .select('*')
-          .eq('outbound_request_id', reqData.id);
-
-        if (reqItems && reqItems.length > 0) {
-          for (const item of reqItems) {
-            const { data: invData } = await supabase
-              .from('inventory')
-              .select('*')
-              .eq('item_id', item.item_id)
-              .single();
-
-            if (invData) {
-              await supabase
-                .from('inventory')
-                .update({ 
-                  current_qty: Number(invData.current_qty) - Number(item.qty),
-                  available_qty: Number(invData.available_qty) - Number(item.qty)
-                })
-                .eq('id', invData.id);
-            } else {
-              await supabase
-                .from('inventory')
-                .insert([{
-                  item_id: item.item_id,
-                  current_qty: -Number(item.qty),
-                  available_qty: -Number(item.qty),
-                  quarantine_qty: 0
-                }]);
-            }
-
-            // 🌟 수불부 (inventory_transactions) 기록 저장 및 에러 강력 체크
-            const { error: txError } = await supabase
-              .from('inventory_transactions')
-              .insert([{
-                trans_date: now,
-                trans_type: 'OUT',
-                item_id: item.item_id,
-                qty: item.qty,
-                ref_table: 'outbound_requests', 
-                ref_id: reqData.id,
-                created_by: currentUser.id
-              }]);
-              
-            if (txError) {
-              console.error("수불부 기록 에러:", txError);
-              throw new Error(`수불부 기록 실패! 원인: ${txError.message}`);
-            }
-          }
-        }
-      } else {
-         await supabase
-          .from('approval_docs')
-          .update({ current_line_no: currentTurnLine.line_no + 1 })
-          .eq('id', docId);
+      if (doc.status !== 'approved') {
+        await supabase.from('approval_lines').update({ status: 'rejected', acted_at: new Date().toISOString(), opinion }).eq('id', activeLine.id);
+        await updateDoc({ status: 'rejected', remarks: '기안자 요청으로 결재 중 취소됨' });
+        alert('결재 진행 중 취소 요청을 받아들여 문서를 종료했습니다.');
+        router.push('/approvals');
+        return;
       }
 
-      alert('결재 처리가 완료되었습니다.');
-      router.refresh();
+      // 🌟 현재 결재자의 역할 이름 판별
+      const roleName = activeLine.approver_role === 'review' ? '검토자' : '결재자';
 
-    } catch (err: any) {
-      alert('오류 발생: ' + err.message);
-    } finally {
-      setProcessing(false);
+      if (activeLine.line_no === 1) {
+        await updateDoc({ remarks: `${roleName} 취소승인` });
+        alert(`취소가 승인되어 기안자에게 최종 권한이 넘어갔습니다.`);
+      } else {
+        await supabase.from('approval_lines').update({ status: 'waiting', acted_at: null, opinion }).eq('id', activeLine.id);
+        await supabase.from('approval_lines').update({ status: 'pending' }).eq('approval_doc_id', doc.id).eq('line_no', activeLine.line_no - 1);
+        await updateDoc({ current_line_no: activeLine.line_no - 1, remarks: `${roleName} 취소완료` });
+        alert(`내 단계(${roleName})의 취소를 승인하고 이전 결재자에게 넘겼습니다.`);
+      }
+      router.refresh();
+      setOpinion('');
+    } catch (e: any) { 
+      alert('데이터베이스 업데이트 오류: ' + e.message); 
+    } finally { 
+      setProcessing(false); 
     }
   };
 
-  if (!isMyTurn) {
-    return (
-      <div className="rounded-lg bg-yellow-50 p-4 text-sm text-yellow-800 border border-yellow-200">
-        현재 사용자({currentUser?.user_metadata?.name || '로그인 유저'})에게는 승인 / 반려 권한이 없습니다.
-      </div>
-    );
-  }
+  const handleFinalizeCancel = async () => {
+    if (!confirm('최종 취소 처리와 함께 재고를 환원하시겠습니까?')) return;
+    setProcessing(true);
+    try {
+      await supabase.rpc('finalize_outbound_cancellation', { p_doc_id: doc.id });
+      await updateDoc({ status: 'rejected', remarks: '취소 완료(재고환원)' });
+      alert('취소 및 재고 환원이 완료되었습니다.');
+      router.push('/approvals');
+    } catch (e: any) { alert('오류: ' + e.message); }
+    finally { setProcessing(false); }
+  };
+
+  const handleGeneralAction = async (type: 'approved' | 'rejected') => {
+    if (!activeLine) return;
+    if (type === 'rejected' && !opinion) return alert('반려 사유를 입력하세요.');
+    
+    setProcessing(true);
+    const now = new Date().toISOString();
+    try {
+      await supabase.from('approval_lines').update({ status: type, acted_at: now, opinion }).eq('id', activeLine.id);
+      
+      if (type === 'rejected') {
+        await updateDoc({ status: 'rejected', remarks: '결재자 반려' });
+      } else {
+        const isLast = activeLine.line_no === sortedLines.length;
+        if (isLast) {
+          await updateDoc({ status: 'approved', completed_at: now });
+        } else {
+          await supabase.from('approval_lines').update({ status: 'pending' }).eq('approval_doc_id', doc.id).eq('line_no', activeLine.line_no + 1);
+          await updateDoc({ current_line_no: activeLine.line_no + 1, status: 'in_review' });
+        }
+      }
+      router.refresh();
+      setOpinion('');
+    } catch (e: any) { alert('오류: ' + e.message); }
+    finally { setProcessing(false); }
+  };
+
+  const isCancellationRelay = doc?.remarks === '취소 요청 중' || (doc?.remarks?.includes('취소완료') && !doc?.remarks?.includes('재고환원'));
 
   return (
-    <div className="space-y-4 rounded-xl border border-blue-200 bg-blue-50 p-5 shadow-sm">
-      <div>
-        <h3 className="font-bold text-blue-900">결재 처리</h3>
-        <p className="text-xs text-blue-700 mt-1">현재 문서의 승인 / 반려를 처리합니다.</p>
-      </div>
+    <div className="bg-white border-2 border-gray-100 rounded-3xl p-6 shadow-sm space-y-4">
+      {isAdmin && (
+        <button onClick={async () => {
+          if(!confirm('관리자 권한으로 강제 취소합니까?')) return;
+          await supabase.rpc('finalize_outbound_cancellation', { p_doc_id: doc.id });
+          await updateDoc({ status: 'rejected', remarks: '관리자 강제취소' });
+          router.refresh();
+        }} className="w-full border-2 border-gray-900 text-gray-900 py-2 rounded-xl font-bold text-[10px] opacity-30 hover:opacity-100 transition-all">ADMIN FORCE CANCEL</button>
+      )}
 
-      <div>
-        <label className="block text-xs font-bold text-blue-800 mb-1">결재 의견</label>
-        <textarea
-          className="w-full rounded border border-blue-300 p-3 text-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none resize-none"
-          rows={3}
-          placeholder="승인 또는 반려 사유를 입력하세요."
-          value={opinion}
-          onChange={(e) => setOpinion(e.target.value)}
-        />
-      </div>
+      {isWriter && (
+        <div className="space-y-2">
+          {doc.status === 'submitted' && !isAnyLineApproved && (
+            <button onClick={handleRecall} disabled={processing} className="w-full bg-orange-500 text-white py-4 rounded-2xl font-black text-sm">기안 회수 (임시저장)</button>
+          )}
+          {(isAnyLineApproved || doc.status === 'approved') && !doc.remarks?.includes('취소') && doc.status !== 'rejected' && (
+            <button onClick={handleRequestCancel} disabled={processing} className="w-full border-2 border-red-500 text-red-500 py-4 rounded-2xl font-black text-sm">결재 취소 승인 요청</button>
+          )}
+          {(doc.remarks?.includes('취소완료') && !doc.remarks?.includes('재고환원')) && (
+            <div className="p-3 bg-orange-50 rounded-xl border border-orange-100">
+               <p className="text-xs text-orange-600 font-bold text-center animate-pulse">상위 결재자들의 역순 취소가 진행 중입니다.</p>
+            </div>
+          )}
+          {doc.remarks?.includes('취소승인') && (
+            <button onClick={handleFinalizeCancel} disabled={processing} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg animate-bounce shadow-xl">최종 취소 및 재고환원</button>
+          )}
+        </div>
+      )}
 
-      <div className="flex gap-2">
-        <button
-          onClick={() => handleAction('approve')}
-          disabled={processing}
-          className="flex-1 rounded bg-blue-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-blue-700 transition-colors shadow-sm disabled:opacity-50"
-        >
-          {processing ? '처리 중...' : '결재 승인'}
-        </button>
-        <button
-          onClick={() => handleAction('reject')}
-          disabled={processing}
-          className="flex-1 rounded border border-red-300 bg-white px-4 py-2.5 text-sm font-bold text-red-600 hover:bg-red-50 transition-colors shadow-sm disabled:opacity-50"
-        >
-          반려
-        </button>
-      </div>
+      {isMyTurn && (
+        <div className="pt-2 border-t border-gray-50 space-y-3">
+          {isCancellationRelay ? (
+            <div className="bg-red-600 p-5 rounded-3xl shadow-xl">
+               <p className="text-white text-center text-xs font-black mb-3 animate-pulse">
+                 {doc.remarks === '취소 요청 중' ? '⚠️ 기안자가 취소를 요청했습니다.' : `⚠️ 역순 취소 릴레이 (${doc.remarks})`}
+               </p>
+               <textarea className="w-full bg-white text-gray-900 border-0 rounded-xl p-3 text-sm font-bold outline-none mb-3" placeholder="취소 승인 의견을 입력하세요 (필수)" value={opinion} onChange={e => setOpinion(e.target.value)} rows={2} />
+               <button onClick={handleApproveCancellation} disabled={processing} className="w-full bg-gray-900 text-white py-4 rounded-2xl font-black text-sm hover:bg-black transition-colors">취소 요청 승인</button>
+            </div>
+          ) : (
+            doc.status !== 'approved' && doc.status !== 'rejected' && (
+              <>
+                <textarea className="w-full bg-gray-50 border-0 rounded-2xl p-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500" placeholder="결재 의견을 입력하세요" value={opinion} onChange={e => setOpinion(e.target.value)} rows={2} />
+                <div className="flex gap-2">
+                  <button onClick={() => handleGeneralAction('approved')} disabled={processing} className="flex-1 bg-blue-600 text-white py-4 rounded-2xl font-black text-sm">승인</button>
+                  <button onClick={() => handleGeneralAction('rejected')} disabled={processing} className="flex-1 bg-red-100 text-red-600 py-4 rounded-2xl font-black text-sm">반려</button>
+                </div>
+              </>
+            )
+          )}
+        </div>
+      )}
     </div>
   );
 }

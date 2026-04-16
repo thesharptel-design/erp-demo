@@ -1,9 +1,9 @@
-'use client';
+'use client'
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase';
+import Link from 'next/link'
+import { useEffect, useState } from 'react'
+import { usePathname, useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
 
 export default function Sidebar() {
   const pathname = usePathname();
@@ -11,10 +11,13 @@ export default function Sidebar() {
   
   const [userData, setUserData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  
+  // 🌟 대표님 요청대로 분리된 그룹명에 맞춰 초기 오픈 상태 설정
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
     '기안/결재': true,
     '품질관리 (QC)': true,
-    '생산/재고 관리': true,
+    '생산 관리': true,
+    '자재 관리': true,
   });
 
   useEffect(() => {
@@ -44,14 +47,13 @@ export default function Sidebar() {
     return permKey ? !!userData[permKey] : true; 
   };
 
-  // 📂 이미지와 폴더 구조를 100% 매칭한 메뉴 구성
+  // 📂 최적화된 BIO-ERP 메뉴 구성
   const menuGroups = [
     {
       title: '기안/결재',
       items: [
         { name: '결재문서함', href: '/approvals', perm: null },
-        // 💡 수정: 출고요청서의 perm을 null로 변경하여 전 직원 오픈!
-        { name: '출고요청서', href: '/outbound-requests', perm: null }, 
+        { name: '출고요청 작성/조회', href: '/outbound-requests', perm: null }, 
       ]
     },
     {
@@ -69,12 +71,19 @@ export default function Sidebar() {
       ]
     },
     {
-      title: '생산/재고 관리',
+      title: '생산 관리',
       items: [
         { name: '생산지시서', href: '/production-orders', perm: 'can_production_manage' },
         { name: 'BOM 관리', href: '/boms', perm: 'can_production_manage' },
+      ]
+    },
+    {
+      title: '자재 관리',
+      items: [
         { name: '현재고 현황', href: '/inventory', perm: null },
         { name: '입출고 현황', href: '/inventory-transactions', perm: null },
+        { name: '입고 등록', href: '/inbound/new', perm: 'can_manage_master' }, 
+        { name: '출고 등록', href: '/outbound/new', perm: 'can_manage_master'},
         { name: '재고 실사/조정', href: '/inventory-adjustments', perm: 'can_manage_master' },
       ]
     },
@@ -95,7 +104,6 @@ export default function Sidebar() {
 
   return (
     <aside className="w-64 bg-white border-r border-gray-200 min-h-screen flex flex-col text-black shadow-sm font-sans">
-      {/* 💡 로고 클릭 시 홈(대시보드)으로 이동 */}
       <div className="p-6 border-b border-gray-50 bg-gray-50/20">
         <Link href="/dashboard" className="group">
           <h1 className="text-2xl font-black tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors">
@@ -109,7 +117,6 @@ export default function Sidebar() {
         )}
       </div>
 
-      {/* 대시보드 독립 버튼 */}
       <div className="px-4 pt-4 pb-2">
         <Link
           href="/dashboard"

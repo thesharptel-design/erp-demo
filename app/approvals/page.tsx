@@ -7,17 +7,13 @@ import { supabase } from '@/lib/supabase';
 // --- UI용 Helper 함수들 ---
 function getWriterName(appUsers: any) {
   if (!appUsers) return '-';
-  if (Array.isArray(appUsers)) {
-    return appUsers[0]?.user_name ?? '-';
-  }
+  if (Array.isArray(appUsers)) return appUsers[0]?.user_name ?? '-';
   return appUsers.user_name ?? '-';
 }
 
 function getDeptName(departments: any) {
   if (!departments) return '-';
-  if (Array.isArray(departments)) {
-    return departments[0]?.dept_name ?? '-';
-  }
+  if (Array.isArray(departments)) return departments[0]?.dept_name ?? '-';
   return departments.dept_name ?? '-';
 }
 
@@ -35,25 +31,54 @@ function getDocTypeLabel(docType: string) {
   }
 }
 
-function getStatusLabel(status: string) {
-  switch (status) {
-    case 'draft': return '임시저장';
-    case 'submitted': return '상신';
-    case 'in_review': return '결재중';
-    case 'approved': return '승인';
-    case 'rejected': return '반려';
-    default: return status;
-  }
-}
+// 🌟 [핵심 변경] 역할에 따라 저장된 remarks 텍스트를 그대로 뱃지에 출력!
+function getDetailedStatusBadge(doc: any) {
+  const remarks = doc.remarks || '';
 
-function getStatusStyle(status: string) {
-  switch (status) {
-    case 'draft': return 'erp-badge erp-badge-draft';
-    case 'submitted': return 'erp-badge erp-badge-progress';
-    case 'in_review': return 'erp-badge erp-badge-review';
-    case 'approved': return 'erp-badge erp-badge-done';
-    case 'rejected': return 'erp-badge erp-badge-danger';
-    default: return 'erp-badge erp-badge-draft';
+  // 1. 기안자 취소 요청
+  if (remarks.includes('취소 요청 중')) {
+    return <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-black bg-red-100 text-red-600 animate-pulse border border-red-200">기안자 취소요청</span>;
+  }
+  
+  // 2. 역순 릴레이 중 (결재자 취소완료 등)
+  if (remarks.includes('취소완료') && !remarks.includes('재고환원')) {
+    return <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-black bg-orange-100 text-orange-600 animate-pulse border border-orange-200">{remarks}</span>;
+  }
+
+  // 3. 기안자의 마지막 확인 대기 (검토자 취소승인 or 결재자 취소승인)
+  if (remarks.includes('취소승인')) {
+    return <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-black bg-orange-50 text-orange-500 border border-orange-200">{remarks}</span>;
+  }
+
+  // 4. 최종 취소 완료
+  if (remarks.includes('재고환원') || remarks.includes('결재 중 취소됨')) {
+    return <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-gray-200 text-gray-500 border border-gray-300">취소 완료됨</span>;
+  }
+
+  // 5. 관리자 강제취소
+  if (remarks.includes('관리자 강제취소')) {
+    return <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-black bg-gray-800 text-white border border-gray-900">관리자 강제취소</span>;
+  }
+
+  // --- 일반 결재 프로세스 ---
+  switch (doc.status) {
+    case 'draft': 
+      return <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-gray-100 text-gray-500 border border-gray-200">임시저장 (회수)</span>;
+    case 'rejected': 
+      return <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-black bg-red-50 text-red-600 border border-red-200">반려됨</span>;
+    case 'approved': 
+      return <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-black bg-green-100 text-green-700 border border-green-200">최종 승인</span>;
+    case 'submitted':
+    case 'in_review':
+      if (doc.current_line_no === 2) {
+        return <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-100 text-blue-600 border border-blue-200">검토자 대기중</span>;
+      }
+      if (doc.current_line_no >= 3) {
+        return <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-black bg-indigo-100 text-indigo-700 border border-indigo-200">결재자 대기중</span>;
+      }
+      return <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-50 text-blue-500 border border-blue-100">결재 진행중</span>;
+    default: 
+      return <span className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold bg-gray-100 text-gray-600">{doc.status}</span>;
   }
 }
 
@@ -69,7 +94,6 @@ export default function ApprovalsPage() {
     try {
       setLoading(true);
 
-      // 🌟 1. 브라우저에서 현재 로그인한 사용자 정보 가져오기 (이제 정상 작동합니다!)
       const { data: { user } } = await supabase.auth.getUser();
       
       if (!user) {
@@ -77,7 +101,6 @@ export default function ApprovalsPage() {
         return;
       }
 
-      // 🌟 2. 사용자 권한(역할) 확인
       const { data: profile } = await supabase
         .from('app_users')
         .select('role_name')
@@ -86,7 +109,6 @@ export default function ApprovalsPage() {
       
       const isAdmin = profile?.role_name === 'admin';
 
-      // 🌟 3. 내가 결재선에 포함된 문서 ID 찾기
       let myDocIds: number[] = [];
       if (!isAdmin) {
         const { data: lines } = await supabase
@@ -96,7 +118,6 @@ export default function ApprovalsPage() {
         myDocIds = lines?.map(line => line.approval_doc_id) || [];
       }
 
-      // 🌟 4. 메인 쿼리 작성 (출고요청서 제외)
       let query = supabase
         .from('approval_docs')
         .select(`
@@ -107,7 +128,6 @@ export default function ApprovalsPage() {
         .neq('doc_type', 'outbound_request')
         .order('id', { ascending: false });
 
-      // 🌟 5. 권한 필터링 적용
       if (!isAdmin) {
         if (myDocIds.length > 0) {
           query = query.or(`writer_id.eq.${user.id},id.in.(${myDocIds.join(',')})`);
@@ -139,7 +159,7 @@ export default function ApprovalsPage() {
 
         <Link
           href="/approvals/new"
-          className="inline-flex h-11 items-center justify-center rounded-xl bg-black px-4 text-sm font-medium text-white hover:bg-gray-800 transition-colors"
+          className="inline-flex h-11 items-center justify-center rounded-xl bg-black px-4 text-sm font-medium text-white hover:bg-gray-800 transition-colors shadow-md"
         >
           기안서 등록
         </Link>
@@ -147,7 +167,7 @@ export default function ApprovalsPage() {
 
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
         <table className="min-w-full text-sm">
-          <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <thead className="bg-gray-50 text-left text-xs font-black uppercase tracking-wider text-gray-500">
             <tr>
               <th className="px-5 py-4">문서번호</th>
               <th className="px-5 py-4">문서유형</th>
@@ -155,45 +175,46 @@ export default function ApprovalsPage() {
               <th className="px-5 py-4">기안자</th>
               <th className="px-5 py-4">부서</th>
               <th className="px-5 py-4">상태</th>
-              <th className="px-5 py-4 text-center">현재결재순번</th>
+              <th className="px-5 py-4 text-center">결재순번</th>
               <th className="px-5 py-4">기안일</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr>
-                <td colSpan={8} className="px-5 py-14 text-center text-sm font-bold text-gray-400">
+                <td colSpan={8} className="px-5 py-16 text-center text-sm font-bold text-gray-400">
                   데이터를 불러오는 중입니다...
                 </td>
               </tr>
             ) : docs.length === 0 ? (
               <tr>
-                <td colSpan={8} className="px-5 py-14 text-center text-sm font-bold text-gray-400">
+                <td colSpan={8} className="px-5 py-16 text-center text-sm font-bold text-gray-400">
                   기안/결재 데이터가 없습니다.
                 </td>
               </tr>
             ) : (
               docs.map((doc) => (
-                <tr key={doc.id} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
+                <tr key={doc.id} className="hover:bg-gray-50/80 transition-colors">
                   <td className="px-5 py-4 font-medium">
                     <Link
                       href={`/approvals/${doc.id}`}
-                      className="text-blue-600 hover:underline font-bold"
+                      className="text-blue-600 hover:text-blue-800 hover:underline font-bold"
                     >
                       {doc.doc_no}
                     </Link>
                   </td>
-                  <td className="px-5 py-4 font-semibold text-gray-600">{getDocTypeLabel(doc.doc_type)}</td>
-                  <td className="px-5 py-4 font-bold">{doc.title}</td>
-                  <td className="px-5 py-4">{getWriterName(doc.app_users)}</td>
-                  <td className="px-5 py-4">{getDeptName(doc.departments)}</td>
+                  <td className="px-5 py-4 font-semibold text-gray-500 text-xs">{getDocTypeLabel(doc.doc_type)}</td>
+                  <td className="px-5 py-4 font-black text-gray-800">{doc.title}</td>
+                  <td className="px-5 py-4 font-bold text-gray-600">{getWriterName(doc.app_users)}</td>
+                  <td className="px-5 py-4 text-gray-500 text-xs font-bold">{getDeptName(doc.departments)}</td>
+                  
+                  {/* 🌟 뱃지가 적용된 상태 표시란 */}
                   <td className="px-5 py-4">
-                    <span className={getStatusStyle(doc.status)}>
-                      {getStatusLabel(doc.status)}
-                    </span>
+                    {getDetailedStatusBadge(doc)}
                   </td>
-                  <td className="px-5 py-4 text-center font-bold">{doc.current_line_no ?? '-'}</td>
-                  <td className="px-5 py-4 text-gray-500 font-medium">{doc.drafted_at?.slice(0, 10) ?? '-'}</td>
+                  
+                  <td className="px-5 py-4 text-center font-black text-gray-400">{doc.current_line_no ?? '-'}</td>
+                  <td className="px-5 py-4 text-gray-400 text-xs font-bold tracking-tighter">{doc.drafted_at?.slice(0, 10) ?? '-'}</td>
                 </tr>
               ))
             )}

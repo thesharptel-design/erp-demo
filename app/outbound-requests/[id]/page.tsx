@@ -2,8 +2,69 @@
 
 import { useState, useEffect, use } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import ApprovalActionButtons from '@/components/ApprovalActionButtons'; // 🌟 핵심: 우리가 만든 완벽한 결재 모듈!
+import ApprovalActionButtons from '@/components/ApprovalActionButtons'; 
+
+// --- UI용 Helper 함수들 ---
+function getDocStatusLabel(status: string) {
+  switch (status) {
+    case 'draft': return '임시저장';
+    case 'submitted': return '상신';
+    case 'in_review': return '결재중';
+    case 'approved': return '승인완료';
+    case 'rejected': return '반려';
+    default: return status;
+  }
+}
+
+function getDocStatusStyle(status: string) {
+  switch (status) {
+    case 'draft': return 'bg-gray-100 text-gray-700';
+    case 'submitted': return 'bg-blue-100 text-blue-700';
+    case 'in_review': return 'bg-yellow-100 text-yellow-700';
+    case 'approved': return 'bg-green-100 text-green-700';
+    case 'rejected': return 'bg-red-100 text-red-700';
+    default: return 'bg-gray-100 text-gray-700';
+  }
+}
+
+function getActionLabel(actionType: string) {
+  switch (actionType) {
+    case 'submit': return '상신';
+    case 'approve': return '승인';
+    case 'reject': return '반려';
+    case 'recall': return '회수';
+    default: return actionType;
+  }
+}
+
+// 🌟 추가된 역할/상태 변환 함수 (결재선 디테일용)
+function getRoleName(role: string) {
+  if (role === 'drafter') return '기안자';
+  if (role === 'review' || role === 'reviewer') return '검토자';
+  if (role === 'approve' || role === 'approver') return '결재자';
+  return role;
+}
+
+function getDetailLineStatus(role: string, status: string) {
+  if (role === 'drafter') return <span className="text-gray-600 font-bold">기안완료</span>;
+
+  if (role === 'review' || role === 'reviewer') {
+    if (status === 'pending') return <span className="text-blue-600 font-black">검토대기</span>;
+    if (status === 'approved') return <span className="text-green-600 font-black">검토완료</span>;
+    if (status === 'rejected') return <span className="text-red-600 font-black">반려됨</span>;
+    if (status === 'waiting') return <span className="text-gray-400 font-bold">대기</span>;
+  }
+
+  if (role === 'approve' || role === 'approver') {
+    if (status === 'waiting') return <span className="text-gray-400 font-bold">대기</span>;
+    if (status === 'pending') return <span className="text-blue-600 font-black">결재대기</span>;
+    if (status === 'approved') return <span className="text-green-600 font-black">결재완료</span>;
+    if (status === 'rejected') return <span className="text-red-600 font-black">반려됨</span>;
+  }
+  return <span className="text-gray-500 font-bold">{status}</span>;
+}
 
 export default function OutboundRequestDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
@@ -12,7 +73,15 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
   const [requestData, setRequestData] = useState<any>(null);
   const [requestItems, setRequestItems] = useState<any[]>([]);
   const [approvalLines, setApprovalLines] = useState<any[]>([]);
+  const [approvalHistories, setApprovalHistories] = useState<any[]>([]);
   const [approvalDoc, setApprovalDoc] = useState<any>(null);
+  
+  // 보안 권한 체크용 상태
+  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+
+  // 유저 및 부서 매핑용
+  const [users, setUsers] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -23,16 +92,32 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
     try {
       setLoading(true);
 
-      // 1. 출고요청 마스터 (+ 기안자 이름)
+      // 1. 현재 로그인한 사용자 및 권한(admin) 확인
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: profile } = await supabase.from('app_users').select('role_name').eq('id', user.id).single();
+      const isAdmin = profile?.role_name === 'admin'; // 최고관리자 마스터키
+
+      // 2. 기초 정보 (유저, 부서) 매핑용 데이터 가져오기
+      const [{ data: usersData }, { data: deptsData }] = await Promise.all([
+        supabase.from('app_users').select('id, user_name, dept_id'),
+        supabase.from('departments').select('id, dept_name')
+      ]);
+      setUsers(usersData || []);
+      setDepartments(deptsData || []);
+
+      // 3. 출고요청 마스터 가져오기
       const { data: header } = await supabase
         .from('outbound_requests')
-        .select(`*, requester:app_users!requester_id(user_name)`)
+        .select(`*`)
         .eq('id', targetId).single();
 
       if (header) {
         setRequestData(header);
+        let currentLines: any[] = [];
 
-        // 2. 결재 마스터 및 결재선 가져오기
+        // 4. 결재 관련 데이터 (마스터, 결재선, 결재이력)
         if (header.approval_doc_id) {
           const { data: doc } = await supabase
             .from('approval_docs')
@@ -42,13 +127,35 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
 
           const { data: lines } = await supabase
             .from('approval_lines')
-            .select(`*, approver:app_users!approver_id(user_name)`)
+            .select(`*`)
             .eq('approval_doc_id', header.approval_doc_id)
             .order('line_no', { ascending: true });
-          setApprovalLines(lines || []);
+          currentLines = lines || [];
+          setApprovalLines(currentLines);
+
+          const { data: histories } = await supabase
+            .from('approval_histories')
+            .select('*')
+            .eq('approval_doc_id', header.approval_doc_id)
+            .order('action_at', { ascending: true });
+          setApprovalHistories(histories || []);
         }
 
-        // 3. 품목 리스트 가져오기 (품목코드, 규격, 단위 포함)
+        // 5. 철통 보안 권한 체크 로직
+        const isRequester = header.requester_id === user.id;
+        const isApprover = currentLines.some(line => line.approver_id === user.id);
+
+        if (!isAdmin && !isRequester && !isApprover) {
+          // 최고관리자도, 기안자도, 결재자도 아니면 쫓아냄!
+          setHasPermission(false);
+          setLoading(false);
+          return;
+        }
+
+        // 권한 통과!
+        setHasPermission(true);
+
+        // 6. 권한이 있는 사람만 품목 리스트 데이터 불러오기
         const { data: items } = await supabase
           .from('outbound_request_items')
           .select(`*, item:items(item_code, item_name, item_spec, unit)`)
@@ -64,121 +171,243 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
   };
 
   if (loading) return <div className="p-10 text-center text-gray-500 font-bold">데이터를 불러오는 중입니다...</div>;
+  
+  // 권한이 없는 사용자가 접근했을 때 보여줄 차단 화면
+  if (hasPermission === false) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] bg-gray-50 font-sans">
+        <div className="p-10 bg-white rounded-3xl shadow-sm text-center border border-red-100 max-w-md">
+          <div className="text-5xl mb-4">🚫</div>
+          <h1 className="text-2xl font-black text-red-600 mb-3 tracking-tight">접근 권한 없음</h1>
+          <p className="text-gray-500 font-bold mb-8 text-sm leading-relaxed">
+            이 문서를 열람할 권한이 없습니다.<br/>
+            최고관리자이거나, 본인이 기안/결재하는 문서만<br/>확인할 수 있습니다.
+          </p>
+          <button 
+            onClick={() => router.push('/outbound-requests')} 
+            className="w-full px-6 py-3.5 bg-black text-white text-sm font-bold rounded-xl hover:bg-gray-800 transition-colors shadow-sm"
+          >
+            목록으로 돌아가기
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!requestData) return <div className="p-10 text-center text-red-500 font-bold">요청서를 찾을 수 없습니다.</div>;
 
+  const userMap = new Map(users.map(u => [u.id, u.user_name]));
+  const userDeptMap = new Map(users.map(u => [u.id, u.dept_id]));
+  const deptMap = new Map(departments.map(d => [d.id, d.dept_name]));
+
+  const requesterName = userMap.get(requestData.requester_id) || '-';
+  const requesterDeptId = userDeptMap.get(requestData.requester_id);
+  const requesterDeptName = deptMap.get(requesterDeptId) || '-';
+
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-8 text-black font-sans">
+    <div className="space-y-6 max-w-7xl mx-auto p-8 font-sans bg-gray-50 min-h-screen">
       
-      {/* 상단 헤더 */}
-      <div className="flex justify-between items-end border-b-2 border-black pb-4">
+      {/* 상단 헤더 영역 */}
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-black tracking-tighter">출고요청서 상세내역</h1>
-          <p className="text-gray-500 font-bold mt-2">문서번호: {requestData.req_no} | 요청일: {requestData.req_date}</p>
+          <Link href="/outbound-requests" className="text-sm text-gray-500 hover:text-gray-700 font-bold">
+            ← 출고요청 목록으로
+          </Link>
+          <h1 className="mt-2 text-3xl font-black tracking-tight">출고요청서 상세</h1>
+          <p className="mt-1 text-gray-600 font-medium">문서 내용과 출고 품목, 결재 흐름을 확인합니다.</p>
         </div>
-        <button onClick={() => router.push('/outbound-requests')} className="px-5 py-2 border-2 border-black font-bold rounded-lg hover:bg-gray-100 transition-all">
-          목록으로 돌아가기
-        </button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-8">
+      {/* 2단 레이아웃 시작 */}
+      <div className="flex flex-col lg:flex-row gap-6">
+        
+        {/* 좌측: 문서 본문 영역 */}
+        <div className="flex-1 space-y-6">
           
-          {/* 1. 기본 정보 섹션 */}
-          <section className="bg-white border-2 border-gray-200 rounded-2xl p-6 shadow-sm">
-            <h2 className="text-lg font-black mb-4 flex items-center gap-2">
-              <span className="w-1.5 h-5 bg-blue-600 rounded-full"></span> 문서 기본 정보
-            </h2>
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                <p className="text-gray-500 font-bold mb-1 text-xs uppercase tracking-widest">기안자</p>
-                <p className="font-black text-lg">{requestData.requester?.user_name}</p>
-              </div>
-              <div className="bg-gray-50 p-4 rounded-xl border border-gray-100">
-                <p className="text-gray-500 font-bold mb-1 text-xs uppercase tracking-widest">진행 상태</p>
-                <p className={`font-black text-lg ${requestData.status === 'approved' ? 'text-red-600' : 'text-blue-600'}`}>
-                  {requestData.status === 'approved' ? '최종 승인 완료' : requestData.status === 'rejected' ? '반려됨' : '결재 진행중'}
+          {/* 1. 문서 기본 정보 */}
+          <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-100">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-black tracking-tight text-gray-900">{approvalDoc?.title || requestData.purpose || '제목 없음'}</h2>
+                <p className="mt-1 text-sm font-bold text-gray-400">
+                  문서번호: {requestData.req_no} / 문서유형: 출고요청서
                 </p>
               </div>
-              <div className="col-span-2 bg-gray-50 p-4 rounded-xl border border-gray-100">
-                <p className="text-gray-500 font-bold mb-1 text-xs uppercase tracking-widest">요청 사유 (목적)</p>
-                <p className="font-bold whitespace-pre-wrap leading-relaxed">{requestData.purpose || '입력된 내용이 없습니다.'}</p>
+              <span className={`inline-flex rounded-full px-3 py-1 text-sm font-bold tracking-tight ${getDocStatusStyle(requestData.status)}`}>
+                {getDocStatusLabel(requestData.status)}
+              </span>
+            </div>
+
+            <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4 border-t border-b border-gray-100 py-6">
+              <div>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">기안자</p>
+                <p className="mt-1 font-black text-gray-800">{requesterName}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">부서</p>
+                <p className="mt-1 font-black text-gray-800">{requesterDeptName}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">현재 결재순번</p>
+                <p className="mt-1 font-black text-gray-800">{approvalDoc?.current_line_no ?? '-'}</p>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider">작성일시</p>
+                <p className="mt-1 font-black text-gray-800">
+                  {new Date(requestData.created_at).toLocaleString('ko-KR')}
+                </p>
               </div>
             </div>
-          </section>
 
-          {/* 2. 품목 리스트 섹션 (의뢰인이 찾으시던 디테일!) */}
-          <section className="bg-white border-2 border-gray-200 rounded-2xl p-6 shadow-sm">
-            <h2 className="text-lg font-black mb-4 flex items-center gap-2">
-              <span className="w-1.5 h-5 bg-green-500 rounded-full"></span> 출고 요청 품목
-            </h2>
-            <div className="overflow-hidden rounded-xl border-2 border-gray-100">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-gray-50 border-b-2 border-gray-100 text-gray-500">
+            <div className="mt-6 rounded-xl bg-gray-50 p-5 border border-gray-100">
+              <p className="mb-2 text-xs font-bold text-gray-400 uppercase tracking-wider">요청 사유 (목적)</p>
+              <p className="whitespace-pre-wrap text-gray-800 font-medium leading-relaxed">
+                {requestData.purpose || '내용 없음'}
+              </p>
+            </div>
+          </div>
+
+          {/* 2. 출고 요청 품목 */}
+          <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-100">
+            <h2 className="mb-4 text-xl font-black text-gray-900">출고 요청 품목</h2>
+            <div className="overflow-hidden rounded-xl border border-gray-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 text-left text-gray-500">
                   <tr>
-                    <th className="p-4 font-black">No.</th>
-                    <th className="p-4 font-black">품목코드</th>
-                    <th className="p-4 font-black">품목명</th>
-                    <th className="p-4 font-black">규격 / 단위</th>
-                    <th className="p-4 font-black text-center">요청 수량</th>
+                    <th className="px-4 py-3 font-bold">No.</th>
+                    <th className="px-4 py-3 font-bold">품목코드</th>
+                    <th className="px-4 py-3 font-bold">품목명</th>
+                    <th className="px-4 py-3 font-bold">규격 / 단위</th>
+                    <th className="px-4 py-3 font-bold text-right">요청 수량</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {requestItems.length === 0 ? (
-                    <tr><td colSpan={5} className="p-8 text-center text-gray-400 font-bold">등록된 품목이 없습니다.</td></tr>
+                    <tr>
+                      <td colSpan={5} className="px-4 py-8 text-center text-gray-400 font-bold">등록된 품목이 없습니다.</td>
+                    </tr>
                   ) : (
                     requestItems.map((item, idx) => (
                       <tr key={item.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="p-4 font-bold text-gray-400">{item.line_no || idx + 1}</td>
-                        <td className="p-4 font-black text-blue-600 tracking-wider">{item.item?.item_code}</td>
-                        <td className="p-4 font-bold">{item.item?.item_name}</td>
-                        <td className="p-4 text-gray-500 text-xs font-bold">{item.item?.item_spec || '-'} / {item.item?.unit}</td>
-                        <td className="p-4 font-black text-center text-lg text-red-500">{item.qty}</td>
+                        <td className="px-4 py-3 font-bold text-gray-400">{item.line_no || idx + 1}</td>
+                        <td className="px-4 py-3 font-black text-blue-600">{item.item?.item_code}</td>
+                        <td className="px-4 py-3 font-bold text-gray-800">{item.item?.item_name}</td>
+                        <td className="px-4 py-3 font-medium text-gray-500">{item.item?.item_spec || '-'} / {item.item?.unit}</td>
+                        <td className="px-4 py-3 font-black text-red-500 text-lg text-right">{item.qty}</td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
             </div>
-          </section>
+          </div>
+
+          {/* 🌟 3. 결재선 상세 (기안자 포함 풀스토리) 🌟 */}
+          <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-100">
+            <h2 className="mb-4 text-xl font-black text-gray-900">결재선 상세</h2>
+            <div className="overflow-hidden rounded-xl border border-gray-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 text-left text-gray-500">
+                  <tr>
+                    <th className="px-4 py-3 font-bold">순번</th>
+                    <th className="px-4 py-3 font-bold">결재자</th>
+                    <th className="px-4 py-3 font-bold">역할</th>
+                    <th className="px-4 py-3 font-bold">상태</th>
+                    <th className="px-4 py-3 font-bold">처리일시</th>
+                    <th className="px-4 py-3 font-bold">의견</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  
+                  {/* 1번: 기안자 가상 행 고정 노출 */}
+                  <tr className="bg-gray-50/50 hover:bg-gray-50 transition-colors">
+                    <td className="px-4 py-3 font-bold text-gray-500">1</td>
+                    <td className="px-4 py-3 font-black text-gray-800">{requesterName}</td>
+                    <td className="px-4 py-3 font-bold text-gray-600">{getRoleName('drafter')}</td>
+                    <td className="px-4 py-3">{getDetailLineStatus('drafter', 'draft_completed')}</td>
+                    <td className="px-4 py-3 font-medium text-gray-500">
+                      {new Date(requestData.created_at).toLocaleString('ko-KR')}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-gray-400">기안 상신</td>
+                  </tr>
+
+                  {/* 2번~: 실제 결재선 (순번을 +1 해서 표시) */}
+                  {approvalLines.map((line) => (
+                    <tr key={line.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 font-bold text-gray-500">{line.line_no + 1}</td>
+                      <td className="px-4 py-3 font-black text-gray-800">{userMap.get(line.approver_id) ?? '-'}</td>
+                      <td className="px-4 py-3 font-bold text-gray-600">{getRoleName(line.approver_role)}</td>
+                      <td className="px-4 py-3">
+                        {getDetailLineStatus(line.approver_role, line.status)}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-gray-500">
+                        {line.acted_at ? new Date(line.acted_at).toLocaleString('ko-KR') : '-'}
+                      </td>
+                      <td className="px-4 py-3 font-medium text-gray-600">{line.opinion ?? '-'}</td>
+                    </tr>
+                  ))}
+
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* 4. 결재 이력 */}
+          <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-100">
+            <h2 className="mb-4 text-xl font-black text-gray-900">결재이력</h2>
+            <div className="overflow-hidden rounded-xl border border-gray-200">
+              <table className="min-w-full text-sm">
+                <thead className="bg-gray-50 text-left text-gray-500">
+                  <tr>
+                    <th className="px-4 py-3 font-bold">행동</th>
+                    <th className="px-4 py-3 font-bold">처리자</th>
+                    <th className="px-4 py-3 font-bold">의견</th>
+                    <th className="px-4 py-3 font-bold">처리일시</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {approvalHistories.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="px-4 py-8 text-center text-gray-400 font-bold">결재 이력이 없습니다.</td>
+                    </tr>
+                  ) : (
+                    approvalHistories.map((history) => (
+                      <tr key={history.id} className="hover:bg-gray-50 transition-colors">
+                        <td className="px-4 py-3 font-black text-gray-700">{getActionLabel(history.action_type)}</td>
+                        <td className="px-4 py-3 font-bold text-gray-800">{userMap.get(history.actor_id) ?? '-'}</td>
+                        <td className="px-4 py-3 font-medium text-gray-600">{history.action_comment ?? '-'}</td>
+                        <td className="px-4 py-3 font-medium text-gray-500">
+                          {new Date(history.action_at).toLocaleString('ko-KR')}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
 
-        {/* 3. 우측: 결재선 도장 및 액션 버튼 */}
-        <aside className="space-y-6">
-          {/* 결재선 도장 (기존 감성 유지하되 ERP 스타일로) */}
-          <section className="bg-white border-2 border-gray-200 rounded-2xl p-6 shadow-sm">
-            <h2 className="text-xs font-black text-gray-400 uppercase tracking-widest mb-4 border-b-2 border-gray-100 pb-2 text-center">Approval Line</h2>
-            <div className="flex flex-wrap gap-2 justify-center">
-              {approvalLines.map(line => (
-                <div key={line.id} className="w-[4.5rem] border-2 border-gray-200 rounded-lg text-center text-xs overflow-hidden bg-white shadow-sm">
-                  <div className="bg-gray-50 py-1.5 border-b-2 border-gray-200 font-black text-gray-600">
-                    {line.approver_role === 'reviewer' ? '검토' : '결재'}
-                  </div>
-                  <div className="h-14 flex items-center justify-center font-bold px-1 text-[11px] leading-tight relative overflow-hidden">
-                    {line.status === 'approved' ? (
-                      <span className="text-red-500 font-black border-2 border-red-500 rounded-full w-12 h-12 flex items-center justify-center rotate-[-15deg] bg-white absolute">승인</span>
-                    ) : line.status === 'rejected' ? (
-                      <span className="text-red-700 font-black border-2 border-red-700 rounded-full w-12 h-12 flex items-center justify-center rotate-[-15deg] bg-red-50 absolute">반려</span>
-                    ) : (
-                      <span className="text-gray-600 truncate px-1">{line.approver?.user_name}</span>
-                    )}
-                  </div>
-                  <div className={`py-1.5 border-t-2 border-gray-200 font-black text-[10px] tracking-wider ${line.status === 'waiting' || line.status === 'pending' ? 'bg-blue-50 text-blue-600' : 'text-gray-400 bg-gray-50'}`}>
-                    {line.status === 'approved' && line.acted_at ? line.acted_at.slice(5, 10).replace('-', '/') : line.status === 'rejected' ? '반려됨' : '대기중'}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+        {/* 🌟 우측: 액션 사이드바 영역 (결재 버튼) */}
+        <div className="w-full lg:w-[320px] shrink-0">
+          <div className="sticky top-6 flex flex-col gap-4">
+            
+            {/* 결재 처리 모듈 (재고 차감 로직 포함) */}
+            {approvalDoc && approvalLines.length > 0 ? (
+              <ApprovalActionButtons 
+                docId={approvalDoc.id} 
+                docNo={approvalDoc.doc_no} 
+                lines={approvalLines} 
+              />
+            ) : (
+              <div className="bg-gray-100 p-4 rounded-xl text-center text-sm font-bold text-gray-500">
+                결재 정보가 로딩중이거나 없습니다.
+              </div>
+            )}
 
-          {/* 🌟 우리가 만든 완벽한 결재 모듈 탑재 (여기서 누르면 재고 차감!) 🌟 */}
-          {approvalDoc && approvalLines.length > 0 && (
-            <ApprovalActionButtons 
-              docId={approvalDoc.id} 
-              docNo={approvalDoc.doc_no} 
-              lines={approvalLines} 
-            />
-          )}
-        </aside>
+          </div>
+        </div>
+
       </div>
     </div>
   );
