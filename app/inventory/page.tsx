@@ -2,11 +2,15 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import Link from 'next/link';
 
 export default function InventoryPage() {
   const [groupedInventory, setGroupedInventory] = useState<any[]>([]);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [isLoading, setIsLoading] = useState(true);
+  
+  // 🌟 추가: 품목 검색 상태
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     async function fetchInventory() {
@@ -30,7 +34,7 @@ export default function InventoryPage() {
             is_sn_managed
           )
         `)
-        .gt('current_qty', 0)
+        .gt('current_qty', 0) // 잔량이 있는 것만 조회
         .order('exp_date', { ascending: true });
 
       if (error) {
@@ -70,7 +74,7 @@ export default function InventoryPage() {
   }, []);
 
   const toggleRow = (code: string, isTrackable: boolean) => {
-    // 🌟 추적 관리 대상이 아니면 아예 열리지 않도록 차단
+    // 추적 관리 대상이 아니면 아예 열리지 않도록 차단
     if (!isTrackable) return;
     
     setExpandedRows(prev => ({
@@ -79,53 +83,83 @@ export default function InventoryPage() {
     }));
   };
 
+  // 🌟 추가: 검색 필터링 로직
+  const filteredGroups = groupedInventory.filter(group => {
+    const term = searchTerm.toLowerCase();
+    return (
+      group.item_name.toLowerCase().includes(term) ||
+      group.item_code.toLowerCase().includes(term)
+    );
+  });
+
   return (
-    <div className="p-8 max-w-7xl mx-auto font-sans">
-      <div className="mb-8">
-        <h1 className="text-3xl font-black tracking-tight text-gray-900">현재고 현황</h1>
-        <p className="mt-2 text-sm font-bold text-gray-500">품목별 총 재고를 확인하고, 관리 품목은 클릭하여 LOT 및 S/N별 상세 내역을 조회합니다.</p>
+    <div className="p-8 max-w-7xl mx-auto font-sans bg-gray-50 min-h-screen space-y-6">
+      
+      {/* 🌟 헤더 및 상단 퀵 버튼 추가 */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-black tracking-tight text-gray-900">현재고 현황</h1>
+          <p className="mt-2 text-sm font-bold text-gray-500">품목별 총 재고를 확인하고, 관리 품목은 클릭하여 LOT 및 S/N별 상세 내역을 조회합니다.</p>
+        </div>
+        <div className="flex gap-2">
+          <Link href="/inbound/new" className="px-4 py-2 border-2 border-blue-200 text-blue-700 bg-blue-50 rounded-xl text-sm font-black hover:bg-blue-100 transition-colors shadow-sm">
+            + 입고 등록
+          </Link>
+          <Link href="/outbound/new" className="px-4 py-2 border-2 border-red-200 text-red-700 bg-red-50 rounded-xl text-sm font-black hover:bg-red-100 transition-colors shadow-sm">
+            - 수동 출고
+          </Link>
+        </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl bg-white shadow-sm border border-gray-200">
-        <table className="min-w-full text-sm">
+      {/* 🌟 검색 바 추가 */}
+      <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm">
+        <input 
+          type="text" 
+          placeholder="품목명 또는 품목 코드로 검색..." 
+          className="w-full sm:w-1/2 md:w-1/3 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-blue-500 font-bold text-sm transition-colors"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+      </div>
+
+      {/* 🌟 모바일 가로 스크롤(overflow-x-auto) 및 whitespace-nowrap 적용 */}
+      <div className="overflow-x-auto rounded-2xl bg-white shadow-sm border border-gray-200">
+        <table className="min-w-full text-sm whitespace-nowrap text-left">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               <th className="w-12 px-6 py-4"></th>
-              <th className="px-6 py-4 text-left font-black text-gray-500 uppercase tracking-wider">품목코드</th>
-              <th className="px-6 py-4 text-left font-black text-gray-500 uppercase tracking-wider">품목명 / 관리옵션</th>
-              <th className="px-6 py-4 text-left font-black text-gray-500 uppercase tracking-wider">규격</th>
-              <th className="px-6 py-4 text-right font-black text-gray-800 uppercase tracking-wider text-lg">총 재고수량</th>
+              <th className="px-6 py-4 font-black text-gray-500 uppercase tracking-wider">품목코드</th>
+              <th className="px-6 py-4 font-black text-gray-500 uppercase tracking-wider">품목명 / 관리옵션</th>
+              <th className="px-6 py-4 font-black text-gray-500 uppercase tracking-wider">규격</th>
+              <th className="px-6 py-4 text-right font-black text-gray-800 uppercase tracking-wider">총 재고수량</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {isLoading ? (
               <tr>
-                <td colSpan={5} className="px-6 py-10 text-center text-gray-400 font-bold">
+                <td colSpan={5} className="px-6 py-16 text-center text-gray-400 font-bold">
                   재고 데이터를 불러오는 중입니다...
                 </td>
               </tr>
-            ) : groupedInventory.length === 0 ? (
+            ) : filteredGroups.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-6 py-10 text-center text-gray-400 font-bold">
-                  현재 창고에 보관 중인 재고가 없습니다.
+                <td colSpan={5} className="px-6 py-16 text-center text-gray-400 font-bold">
+                  조건에 맞는 재고 데이터가 없습니다.
                 </td>
               </tr>
             ) : (
-              groupedInventory.map((group) => {
-                // 이 품목이 하나라도 추적 관리를 하는지 확인
+              filteredGroups.map((group) => {
                 const isTrackable = group.is_lot || group.is_exp || group.is_sn;
 
                 return (
                   <React.Fragment key={group.item_code}>
                     <tr 
                       onClick={() => toggleRow(group.item_code, isTrackable)} 
-                      // 🌟 추적 관리 대상일 때만 마우스 포인터 변경 및 배경색 효과 적용
                       className={`transition-colors ${
                         isTrackable ? 'cursor-pointer hover:bg-gray-50' : 'bg-white'
-                      } ${expandedRows[group.item_code] ? 'bg-blue-50/50' : ''}`}
+                      } ${expandedRows[group.item_code] ? 'bg-blue-50/30' : ''}`}
                     >
                       <td className="px-6 py-4 text-center text-gray-400 font-black text-xs transition-transform duration-200">
-                        {/* 🌟 추적 대상이 아니면 화살표 대신 '-' 표시 */}
                         {isTrackable ? (expandedRows[group.item_code] ? '▼' : '▶') : '-'}
                       </td>
                       <td className="px-6 py-4 font-bold text-gray-600">
@@ -133,7 +167,6 @@ export default function InventoryPage() {
                       </td>
                       <td className="px-6 py-4 font-black text-gray-900 text-base">
                         <div className="flex items-center gap-2">
-                          {/* 🌟 품목명 앞에 관리 옵션 배지 표시 */}
                           <div className="flex gap-1">
                             {group.is_lot && <span className="px-1.5 py-0.5 text-[10px] font-black bg-blue-100 text-blue-700 rounded uppercase tracking-wider">LOT</span>}
                             {group.is_exp && <span className="px-1.5 py-0.5 text-[10px] font-black bg-green-100 text-green-700 rounded uppercase tracking-wider">EXP</span>}
@@ -150,12 +183,11 @@ export default function InventoryPage() {
                       </td>
                     </tr>
 
-                    {/* 추적 관리 대상이면서, 아코디언이 열렸을 때만 렌더링 */}
                     {isTrackable && expandedRows[group.item_code] && (
                       <tr className="bg-gray-50/50">
                         <td colSpan={5} className="p-0 border-b border-gray-200">
-                          <div className="px-14 py-4 animate-in fade-in slide-in-from-top-2 duration-200">
-                            <table className="w-full text-xs bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                          <div className="px-14 py-4 animate-in fade-in slide-in-from-top-2 duration-200 overflow-x-auto">
+                            <table className="min-w-full text-xs bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden whitespace-nowrap">
                               <thead className="bg-gray-100/80 text-gray-500 font-bold">
                                 <tr>
                                   <th className="px-4 py-3 text-left">LOT 번호</th>
@@ -168,15 +200,29 @@ export default function InventoryPage() {
                                 {group.details.map((detail: any, idx: number) => (
                                   <tr key={detail.id || idx} className="hover:bg-gray-50">
                                     <td className="px-4 py-3 font-bold text-gray-700">
-                                      {detail.lot_no || <span className="text-gray-300">-</span>}
+                                      {detail.lot_no ? (
+                                        <span className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded-md font-bold text-xs border border-gray-200">{detail.lot_no}</span>
+                                      ) : (
+                                        <span className="text-gray-300">-</span>
+                                      )}
                                     </td>
                                     <td className="px-4 py-3 font-bold text-green-700">
-                                      {detail.exp_date || <span className="text-gray-300">-</span>}
+                                      {detail.exp_date ? (
+                                        <span className={`px-2.5 py-1 rounded-md font-bold text-xs border ${
+                                          new Date(detail.exp_date) < new Date() 
+                                            ? 'bg-red-50 text-red-600 border-red-200' 
+                                            : 'bg-green-50 text-green-700 border-green-200'
+                                        }`}>
+                                          {detail.exp_date}
+                                        </span>
+                                      ) : (
+                                        <span className="text-gray-300">-</span>
+                                      )}
                                     </td>
                                     <td className="px-4 py-3 font-bold text-purple-700">
                                       {detail.serial_no || <span className="text-gray-300">-</span>}
                                     </td>
-                                    <td className="px-4 py-3 font-black text-right text-sm text-gray-800">
+                                    <td className="px-4 py-3 font-black text-right text-base text-gray-800">
                                       {detail.current_qty}
                                     </td>
                                   </tr>

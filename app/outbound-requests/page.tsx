@@ -12,10 +12,11 @@ type OutboundRequestRow = {
   customer_id: number | null
   purpose: string | null
   remarks: string | null
-  status: 'draft' | 'submitted' | 'approved' | 'rejected' | 'completed'
+  status: 'draft' | 'submitted' | 'approved' | 'rejected' | 'completed' | 'cancelled'
   approval_doc_id: number | null
   outbound_completed: boolean
   created_at: string
+  approval_doc?: any
 }
 
 type AppUserRow = {
@@ -29,36 +30,36 @@ type CustomerRow = {
   customer_name: string
 }
 
-function getStatusLabel(status: OutboundRequestRow['status']) {
-  switch (status) {
-    case 'draft': return '작성중'
-    case 'submitted': return '상신'
-    case 'approved': return '승인완료'
-    case 'rejected': return '반려'
-    case 'completed': return '출고완료'
-    default: return status
+// 🌟 초정밀 상태 및 디자인 반환 헬퍼 함수
+function getDetailedStatus(doc: any, lines: any[], reqStatus: string) {
+  if (!doc) {
+    if (reqStatus === 'draft') return { label: '작성중', style: 'bg-gray-100 text-gray-600 font-bold border border-gray-200' };
+    if (reqStatus === 'cancelled') return { label: '취소 완료', style: 'bg-gray-200 text-gray-500 font-bold line-through border border-gray-300' };
+    return { label: reqStatus, style: 'bg-gray-100 text-gray-700' };
   }
-}
 
-function getStatusStyle(status: OutboundRequestRow['status']) {
-  switch (status) {
-    case 'draft': return 'erp-badge erp-badge-draft'
-    case 'submitted': return 'erp-badge erp-badge-progress'
-    case 'approved': return 'erp-badge erp-badge-review'
-    case 'rejected': return 'erp-badge erp-badge-danger'
-    case 'completed': return 'erp-badge erp-badge-done'
-    default: return 'erp-badge erp-badge-draft'
+  if (doc.remarks === '취소 요청 중') return { label: '취소 요청', style: 'bg-red-100 text-red-700 font-black animate-pulse border border-red-200' };
+  if (doc.remarks?.includes('취소완료') || doc.remarks?.includes('취소승인')) return { label: '취소 진행중', style: 'bg-orange-100 text-orange-700 font-bold border border-orange-200' };
+  if (doc.status === 'rejected' && doc.remarks?.includes('재고환원')) return { label: '취소 완료', style: 'bg-gray-200 text-gray-500 font-bold line-through border border-gray-300' };
+  if (doc.status === 'rejected') return { label: '반려됨', style: 'bg-red-50 text-red-600 font-bold border border-red-100' };
+
+  if (doc.status === 'in_review' || doc.status === 'submitted') {
+    const approvedLines = lines?.filter((l: any) => l.status === 'approved') || [];
+    if (approvedLines.length > 0) {
+      const lastApproved = approvedLines[approvedLines.length - 1];
+      const roleLabel = lastApproved.approver_role === 'review' ? '검토자' : '결재자';
+      return { label: `${roleLabel} 승인`, style: 'bg-blue-100 text-blue-700 font-bold border border-blue-200 shadow-sm' };
+    }
+    return { label: '결재 진행중', style: 'bg-yellow-100 text-yellow-700 font-bold border border-yellow-200' };
   }
-}
 
-function getOutboundCompletedLabel(completed: boolean) {
-  return completed ? '완료' : '미완료'
-}
+  if (reqStatus === 'completed') return { label: '출고 완료', style: 'bg-purple-100 text-purple-700 font-black border border-purple-200 shadow-sm' };
+  if (reqStatus === 'cancelled') return { label: '취소 완료', style: 'bg-gray-200 text-gray-500 font-bold line-through border border-gray-300' };
+  if (doc.status === 'approved') return { label: '최종 승인', style: 'bg-green-100 text-green-700 font-black border border-green-200 shadow-sm' };
+  if (doc.status === 'draft') return { label: '임시저장', style: 'bg-gray-100 text-gray-600 font-bold border border-gray-200' };
+  if (doc.status === 'submitted') return { label: '상신 (대기)', style: 'bg-blue-50 text-blue-600 font-bold border border-blue-100' };
 
-function getOutboundCompletedStyle(completed: boolean) {
-  return completed
-    ? 'erp-badge erp-badge-done'
-    : 'erp-badge erp-badge-draft'
+  return { label: reqStatus, style: 'bg-gray-100 text-gray-700' };
 }
 
 export default function OutboundRequestsPage() {
@@ -75,7 +76,6 @@ export default function OutboundRequestsPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
   
-  // 🌟 추가: 현재 사용자가 관리자인지 확인하기 위한 상태
   const [isAdmin, setIsAdmin] = useState(false)
 
   useEffect(() => {
@@ -85,7 +85,6 @@ export default function OutboundRequestsPage() {
       setErrorMessage('');
 
       try {
-        // 🌟 1. 현재 로그인한 사용자 확인
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
           setRequests([]);
@@ -93,7 +92,6 @@ export default function OutboundRequestsPage() {
           return;
         }
 
-        // 🌟 2. 사용자 역할(관리자 여부) 확인
         const { data: profile } = await supabase
           .from('app_users')
           .select('role_name')
@@ -103,7 +101,6 @@ export default function OutboundRequestsPage() {
         const userIsAdmin = profile?.role_name === 'admin';
         setIsAdmin(userIsAdmin);
 
-        // 🌟 3. 내가 결재선에 포함된 문서 ID 찾기 (관리자가 아닐 때만)
         let myDocIds: number[] = [];
         if (!userIsAdmin) {
           const { data: lines } = await supabase
@@ -111,11 +108,10 @@ export default function OutboundRequestsPage() {
             .select('approval_doc_id')
             .eq('approver_id', user.id);
           
-          // null 값 제거 후 숫자 배열로 추출
           myDocIds = lines?.map(line => line.approval_doc_id).filter(id => id !== null) as number[] || [];
         }
 
-        // 🌟 4. 출고요청서 메인 쿼리 작성
+        // 🌟 [오류 수정 완료] approval_lines를 approval_doc 안에 중첩해서 올바르게 가져옵니다!
         let query = supabase
           .from('outbound_requests')
           .select(`
@@ -129,17 +125,23 @@ export default function OutboundRequestsPage() {
             status,
             approval_doc_id,
             outbound_completed,
-            created_at
+            created_at,
+            approval_doc:approval_docs (
+              status, 
+              remarks,
+              approval_lines (
+                approver_role, 
+                status, 
+                line_no
+              )
+            )
           `)
           .order('id', { ascending: false });
 
-        // 🌟 5. 철통 보안 권한 필터링 적용!
         if (!userIsAdmin) {
           if (myDocIds.length > 0) {
-            // 내가 기안했거나, 내가 결재해야 할 문서만
             query = query.or(`requester_id.eq.${user.id},approval_doc_id.in.(${myDocIds.join(',')})`);
           } else {
-            // 결재할 건 없고 내가 기안한 문서만
             query = query.eq('requester_id', user.id);
           }
         }
@@ -150,7 +152,6 @@ export default function OutboundRequestsPage() {
           throw requestError;
         }
 
-        // 사용자 및 거래처 데이터 가져오기
         const { data: usersData } = await supabase
           .from('app_users')
           .select('id, user_name, login_id')
@@ -161,13 +162,13 @@ export default function OutboundRequestsPage() {
           .select('id, customer_name')
           .order('customer_name');
 
-        setRequests((requestData as OutboundRequestRow[]) ?? []);
+        setRequests((requestData as any[]) ?? []);
         setUsers((usersData as AppUserRow[]) ?? []);
         setCustomers((customersData as CustomerRow[]) ?? []);
 
       } catch (error: any) {
         console.error('outbound requests load error:', error);
-        setErrorMessage('출고요청서 데이터를 불러오지 못했습니다.');
+        setErrorMessage(`출고요청서 데이터를 불러오지 못했습니다: ${error.message}`);
       } finally {
         setIsLoading(false);
       }
@@ -193,89 +194,91 @@ export default function OutboundRequestsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">출고요청서</h1>
-          <p className="mt-1 text-sm text-gray-500">
+          <h1 className="text-3xl font-black tracking-tight text-gray-900">출고요청서 조회</h1>
+          <p className="mt-2 text-sm font-bold text-gray-500">
             {isAdmin 
               ? '모든 출고요청 문서를 조회하고 승인 전후 상태를 확인합니다. (최고관리자 모드)' 
               : '내가 작성했거나 결재해야 할 출고요청 문서만 표시됩니다.'}
           </p>
         </div>
 
-        <Link href="/outbound-requests/new" className="erp-btn-primary">
-          출고요청서 작성
+        <Link href="/outbound-requests/new" className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-black hover:bg-blue-700 transition-colors shadow-sm text-sm">
+          + 출고요청서 작성
         </Link>
       </div>
 
-      {errorMessage && <div className="p-4 bg-red-50 text-red-600 rounded-lg border border-red-200">{errorMessage}</div>}
+      {errorMessage && <div className="p-4 bg-red-50 text-red-600 rounded-lg border border-red-200 font-bold">{errorMessage}</div>}
 
-      <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
+      <div className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
-          <table className="min-w-[1200px] w-full text-sm">
-            <thead className="bg-gray-50 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <table className="min-w-[1200px] w-full text-sm whitespace-nowrap text-left">
+            <thead className="bg-gray-50 border-b border-gray-100 text-gray-500">
               <tr>
-                <th className="px-5 py-4">요청번호</th>
-                <th className="px-5 py-4">요청일</th>
-                <th className="px-5 py-4">요청자</th>
-                <th className="px-5 py-4">거래처</th>
-                <th className="px-5 py-4">출고목적</th>
-                <th className="px-5 py-4">상태</th>
-                <th className="px-5 py-4">출고처리</th>
-                <th className="px-5 py-4">결재문서ID</th>
-                <th className="px-5 py-4">비고</th>
+                <th className="px-5 py-4 font-bold">요청번호</th>
+                <th className="px-5 py-4 font-bold">상태 (결재진행)</th>
+                <th className="px-5 py-4 font-bold">요청일</th>
+                <th className="px-5 py-4 font-bold">요청자</th>
+                <th className="px-5 py-4 font-bold">거래처</th>
+                <th className="px-5 py-4 font-bold max-w-[200px]">출고목적</th>
+                <th className="px-5 py-4 font-bold">비고 (반려/취소사유)</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="divide-y divide-gray-100">
               {isLoading ? (
                 <tr>
-                  <td colSpan={9} className="px-5 py-14 text-center text-sm font-bold text-gray-400">
+                  <td colSpan={7} className="px-5 py-16 text-center font-bold text-gray-400">
                     출고요청서 데이터를 불러오는 중입니다...
                   </td>
                 </tr>
               ) : requests.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-5 py-14 text-center text-sm font-bold text-gray-400">
+                  <td colSpan={7} className="px-5 py-16 text-center font-bold text-gray-400">
                     권한이 있는 출고요청서 데이터가 없습니다.
                   </td>
                 </tr>
               ) : (
-                requests.map((request) => (
-                  <tr key={request.id} className="border-t border-gray-100 hover:bg-gray-50 transition-colors">
-                    <td className="px-5 py-4 font-bold text-blue-600">
-                      <Link
-                        href={`/outbound-requests/${request.id}`}
-                        className="hover:underline"
-                      >
-                        {request.req_no || `REQ-${request.id}`}
-                      </Link>
-                    </td>
-                    <td className="px-5 py-4 font-medium">{request.req_date}</td>
-                    <td className="px-5 py-4 font-medium text-gray-900">
-                      {requesterMap.get(request.requester_id) ?? '-'}
-                    </td>
-                    <td className="px-5 py-4 font-medium">
-                      {request.customer_id
-                        ? customerMap.get(request.customer_id) ?? '-'
-                        : '-'}
-                    </td>
-                    <td className="px-5 py-4 whitespace-pre-wrap break-words">
-                      {request.purpose ?? '-'}
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className={getStatusStyle(request.status)}>
-                        {getStatusLabel(request.status)}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <span className={getOutboundCompletedStyle(request.outbound_completed)}>
-                        {getOutboundCompletedLabel(request.outbound_completed)}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4 text-gray-400 font-medium">{request.approval_doc_id ?? '-'}</td>
-                    <td className="px-5 py-4 whitespace-pre-wrap break-words text-gray-500">
-                      {request.remarks ?? '-'}
-                    </td>
-                  </tr>
-                ))
+                requests.map((request) => {
+                  // 🌟 결재선 데이터를 안전하게 매핑합니다
+                  const lines = request.approval_doc?.approval_lines?.sort((a: any, b: any) => a.line_no - b.line_no) || [];
+                  const statusInfo = getDetailedStatus(request.approval_doc, lines, request.status);
+
+                  return (
+                    <tr key={request.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-5 py-4">
+                        <Link
+                          href={`/outbound-requests/${request.id}`}
+                          className="font-black text-blue-600 hover:text-blue-800 transition-colors"
+                        >
+                          {request.req_no || `REQ-${request.id}`}
+                        </Link>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className={`inline-flex rounded-full px-3 py-1 text-[11px] tracking-tight uppercase ${statusInfo.style}`}>
+                          {statusInfo.label}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 font-bold text-gray-600">{request.req_date}</td>
+                      <td className="px-5 py-4 font-bold text-gray-900">
+                        {requesterMap.get(request.requester_id) ?? '-'}
+                      </td>
+                      <td className="px-5 py-4 font-bold text-blue-800">
+                        {request.customer_id
+                          ? customerMap.get(request.customer_id) ?? '-'
+                          : <span className="text-gray-300">-</span>}
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="max-w-[250px] truncate font-medium text-gray-700" title={request.purpose ?? ''}>
+                          {request.purpose ?? '-'}
+                        </div>
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="max-w-[250px] truncate text-xs font-bold text-gray-400" title={request.approval_doc?.remarks || request.remarks || ''}>
+                          {request.approval_doc?.remarks || request.remarks || '-'}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

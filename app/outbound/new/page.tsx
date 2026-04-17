@@ -152,7 +152,7 @@ export default function NewOutboundPage() {
   return (
     <div className="p-8 max-w-5xl mx-auto font-sans bg-gray-50 min-h-screen">
       <div className="mb-8">
-        <h1 className="text-3xl font-black tracking-tight text-red-600">물품 출고 등록</h1>
+        <h1 className="text-3xl font-black tracking-tight text-black-600">물품 출고 등록</h1>
         <p className="mt-2 text-sm font-bold text-gray-500">출고처를 지정하고 재고를 차감합니다. (LOT/SN 검증 포함)</p>
       </div>
       

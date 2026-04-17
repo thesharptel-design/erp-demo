@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 
-export default function CreateOutboundRequest() {
+export default function NewOutboundPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   
@@ -74,7 +75,7 @@ export default function CreateOutboundRequest() {
     try {
       // 1. [STEP 1] 결재 마스터 (approval_docs)
       const docNo = generateDocNo('APP');
-const { data: doc, error: docError } = await supabase
+      const { data: doc, error: docError } = await supabase
         .from('approval_docs')
         .insert([{
           doc_no: docNo,
@@ -84,31 +85,39 @@ const { data: doc, error: docError } = await supabase
           dept_id: userProfile.dept_id,
           status: isSubmit ? 'submitted' : 'draft',
           submitted_at: isSubmit ? new Date().toISOString() : null,
-          current_line_no: isSubmit ? 1 : null, // 💡 핵심: 상신 시 1번 타자부터 시작!
+          current_line_no: isSubmit ? 1 : null, 
           doc_type: 'outbound_request'
         }])
         .select().single();
         
       if (docError) throw new Error(`[결재마스터 에러] ${docError.message}`);
 
-      // 💡 2. [STEP 2] 결재선 (approval_lines) - 캡처화면 스키마 100% 적용!!
+      // 🌟 2. [STEP 2] 결재선 (approval_lines) 핵심 버그 수정!!
       const lines = [];
       let step = 1;
+
       for (const id of validReviewers) {
         lines.push({ 
           approval_doc_id: doc.id, 
-          approver_id: id,           // user_id -> approver_id
-          line_no: step++,           // step -> line_no
-          approver_role: 'reviewer'  // type -> approver_role
+          approver_id: id, 
+          line_no: step, 
+          approver_role: 'review',
+          // 🌟 여기가 핵심입니다! 상신 시 1번 타자에게만 'pending'(지금 네 차례야!) 부여
+          status: (isSubmit && step === 1) ? 'pending' : 'waiting' 
         });
+        step++;
       }
+      
       for (const id of validApprovers) {
         lines.push({ 
           approval_doc_id: doc.id, 
           approver_id: id, 
-          line_no: step++, 
-          approver_role: 'approver' 
+          line_no: step, 
+          approver_role: 'approve', 
+          // 🌟 검토자가 없고 바로 결재자일 수도 있으니 여기도 동일 로직 적용
+          status: (isSubmit && step === 1) ? 'pending' : 'waiting'
         });
+        step++;
       }
 
       if (lines.length > 0) {
@@ -154,7 +163,7 @@ const { data: doc, error: docError } = await supabase
 
       // 모든 과정 성공!
       alert(isSubmit ? '상신 완료!' : '저장 완료!');
-      router.push('/approvals'); 
+      router.push('/outbound-requests'); // 🌟 상신 완료 후 출고 요청 목록으로 보내는 게 자연스럽습니다
       
     } catch (err: any) {
       console.error(err);
@@ -177,7 +186,7 @@ const { data: doc, error: docError } = await supabase
           <button onClick={() => handleSave(false)} className="px-4 py-2 border border-gray-300 rounded bg-white hover:bg-gray-50 text-sm font-medium transition-colors">
             임시 저장
           </button>
-          <button onClick={() => handleSave(true)} disabled={loading} className="px-5 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium transition-colors">
+          <button onClick={() => handleSave(true)} disabled={loading} className="px-5 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium transition-colors shadow-sm">
             {loading ? '처리 중...' : '작성 후 상신'}
           </button>
         </div>
@@ -189,54 +198,58 @@ const { data: doc, error: docError } = await supabase
         <div className="lg:col-span-2 space-y-6">
           <section className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm">
             <h3 className="text-sm font-bold text-gray-700 mb-3">문서 정보</h3>
-            <input type="text" placeholder="기안 제목을 입력하세요" className="w-full p-2.5 border border-gray-300 rounded mb-3 text-sm focus:border-blue-500 outline-none" value={title} onChange={e => setTitle(e.target.value)} />
-            <textarea placeholder="요청 사유 상세" rows={4} className="w-full p-2.5 border border-gray-300 rounded text-sm focus:border-blue-500 outline-none resize-none" value={description} onChange={e => setDescription(e.target.value)} />
+            <input type="text" placeholder="기안 제목을 입력하세요" className="w-full p-2.5 border border-gray-300 rounded mb-3 text-sm focus:border-blue-500 outline-none transition-shadow" value={title} onChange={e => setTitle(e.target.value)} />
+            <textarea placeholder="요청 사유 상세" rows={4} className="w-full p-2.5 border border-gray-300 rounded text-sm focus:border-blue-500 outline-none resize-none transition-shadow" value={description} onChange={e => setDescription(e.target.value)} />
           </section>
 
           <section className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm">
             <div className="flex justify-between items-center mb-3">
               <h3 className="text-sm font-bold text-gray-700">품목 선택</h3>
-              <button onClick={addItemRow} className="text-xs border border-gray-300 px-3 py-1.5 rounded bg-white hover:bg-gray-50 text-gray-600 font-medium transition-colors">
+              <button onClick={addItemRow} className="text-xs border border-gray-300 px-3 py-1.5 rounded bg-white hover:bg-gray-50 text-gray-600 font-medium transition-colors shadow-sm">
                 + 품목 추가
               </button>
             </div>
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 text-gray-500">
-                  <th className="pb-2 font-medium">품목명 / 코드</th>
-                  <th className="pb-2 w-24 text-center font-medium">수량</th>
-                  <th className="pb-2 w-10"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {selectedItems.map((si, idx) => (
-                  <tr key={idx}>
-                    <td className="py-2 pr-2">
-                      <select className="w-full p-2 border border-gray-300 rounded outline-none focus:border-blue-500 bg-white" value={si.item_id} onChange={e => {
-                        const newArr = [...selectedItems]; newArr[idx].item_id = e.target.value; setSelectedItems(newArr);
-                      }}>
-                        <option value="">품목 선택...</option>
-                        {items.map(i => <option key={i.id} value={i.id}>[{i.item_code}] {i.item_name}</option>)}
-                      </select>
-                    </td>
-                    <td className="py-2 pr-2">
-                      <input type="number" min="1" className="w-full p-2 border border-gray-300 rounded text-center outline-none focus:border-blue-500" value={si.quantity} onChange={e => {
-                        const newArr = [...selectedItems]; newArr[idx].quantity = parseInt(e.target.value) || 0; setSelectedItems(newArr);
-                      }} />
-                    </td>
-                    <td className="py-2 text-center">
-                      <button onClick={() => removeItemRow(idx)} className="text-gray-400 hover:text-red-500 font-bold">✕</button>
-                    </td>
+            
+            {/* 🌟 모바일 호환: 표(Table) 가로 스크롤 적용 구역 */}
+            <div className="overflow-x-auto rounded-lg border border-gray-200">
+              <table className="min-w-full text-left text-sm whitespace-nowrap">
+                <thead className="bg-gray-50 border-b border-gray-200 text-gray-500">
+                  <tr>
+                    <th className="px-4 py-3 font-bold">품목명 / 코드</th>
+                    <th className="px-4 py-3 w-32 text-center font-bold">수량</th>
+                    <th className="px-4 py-3 w-12 text-center"></th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-100 bg-white">
+                  {selectedItems.map((si, idx) => (
+                    <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3">
+                        <select className="w-full p-2 border border-gray-300 rounded outline-none focus:border-blue-500 bg-white" value={si.item_id} onChange={e => {
+                          const newArr = [...selectedItems]; newArr[idx].item_id = e.target.value; setSelectedItems(newArr);
+                        }}>
+                          <option value="">품목 선택...</option>
+                          {items.map(i => <option key={i.id} value={i.id}>[{i.item_code}] {i.item_name}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-4 py-3">
+                        <input type="number" min="1" className="w-full p-2 border border-gray-300 rounded text-center outline-none focus:border-blue-500" value={si.quantity} onChange={e => {
+                          const newArr = [...selectedItems]; newArr[idx].quantity = parseInt(e.target.value) || 0; setSelectedItems(newArr);
+                        }} />
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button onClick={() => removeItemRow(idx)} className="text-gray-400 hover:text-red-500 font-black px-2 py-1">✕</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </section>
         </div>
 
         {/* 우측: 결재 라인 */}
         <aside>
-          <div className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm">
+          <div className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm sticky top-6">
             <h3 className="text-sm font-bold text-gray-700 mb-4 border-b border-gray-200 pb-2">결재 라인</h3>
             
             <div className="space-y-3">
@@ -244,7 +257,7 @@ const { data: doc, error: docError } = await supabase
               <div className="flex items-center gap-3">
                 <div className="w-9 h-9 shrink-0 rounded bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">기안</div>
                 <div className="flex-1 bg-gray-50 border border-gray-200 rounded p-2 text-sm text-gray-600 truncate">
-                  {userProfile?.user_name}
+                  {userProfile?.user_name || '로딩 중...'}
                 </div>
               </div>
 
@@ -259,7 +272,7 @@ const { data: doc, error: docError } = await supabase
                   <button onClick={() => removeReviewer(idx)} className="text-gray-400 hover:text-red-500 font-bold px-1">✕</button>
                 </div>
               ))}
-              <button onClick={addReviewer} className="w-full py-2 border border-dashed border-gray-300 rounded text-xs text-gray-500 hover:bg-gray-50 transition-colors">
+              <button onClick={addReviewer} className="w-full py-2 border border-dashed border-gray-300 rounded text-xs text-gray-500 hover:bg-gray-50 transition-colors font-medium">
                 + 검토 추가
               </button>
 
@@ -274,7 +287,7 @@ const { data: doc, error: docError } = await supabase
                   <button onClick={() => removeApprover(idx)} className="text-gray-400 hover:text-red-500 font-bold px-1">✕</button>
                 </div>
               ))}
-              <button onClick={addApprover} className="w-full py-2 border border-dashed border-gray-300 rounded text-xs text-gray-500 hover:bg-gray-50 transition-colors">
+              <button onClick={addApprover} className="w-full py-2 border border-dashed border-gray-300 rounded text-xs text-gray-500 hover:bg-gray-50 transition-colors font-medium">
                 + 결재 추가
               </button>
             </div>
