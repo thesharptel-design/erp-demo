@@ -1,9 +1,11 @@
-// app/api/admin/create-user/route.ts
 import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
-  const { email, password, user_name, role_name } = await request.json();
+  // 🌟 1. 프론트에서 보내는 ...permissions(권한들)를 전부 다 받기 위해 구조 분해 할당을 수정했습니다!
+  const body = await request.json();
+  const { email, password, user_name, phone, department, job_rank, role_name, ...permissions } = body;
+  
   const supabaseAdmin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -29,8 +31,12 @@ export async function POST(request: Request) {
       id: authUser.user.id, 
       email, 
       user_name, 
-      role_name: role_name || '일반', 
-      is_active: true 
+      phone,             // 🌟 DB에 연락처 저장
+      department,        // 🌟 DB에 부서 저장
+      job_rank,          // 🌟 DB에 직급 저장
+      role_name: role_name || 'staff', // 일반 대신 staff로 통일
+      is_active: true,
+      ...permissions     // 🌟 엑셀/직접등록 시 넘어온 부서별 권한을 DB에 한방에 쏟아 붓습니다!
     }], { onConflict: 'email' });
 
   if (dbError) return NextResponse.json({ error: "DB 저장 실패: " + dbError.message }, { status: 400 });

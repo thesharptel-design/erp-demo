@@ -7,114 +7,264 @@ import { supabase } from '@/lib/supabase'
 export default function LoginPage() {
   const router = useRouter()
 
+  const [isSignUp, setIsSignUp] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  
+  const [passwordConfirm, setPasswordConfirm] = useState('')
+  const [userName, setUserName] = useState('')
+  const [department, setDepartment] = useState('')
+  const [jobRank, setJobRank] = useState('')
+  const [phone, setPhone] = useState('')
+  const [privacyAgreed, setPrivacyAgreed] = useState(false)
+  
+  const [showPrivacy, setShowPrivacy] = useState(false)
+  const [isPrivacyRead, setIsPrivacyRead] = useState(false)
+
   const [isLoading, setIsLoading] = useState(false)
   const [isChecking, setIsChecking] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
 
   useEffect(() => {
-    let mounted = true
-
-    async function checkSession() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-
-      if (!mounted) return
-
-      if (session?.user) {
-        router.replace('/dashboard')
-        return
+    async function syncSession() {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession()
+        if (error) {
+          await supabase.auth.signOut()
+          setIsChecking(false)
+          return
+        }
+        if (session) {
+          // 🌟 [추가 방어] 이미 세션이 있어도, 승인 대기자면 대시보드로 안 보내고 쫓아냅니다.
+          const { data: userData } = await supabase.from('app_users').select('role_name').eq('id', session.user.id).single()
+          if (userData?.role_name === 'pending') {
+            await supabase.auth.signOut()
+            setIsChecking(false)
+            return
+          }
+          router.replace('/dashboard')
+        } else {
+          setIsChecking(false)
+        }
+      } catch (e) {
+        setIsChecking(false)
       }
-
-      setIsChecking(false)
     }
-
-    checkSession()
-
-    return () => {
-      mounted = false
-    }
+    syncSession()
   }, [router])
 
-  async function handleLogin(e: React.FormEvent<HTMLFormElement>) {
+  const handlePrivacyScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (scrollHeight - scrollTop <= clientHeight + 2) {
+      setIsPrivacyRead(true);
+    }
+  }
+
+  async function handleAuth(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setErrorMessage('')
-    setIsLoading(true)
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
+    if (isSignUp) {
+      if (password !== passwordConfirm) return setErrorMessage('비밀번호가 일치하지 않습니다.')
+      if (!isPrivacyRead || !privacyAgreed) return setErrorMessage('약관을 끝까지 읽고 동의해 주세요.')
+      
+      setIsLoading(true)
+      try {
+        const { data, error: authError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { full_name: userName } },
+        })
+        if (authError) throw authError
+        
+        if (data.user) {
+          const getDefaultPerms = (dept: string) => ({
+            can_manage_master: dept === '관리' || dept === '경영지원' || dept === '관리팀' || dept === '경영지원팀',
+            can_po_create: dept === '영업' || dept === '구매' || dept === '영업팀' || dept === '구매팀',
+            can_material_manage: dept === '자재' || dept === '자재팀',
+            can_production_manage: dept === '생산' || dept === '생산팀',
+            can_qc_manage: dept === 'QC' || dept === 'QC팀' || dept === '품질관리부',
+            can_admin_manage: dept === '관리' || dept === '경영지원' || dept === '관리팀' || dept === '경영지원팀',
+            can_manage_permissions: false
+          });
 
-    setIsLoading(false)
+          const autoPermissions = getDefaultPerms(department);
 
-    if (error) {
-      setErrorMessage('이메일 또는 비밀번호가 올바르지 않습니다.')
-      return
+          const { error: dbError } = await supabase.from('app_users').upsert({
+            id: data.user.id,
+            email: email,
+            user_name: userName,
+            department: department,
+            job_rank: jobRank,
+            phone: phone,
+            privacy_consented: privacyAgreed,
+            role_name: 'pending',
+            ...autoPermissions
+          })
+
+          if (dbError) {
+            console.error("DB Insert 원본 에러:", dbError);
+            const exactError = dbError.message || dbError.details || JSON.stringify(dbError);
+            throw new Error(`[DB 저장 실패] ${exactError}`);
+          }
+        }
+        
+        // 🌟 [핵심 방어 1] Supabase가 멋대로 로그인시킨 세션을 강제로 끊어버립니다!
+        await supabase.auth.signOut() 
+
+        alert('신청이 완료되었습니다. 관리자 승인 후 시스템 이용이 가능합니다.')
+        setIsSignUp(false) // 로그인 화면으로 껍데기 전환
+        setEmail('') // 입력칸 초기화
+        setPassword('')
+        
+      } catch (err: any) {
+        setErrorMessage(err.message)
+      } finally {
+        setIsLoading(false)
+      }
+    } else {
+      // ========== 로그인 로직 ==========
+      setIsLoading(true)
+      try {
+        const { data: signInData, error } = await supabase.auth.signInWithPassword({ email, password })
+        if (error) throw error
+
+        // 🌟 [핵심 방어 2] 로그인 성공 직후, 이 사람의 '승인 상태'를 검사합니다.
+        if (signInData.user) {
+          const { data: userData } = await supabase.from('app_users').select('role_name').eq('id', signInData.user.id).single()
+          
+          if (userData?.role_name === 'pending') {
+            await supabase.auth.signOut() // 강제 로그아웃 (쫓아냄)
+            throw new Error('아직 관리자 승인 대기 중인 계정입니다. 승인 후 다시 시도해주세요.')
+          }
+        }
+
+        window.location.href = '/dashboard'
+      } catch (err: any) {
+        // 커스텀 에러(대기 중)면 그 메시지를 띄우고, 아니면 기본 에러를 띄웁니다.
+        setErrorMessage(err.message.includes('대기 중') ? err.message : '이메일 또는 비밀번호가 올바르지 않습니다.')
+      } finally {
+        setIsLoading(false)
+      }
     }
-
-    router.replace('/dashboard')
   }
 
-  if (isChecking) {
-    return (
-      <div className="flex min-h-screen w-full items-center justify-center bg-gray-100 px-6">
-        <div className="rounded-2xl border border-gray-200 bg-white px-6 py-4 text-sm text-gray-500 shadow-sm">
-          로그인 상태를 확인하는 중입니다...
-        </div>
-      </div>
-    )
-  }
+  if (isChecking) return <div className="flex min-h-screen bg-gray-50 items-center justify-center"><div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>
 
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-gray-100 px-6">
-      <div className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold tracking-tight text-gray-900">
-            교육용 ERP 로그인
+    <div className="flex min-h-screen w-full items-center justify-center bg-gray-100 px-6 py-12">
+      <div className={`w-full ${isSignUp ? 'max-w-2xl' : 'max-w-md'} rounded-[2.5rem] border border-gray-200 bg-white p-10 shadow-2xl transition-all duration-300`}>
+        <div className="mb-8 text-center">
+          <h1 className="text-4xl font-black tracking-tighter text-gray-900 italic">
+            BIO<span className="text-blue-600">-ERP</span>
           </h1>
-          <p className="mt-2 text-sm text-gray-500">
-            등록된 사용자 계정으로 로그인합니다.
+          <p className="mt-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">
+            {isSignUp ? 'New Employee Registration' : 'Integrated Management System'}
           </p>
         </div>
 
-        <form onSubmit={handleLogin} className="space-y-4">
-          <div className="erp-field">
-            <label className="erp-label">이메일</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="erp-input"
-              placeholder="예: purchase@test.com"
-            />
-          </div>
-
-          <div className="erp-field">
-            <label className="erp-label">비밀번호</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="erp-input"
-              placeholder="비밀번호 입력"
-            />
-          </div>
-
-          {errorMessage && (
-            <div className="erp-alert-error">{errorMessage}</div>
+        <form onSubmit={handleAuth} className="space-y-4">
+          {!isSignUp && (
+            <div className="space-y-4">
+              <input type="email" placeholder="이메일 입력" required className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={email} onChange={e => setEmail(e.target.value)} />
+              <input type="password" placeholder="비밀번호" required className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={password} onChange={e => setPassword(e.target.value)} />
+            </div>
           )}
 
-          <button
-            type="submit"
-            disabled={isLoading}
-            className="erp-btn-primary w-full"
-          >
-            {isLoading ? '로그인 중...' : '로그인'}
+          {isSignUp && (
+            <div className="space-y-4">
+              <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest border-b pb-2">기본 로그인 정보</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <input type="email" placeholder="이메일" required className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold md:col-span-2 focus:ring-2 focus:ring-blue-500 outline-none" value={email} onChange={e => setEmail(e.target.value)} />
+                <input type="password" placeholder="비밀번호" required className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={password} onChange={e => setPassword(e.target.value)} />
+                <input type="password" placeholder="비밀번호 확인" required className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={passwordConfirm} onChange={e => setPasswordConfirm(e.target.value)} />
+              </div>
+
+              <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest border-b pb-2 mt-6">직원 인적사항</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <input type="text" placeholder="성함 (예: 홍길동)" required className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={userName} onChange={e => setUserName(e.target.value)} />
+                <input type="text" placeholder="연락처 (예: 010-1234-5678)" required className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={phone} onChange={e => setPhone(e.target.value)} />
+                
+                <select className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold text-gray-500 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer" required value={department} onChange={e => setDepartment(e.target.value)}>
+                  <option value="">부서 선택</option>
+                  <option value="영업">영업팀</option>
+                  <option value="자재">자재팀</option>
+                  <option value="생산">생산팀</option>
+                  <option value="구매">구매팀</option>
+                  <option value="QC">QC</option>
+                  <option value="경영지원">경영지원팀</option>
+                  <option value="관리">관리팀</option>
+                </select>
+
+                <select className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold text-gray-500 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer" required value={jobRank} onChange={e => setJobRank(e.target.value)}>
+                  <option value="">직급 선택</option>
+                  <option value="사원">사원</option>
+                  <option value="대리">대리</option>
+                  <option value="과장">과장</option>
+                  <option value="차장">차장</option>
+                  <option value="부장">부장</option>
+                  <option value="이사">이사</option>
+                  <option value="대표">대표</option>
+                </select>
+              </div>
+
+              <div className="mt-6 space-y-3">
+                <div className="flex justify-between items-center px-1">
+                  <span className="text-[11px] font-black text-gray-400 uppercase tracking-widest">개인정보 처리방침</span>
+                  <button type="button" onClick={() => setShowPrivacy(!showPrivacy)} className="text-[10px] font-black text-blue-500 underline uppercase tracking-tighter hover:text-blue-700">
+                    {showPrivacy ? '닫기' : '(보기)'}
+                  </button>
+                </div>
+
+                {showPrivacy && (
+                  <div 
+                    onScroll={handlePrivacyScroll}
+                    className="h-32 p-4 bg-gray-50 rounded-2xl overflow-y-auto text-[11px] leading-relaxed text-gray-500 font-medium custom-scrollbar border border-gray-100"
+                  >
+                    [개인정보 수집 및 이용 동의]<br/><br/>
+                    1. 수집 항목: 성명, 이메일, 연락처, 부서, 직급<br/>
+                    2. 수집 및 이용 목적: ERP 시스템 사용자 식별, 내부 보안 관리, 업무 소통 및 근태 기록 관리<br/>
+                    3. 보유 및 이용 기간: 사용자 계정 삭제 전까지 또는 퇴사 후 법적 보존 기간까지<br/>
+                    4. 거부 권리: 귀하는 동의를 거부할 권리가 있으나, 동의하지 않을 경우 시스템 계정 생성이 제한될 수 있습니다.<br/><br/>
+                    ※ 아래 내용을 끝까지 읽어야 동의가 활성화됩니다.<br/>
+                    ------------------------------------------------<br/>
+                    내용을 확인 중입니다... 스크롤을 끝까지 내려주세요.<br/>
+                    시스템 보안 및 개인정보 처리 방침을 준수합니다.<br/>
+                    ------------------------------------------------<br/>
+                    [방침 확인 완료]
+                  </div>
+                )}
+
+                <div className={`p-4 rounded-2xl flex items-center gap-3 transition-all duration-300 ${isPrivacyRead ? 'bg-blue-50 border border-blue-100' : 'bg-gray-50 opacity-40'}`}>
+                  <input 
+                    type="checkbox" 
+                    id="privacy" 
+                    className="w-5 h-5 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:cursor-not-allowed" 
+                    required 
+                    checked={privacyAgreed} 
+                    onChange={e => setPrivacyAgreed(e.target.checked)}
+                    disabled={!isPrivacyRead}
+                  />
+                  <label htmlFor="privacy" className={`text-xs font-bold cursor-pointer select-none ${isPrivacyRead ? 'text-blue-700' : 'text-gray-400'}`}>
+                    개인정보 처리방침에 동의합니다. {!isPrivacyRead && "(내용 확인 필요)"}
+                  </label>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {errorMessage && <div className="text-xs font-bold text-red-600 bg-red-50 p-4 rounded-xl border border-red-200 whitespace-pre-wrap">⚠️ {errorMessage}</div>}
+
+          <button type="submit" disabled={isLoading} className="w-full h-16 mt-4 bg-blue-600 text-white rounded-3xl font-black text-lg shadow-xl hover:bg-blue-700 transition-all active:scale-95 disabled:bg-gray-300">
+            {isLoading ? '처리 중...' : isSignUp ? '등록 신청하기' : '로그인'}
           </button>
         </form>
+
+        <div className="mt-8 text-center">
+          <button onClick={() => { setIsSignUp(!isSignUp); setErrorMessage(''); }} className="text-xs font-bold text-blue-500 hover:text-blue-700 underline underline-offset-4 tracking-tighter">
+            {isSignUp ? '이미 계정이 있으신가요? 로그인' : '신규 입사자 계정 생성 신청'}
+          </button>
+        </div>
       </div>
     </div>
   )

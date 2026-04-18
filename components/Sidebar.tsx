@@ -111,6 +111,7 @@ export default function Sidebar() {
     {
       title: 'ADMIN ONLY',
       items: [
+        { name: '사용자 가입 설정', href: '/admin/user-approvals', perm: 'can manage_permisiions'},
         { name: '사용자 권한 설정', href: '/admin/user-permissions', perm: 'can_manage_permissions' },
         { name: '기업정보 설정', href: '/admin/company-settings', perm: 'can_manage_permissions' },
       ]
