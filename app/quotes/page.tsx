@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
+import { hasManagePermission } from '@/lib/permissions'
 
 export default function QuotesPage() {
   const [quotes, setQuotes] = useState<any[]>([])
@@ -47,7 +48,7 @@ export default function QuotesPage() {
   }
 
   // 🌟 권한 체크 (관리자거나 영업권한이 true일 때)
-  const hasPermission = userData?.role_name === 'admin' || userData?.can_sales_manage === true;
+  const hasPermission = hasManagePermission(userData, 'can_sales_manage');
 
   if (loading) return <div className="p-20 text-center font-bold text-gray-400">데이터 로딩 중...</div>
 

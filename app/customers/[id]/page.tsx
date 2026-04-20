@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import SearchableCombobox from '@/components/SearchableCombobox'
 
 type Customer = {
   id: number
@@ -84,6 +85,11 @@ export default function CustomerDetailPage({
   const [isSaving, setIsSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+  const customerTypeOptions = [
+    { value: 'sales', label: '매출처' },
+    { value: 'purchase', label: '매입처' },
+    { value: 'both', label: '겸용' },
+  ]
 
   useEffect(() => {
     async function loadCustomer() {
@@ -228,15 +234,12 @@ export default function CustomerDetailPage({
             <label className="mb-2 block text-sm font-medium text-gray-700">
               거래처구분
             </label>
-            <select
+            <SearchableCombobox
               value={customerType}
-              onChange={(e) => setCustomerType(e.target.value)}
-              className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black"
-            >
-              <option value="sales">매출처</option>
-              <option value="purchase">매입처</option>
-              <option value="both">겸용</option>
-            </select>
+              onChange={setCustomerType}
+              options={customerTypeOptions}
+              placeholder="거래처구분 선택"
+            />
           </div>
 
           <div>

@@ -119,11 +119,6 @@ function getInboundStyle(inboundCompleted: boolean) {
     : 'erp-badge erp-badge-draft'
 }
 
-function getQcDisplayText(qc?: QcRequestRow) {
-  if (!qc) return '미의뢰'
-  return `${getQcTypeLabel(qc.qc_type)} / ${getQcStatusLabel(qc.qc_status)}`
-}
-
 export default function ProductionOrdersPage() {
   const [productionOrders, setProductionOrders] = useState<ProductionOrderRow[]>([])
   const [itemsMap, setItemsMap] = useState<Map<number, string>>(new Map())
@@ -234,7 +229,7 @@ export default function ProductionOrdersPage() {
         <ProtectedCreateButton
           href="/production-orders/new"
           label="생산지시 등록"
-          permissionKey="can_prod_complete"
+          permissionKey="can_production_manage"
         />
       </div>
 

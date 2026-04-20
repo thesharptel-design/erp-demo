@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
+import SearchableCombobox from '@/components/SearchableCombobox'
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -90,6 +92,16 @@ export default function NewQuotePage() {
 
   const totalSupply = rows.reduce((sum, r) => sum + r.supply_amount, 0);
   const totalVat = rows.reduce((sum, r) => sum + r.vat, 0);
+  const customerOptions = customers.map((c) => ({
+    value: String(c.id),
+    label: c.customer_name,
+    keywords: [c.customer_name],
+  }));
+  const itemOptions = items.map((i) => ({
+    value: String(i.id),
+    label: `[${i.item_code}] ${i.item_name}`,
+    keywords: [i.item_code, i.item_name],
+  }));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,7 +110,11 @@ export default function NewQuotePage() {
 
     setIsSaving(true);
     try {
-      const quoteNo = `QT-${new Date().toISOString().slice(2,10).replace(/-/g,'')}-${Math.floor(Math.random()*1000)}`;
+      const quoteNo = await generateNextSerialDocNo(supabase, {
+        table: 'quotes',
+        column: 'quote_no',
+        code: 'QT',
+      })
       
       const { data: quote, error: qErr } = await supabase.from('quotes').insert({
         quote_no: quoteNo,
@@ -154,7 +170,7 @@ export default function NewQuotePage() {
           <h2 className="text-xs font-black text-gray-400 uppercase tracking-widest ml-1">Basic Info</h2>
           <div className="space-y-4">
             <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-gray-400 uppercase ml-1">견적 일자</label><input type="date" value={quoteDate} onChange={e => setQuoteDate(e.target.value)} className="w-full p-4 bg-gray-50 border-2 border-gray-100 rounded-2xl outline-none focus:border-blue-500 font-bold text-gray-700 shadow-sm" /></div>
-            <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-gray-400 uppercase ml-1">거래처 선택</label><select value={customerId} onChange={e => setCustomerId(e.target.value)} className="w-full p-4 bg-gray-50 border-2 border-gray-100 rounded-2xl outline-none focus:border-blue-500 font-bold text-blue-600 shadow-sm">{customers.map(c => <option key={c.id} value={c.id}>{c.customer_name}</option>)}</select></div>
+            <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-gray-400 uppercase ml-1">거래처 선택</label><SearchableCombobox value={customerId} onChange={setCustomerId} options={customerOptions} placeholder="거래처 선택" /></div>
             <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-gray-400 uppercase ml-1">담당자 전화번호</label><input type="text" value={managerPhone} onChange={e => setManagerPhone(e.target.value)} placeholder="010-0000-0000" className="w-full p-4 bg-gray-50 border-2 border-gray-100 rounded-2xl outline-none focus:border-blue-500 font-bold text-gray-700 shadow-sm" /></div>
             <div className="flex flex-col gap-2"><label className="text-[10px] font-black text-gray-400 uppercase ml-1">담당자 E-MAIL</label><input type="email" value={managerEmail} onChange={e => setManagerEmail(e.target.value)} placeholder="manager@company.com" className="w-full p-4 bg-gray-50 border-2 border-gray-100 rounded-2xl outline-none focus:border-blue-500 font-bold text-gray-700 shadow-sm" /></div>
           </div>
@@ -206,7 +222,7 @@ export default function NewQuotePage() {
             {rows.map((row, idx) => (
               <tr key={row.id} className="hover:bg-blue-50/20 transition-all">
                 <td className="px-6 py-4 text-center text-gray-300 font-bold">{idx + 1}</td>
-                <td className="px-6 py-4"><select value={row.item_id} onChange={e => handleItemChange(row.id, e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl font-bold text-gray-700 bg-white outline-none focus:border-blue-500">{items.map(i => <option key={i.id} value={i.id}>[{i.item_code}] {i.item_name}</option>)}</select></td>
+                <td className="px-6 py-4"><SearchableCombobox value={row.item_id} onChange={v => handleItemChange(row.id, v)} options={itemOptions} placeholder="품목 선택" /></td>
                 <td className="px-6 py-4"><div className="p-2 bg-gray-50 rounded-xl text-gray-500 font-medium truncate text-xs">{row.item_spec}</div></td>
                 <td className="px-6 py-4"><input type="number" value={row.qty} onChange={e => updateRowAmount(row.id, 'qty', parseInt(e.target.value) || 0)} className="w-full p-2 border border-gray-200 rounded-xl text-center font-black outline-none focus:border-blue-500" /></td>
                 <td className="px-6 py-4"><input type="number" value={row.unit_price} onChange={e => updateRowAmount(row.id, 'unit_price', parseInt(e.target.value) || 0)} className="w-full p-2 border border-gray-200 rounded-xl text-right font-black text-blue-600 outline-none focus:border-blue-500" /></td>

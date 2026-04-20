@@ -2,18 +2,12 @@
 
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
-import { getCurrentUserPermissions } from '@/lib/permissions'
+import { getCurrentUserPermissions, hasManagePermission, type ManagePermissionKey } from '@/lib/permissions'
 
 type Props = {
   href: string
   label: string
-  permissionKey:
-    | 'can_quote_create'
-    | 'can_po_create'
-    | 'can_receive_stock'
-    | 'can_prod_complete'
-    | 'can_approve'
-    | 'can_manage_permissions'
+  permissionKey: ManagePermissionKey
 }
 
 export default function ProtectedCreateButton({
@@ -34,10 +28,7 @@ export default function ProtectedCreateButton({
         return
       }
 
-      const isAdmin = permissions.role_name === 'admin'
-      const hasPermission = Boolean(permissions[permissionKey])
-
-      setCanAccess(isAdmin || hasPermission)
+      setCanAccess(hasManagePermission(permissions, permissionKey))
       setIsLoading(false)
     }
 

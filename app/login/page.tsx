@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import SearchableCombobox from '@/components/SearchableCombobox'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -24,6 +25,24 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [isChecking, setIsChecking] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
+  const departmentOptions = [
+    { value: '영업', label: '영업팀' },
+    { value: '자재', label: '자재팀' },
+    { value: '생산', label: '생산팀' },
+    { value: '구매', label: '구매팀' },
+    { value: 'QC', label: 'QC' },
+    { value: '경영지원', label: '경영지원팀' },
+    { value: '관리', label: '관리팀' },
+  ]
+  const rankOptions = [
+    { value: '사원', label: '사원' },
+    { value: '대리', label: '대리' },
+    { value: '과장', label: '과장' },
+    { value: '차장', label: '차장' },
+    { value: '부장', label: '부장' },
+    { value: '이사', label: '이사' },
+    { value: '대표', label: '대표' },
+  ]
 
   useEffect(() => {
     async function syncSession() {
@@ -35,9 +54,9 @@ export default function LoginPage() {
           return
         }
         if (session) {
-          // 🌟 [추가 방어] 이미 세션이 있어도, 승인 대기자면 대시보드로 안 보내고 쫓아냅니다.
-          const { data: userData } = await supabase.from('app_users').select('role_name').eq('id', session.user.id).single()
-          if (userData?.role_name === 'pending') {
+          const { data: userData } = await supabase.from('app_users').select('role_name, is_active').eq('id', session.user.id).single()
+          
+          if (userData?.role_name === 'pending' || userData?.is_active === false) {
             await supabase.auth.signOut()
             setIsChecking(false)
             return
@@ -46,7 +65,7 @@ export default function LoginPage() {
         } else {
           setIsChecking(false)
         }
-      } catch (e) {
+      } catch {
         setIsChecking(false)
       }
     }
@@ -79,16 +98,20 @@ export default function LoginPage() {
         
         if (data.user) {
           const getDefaultPerms = (dept: string) => ({
-            can_manage_master: dept === '관리' || dept === '경영지원' || dept === '관리팀' || dept === '경영지원팀',
-            can_po_create: dept === '영업' || dept === '구매' || dept === '영업팀' || dept === '구매팀',
-            can_material_manage: dept === '자재' || dept === '자재팀',
-            can_production_manage: dept === '생산' || dept === '생산팀',
-            can_qc_manage: dept === 'QC' || dept === 'QC팀' || dept === '품질관리부',
-            can_admin_manage: dept === '관리' || dept === '경영지원' || dept === '관리팀' || dept === '경영지원팀',
+            can_manage_master: ['관리', '경영지원', '관리팀', '경영지원팀'].includes(dept),
+            can_sales_manage: ['영업', '구매', '영업팀', '구매팀'].includes(dept),
+            can_material_manage: ['자재', '자재팀'].includes(dept),
+            can_production_manage: ['생산', '생산팀'].includes(dept),
+            can_qc_manage: ['QC', 'QC팀', '품질관리부'].includes(dept),
+            can_admin_manage: ['관리', '경영지원', '관리팀', '경영지원팀'].includes(dept),
+            // legacy fallback columns
+            can_po_create: ['영업', '구매', '영업팀', '구매팀'].includes(dept),
+            can_quote_create: ['영업', '영업팀'].includes(dept),
+            can_receive_stock: ['자재', '자재팀'].includes(dept),
+            can_prod_complete: ['생산', '생산팀'].includes(dept),
+            can_approve: ['QC', 'QC팀', '품질관리부'].includes(dept),
             can_manage_permissions: false
           });
-
-          const autoPermissions = getDefaultPerms(department);
 
           const { error: dbError } = await supabase.from('app_users').upsert({
             id: data.user.id,
@@ -99,50 +122,71 @@ export default function LoginPage() {
             phone: phone,
             privacy_consented: privacyAgreed,
             role_name: 'pending',
-            ...autoPermissions
+            is_active: true,
+            ...getDefaultPerms(department)
           })
-
-          if (dbError) {
-            console.error("DB Insert 원본 에러:", dbError);
-            const exactError = dbError.message || dbError.details || JSON.stringify(dbError);
-            throw new Error(`[DB 저장 실패] ${exactError}`);
-          }
+          if (dbError) throw dbError
         }
         
-        // 🌟 [핵심 방어 1] Supabase가 멋대로 로그인시킨 세션을 강제로 끊어버립니다!
         await supabase.auth.signOut() 
-
         alert('신청이 완료되었습니다. 관리자 승인 후 시스템 이용이 가능합니다.')
-        setIsSignUp(false) // 로그인 화면으로 껍데기 전환
-        setEmail('') // 입력칸 초기화
-        setPassword('')
-        
+        setIsSignUp(false)
+        setEmail(''); setPassword('');
       } catch (err: any) {
         setErrorMessage(err.message)
       } finally {
         setIsLoading(false)
       }
     } else {
-      // ========== 로그인 로직 ==========
+      // ========== 🛑 로그인 로직 (알림창 강화됨) ==========
       setIsLoading(true)
       try {
         const { data: signInData, error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) throw error
 
-        // 🌟 [핵심 방어 2] 로그인 성공 직후, 이 사람의 '승인 상태'를 검사합니다.
         if (signInData.user) {
-          const { data: userData } = await supabase.from('app_users').select('role_name').eq('id', signInData.user.id).single()
+          const { data: userData } = await supabase
+            .from('app_users')
+            .select('role_name, is_active, user_name')
+            .eq('id', signInData.user.id)
+            .single()
           
+          // 1. 승인 대기 검사 (팝업 추가)
           if (userData?.role_name === 'pending') {
-            await supabase.auth.signOut() // 강제 로그아웃 (쫓아냄)
-            throw new Error('아직 관리자 승인 대기 중인 계정입니다. 승인 후 다시 시도해주세요.')
+            await supabase.auth.signOut()
+            const msg = '⚠️ 승인 대기 중\n\n아직 관리자의 승인이 완료되지 않았습니다.\n승인 후 다시 로그인해 주세요.';
+            alert(msg);
+            throw new Error(msg);
+          }
+
+          // 2. 퇴사 여부 검사 (팝업 추가)
+          if (userData?.is_active === false) {
+            await supabase.auth.signOut()
+            const msg = `🚫 접속 차단\n\n[${userData.user_name}]님은 현재 퇴사(비활성) 처리되어 시스템 접속이 불가능합니다.\n관리자에게 문의하세요.`;
+            alert(msg);
+            throw new Error(msg);
           }
         }
 
+        await fetch('/api/auth/login-audit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email,
+            success: true,
+            sessionId: signInData.session?.access_token?.slice(0, 24) ?? null,
+          }),
+        })
         window.location.href = '/dashboard'
       } catch (err: any) {
-        // 커스텀 에러(대기 중)면 그 메시지를 띄우고, 아니면 기본 에러를 띄웁니다.
-        setErrorMessage(err.message.includes('대기 중') ? err.message : '이메일 또는 비밀번호가 올바르지 않습니다.')
+        await fetch('/api/auth/login-audit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, success: false }),
+        })
+        setErrorMessage(err.message.includes('대기 중') || err.message.includes('퇴사') 
+          ? err.message 
+          : '이메일 또는 비밀번호가 올바르지 않습니다.')
       } finally {
         setIsLoading(false)
       }
@@ -152,7 +196,7 @@ export default function LoginPage() {
   if (isChecking) return <div className="flex min-h-screen bg-gray-50 items-center justify-center"><div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>
 
   return (
-    <div className="flex min-h-screen w-full items-center justify-center bg-gray-100 px-6 py-12">
+    <div className="flex min-h-screen w-full items-center justify-center bg-gray-100 px-6 py-12 text-black">
       <div className={`w-full ${isSignUp ? 'max-w-2xl' : 'max-w-md'} rounded-[2.5rem] border border-gray-200 bg-white p-10 shadow-2xl transition-all duration-300`}>
         <div className="mb-8 text-center">
           <h1 className="text-4xl font-black tracking-tighter text-gray-900 italic">
@@ -185,27 +229,19 @@ export default function LoginPage() {
                 <input type="text" placeholder="성함 (예: 홍길동)" required className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={userName} onChange={e => setUserName(e.target.value)} />
                 <input type="text" placeholder="연락처 (예: 010-1234-5678)" required className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={phone} onChange={e => setPhone(e.target.value)} />
                 
-                <select className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold text-gray-500 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer" required value={department} onChange={e => setDepartment(e.target.value)}>
-                  <option value="">부서 선택</option>
-                  <option value="영업">영업팀</option>
-                  <option value="자재">자재팀</option>
-                  <option value="생산">생산팀</option>
-                  <option value="구매">구매팀</option>
-                  <option value="QC">QC</option>
-                  <option value="경영지원">경영지원팀</option>
-                  <option value="관리">관리팀</option>
-                </select>
+                <SearchableCombobox
+                  value={department}
+                  onChange={setDepartment}
+                  options={departmentOptions}
+                  placeholder="부서 선택"
+                />
 
-                <select className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold text-gray-500 outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer" required value={jobRank} onChange={e => setJobRank(e.target.value)}>
-                  <option value="">직급 선택</option>
-                  <option value="사원">사원</option>
-                  <option value="대리">대리</option>
-                  <option value="과장">과장</option>
-                  <option value="차장">차장</option>
-                  <option value="부장">부장</option>
-                  <option value="이사">이사</option>
-                  <option value="대표">대표</option>
-                </select>
+                <SearchableCombobox
+                  value={jobRank}
+                  onChange={setJobRank}
+                  options={rankOptions}
+                  placeholder="직급 선택"
+                />
               </div>
 
               <div className="mt-6 space-y-3">
@@ -255,7 +291,7 @@ export default function LoginPage() {
 
           {errorMessage && <div className="text-xs font-bold text-red-600 bg-red-50 p-4 rounded-xl border border-red-200 whitespace-pre-wrap">⚠️ {errorMessage}</div>}
 
-          <button type="submit" disabled={isLoading} className="w-full h-16 mt-4 bg-blue-600 text-white rounded-3xl font-black text-lg shadow-xl hover:bg-blue-700 transition-all active:scale-95 disabled:bg-gray-300">
+          <button type="submit" disabled={isLoading} className="w-full h-16 mt-4 bg-blue-600 text-white rounded-3xl font-black text-lg shadow-xl hover:bg-blue-700 transition-all active:scale-95 disabled:bg-gray-400">
             {isLoading ? '처리 중...' : isSignUp ? '등록 신청하기' : '로그인'}
           </button>
         </form>

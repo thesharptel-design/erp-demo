@@ -1,7 +1,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { getCurrentUserPermissions, type CurrentUserPermissions } from '@/lib/permissions'
+import {
+  getCurrentUserPermissions,
+  hasManagePermission,
+  type CurrentUserPermissions,
+} from '@/lib/permissions'
 
 export default function CurrentUserBanner() {
   const [user, setUser] = useState<CurrentUserPermissions | null>(null)
@@ -18,12 +22,12 @@ export default function CurrentUserBanner() {
   if (!user) return null
 
   const permissionLabels: string[] = []
-  if (user.can_quote_create) permissionLabels.push('견적 등록')
-  if (user.can_po_create) permissionLabels.push('발주 등록')
-  if (user.can_receive_stock) permissionLabels.push('입고 처리')
-  if (user.can_prod_complete) permissionLabels.push('생산 완료')
-  if (user.can_approve) permissionLabels.push('승인 / 반려')
-  if (user.can_manage_permissions) permissionLabels.push('권한 관리')
+  if (hasManagePermission(user, 'can_sales_manage')) permissionLabels.push('영업/구매')
+  if (hasManagePermission(user, 'can_material_manage')) permissionLabels.push('자재/재고')
+  if (hasManagePermission(user, 'can_production_manage')) permissionLabels.push('생산')
+  if (hasManagePermission(user, 'can_qc_manage')) permissionLabels.push('품질')
+  if (hasManagePermission(user, 'can_manage_master')) permissionLabels.push('기준정보')
+  if (hasManagePermission(user, 'can_manage_permissions')) permissionLabels.push('권한 관리')
 
   return (
     <div className="mb-4 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm sm:mb-6 sm:p-5">

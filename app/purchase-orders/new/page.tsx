@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
+import SearchableCombobox from '@/components/SearchableCombobox'
 
 type Customer = {
   id: number
@@ -57,18 +59,6 @@ function getPurchaseOrderErrorMessage(error: SupabaseErrorLike) {
   }
 
   return '발주서 저장 중 오류가 발생했습니다. 다시 시도해 주세요.'
-}
-
-function makePoNo() {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = String(now.getMonth() + 1).padStart(2, '0')
-  const d = String(now.getDate()).padStart(2, '0')
-  const hh = String(now.getHours()).padStart(2, '0')
-  const mm = String(now.getMinutes()).padStart(2, '0')
-  const ss = String(now.getSeconds()).padStart(2, '0')
-
-  return `PO-${y}${m}${d}-${hh}${mm}${ss}`
 }
 
 export default function NewPurchaseOrderPage() {
@@ -136,6 +126,33 @@ export default function NewPurchaseOrderPage() {
     () => new Map(items.map((item) => [item.id, item])),
     [items]
   )
+  const customerOptions = useMemo(
+    () =>
+      customers.map((customer) => ({
+        value: String(customer.id),
+        label: customer.customer_name,
+        keywords: [customer.customer_name],
+      })),
+    [customers]
+  )
+  const userOptions = useMemo(
+    () =>
+      users.map((user) => ({
+        value: user.id,
+        label: `${user.user_name} / ${user.login_id}`,
+        keywords: [user.user_name, user.login_id],
+      })),
+    [users]
+  )
+  const itemOptions = useMemo(
+    () =>
+      items.map((item) => ({
+        value: String(item.id),
+        label: `${item.item_code} / ${item.item_name}`,
+        keywords: [item.item_code, item.item_name],
+      })),
+    [items]
+  )
 
   const totalAmount = lines.reduce((sum, line) => {
     return sum + Number(line.qty || 0) * Number(line.unit_price || 0)
@@ -191,7 +208,11 @@ export default function NewPurchaseOrderPage() {
 
     setIsSaving(true)
 
-    const poNo = makePoNo()
+    const poNo = await generateNextSerialDocNo(supabase, {
+      table: 'purchase_orders',
+      column: 'po_no',
+      code: 'PO',
+    })
 
     const { data: poData, error: poError } = await supabase
       .from('purchase_orders')
@@ -279,34 +300,22 @@ export default function NewPurchaseOrderPage() {
 
             <div className="erp-field">
               <label className="erp-label">공급처</label>
-              <select
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : '')}
-                className="erp-select"
-              >
-                <option value="">공급처 선택</option>
-                {customers.map((customer) => (
-                  <option key={customer.id} value={customer.id}>
-                    {customer.customer_name}
-                  </option>
-                ))}
-              </select>
+              <SearchableCombobox
+                value={customerId ? String(customerId) : ''}
+                onChange={(v) => setCustomerId(v ? Number(v) : '')}
+                options={customerOptions}
+                placeholder="공급처 선택"
+              />
             </div>
 
             <div className="erp-field">
               <label className="erp-label">작성자</label>
-              <select
+              <SearchableCombobox
                 value={userId}
-                onChange={(e) => setUserId(e.target.value)}
-                className="erp-select"
-              >
-                <option value="">작성자 선택</option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.user_name} / {user.login_id}
-                  </option>
-                ))}
-              </select>
+                onChange={setUserId}
+                options={userOptions}
+                placeholder="작성자 선택"
+              />
             </div>
 
             <div className="erp-field">
@@ -344,18 +353,12 @@ export default function NewPurchaseOrderPage() {
                 >
                   <div className="erp-field">
                     <label className="erp-label">품목</label>
-                    <select
-                      value={line.item_id}
-                      onChange={(e) => handleItemChange(index, e.target.value)}
-                      className="erp-select"
-                    >
-                      <option value="">품목 선택</option>
-                      {items.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.item_code} / {item.item_name}
-                        </option>
-                      ))}
-                    </select>
+                    <SearchableCombobox
+                      value={line.item_id ? String(line.item_id) : ''}
+                      onChange={(v) => handleItemChange(index, v)}
+                      options={itemOptions}
+                      placeholder="품목 선택"
+                    />
                   </div>
 
                   <div className="erp-field">

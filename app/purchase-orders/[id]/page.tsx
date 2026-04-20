@@ -4,7 +4,9 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { getCurrentUserPermissions } from '@/lib/permissions'
+import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
+import { getCurrentUserPermissions, hasManagePermission } from '@/lib/permissions'
+import SearchableCombobox from '@/components/SearchableCombobox'
 
 type Customer = {
   id: number
@@ -55,6 +57,7 @@ type PurchaseOrderLine = {
 type InventoryRow = {
   id: number
   item_id: number
+  warehouse_id: number
   current_qty: number
   available_qty: number
   quarantine_qty: number
@@ -100,18 +103,6 @@ function getPurchaseStatusLabel(status: string) {
   }
 }
 
-function makeQcNo() {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = String(now.getMonth() + 1).padStart(2, '0')
-  const d = String(now.getDate()).padStart(2, '0')
-  const hh = String(now.getHours()).padStart(2, '0')
-  const mm = String(now.getMinutes()).padStart(2, '0')
-  const ss = String(now.getSeconds()).padStart(2, '0')
-
-  return `QC-${y}${m}${d}-${hh}${mm}${ss}`
-}
-
 export default function PurchaseOrderDetailPage({
   params,
 }: {
@@ -137,7 +128,7 @@ export default function PurchaseOrderDetailPage({
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
   const [actionMessage, setActionMessage] = useState('')
-  const [showActionButtons, setShowActionButtons] = useState(true)
+  const showActionButtons = true
   const [canReceiveStock, setCanReceiveStock] = useState(false)
 
   useEffect(() => {
@@ -219,7 +210,7 @@ export default function PurchaseOrderDetailPage({
       setCustomers((customersData as Customer[]) ?? [])
       setUsers((usersData as AppUser[]) ?? [])
       setItems((itemsData as Item[]) ?? [])
-      setCanReceiveStock(permissions?.role_name === 'admin' || permissions?.can_receive_stock || false)
+      setCanReceiveStock(hasManagePermission(permissions, 'can_material_manage'))
 
       setIsLoading(false)
     }
@@ -229,6 +220,33 @@ export default function PurchaseOrderDetailPage({
 
   const itemMap = useMemo(
     () => new Map(items.map((item) => [item.id, item])),
+    [items]
+  )
+  const customerOptions = useMemo(
+    () =>
+      customers.map((customer) => ({
+        value: String(customer.id),
+        label: customer.customer_name,
+        keywords: [customer.customer_name],
+      })),
+    [customers]
+  )
+  const userOptions = useMemo(
+    () =>
+      users.map((user) => ({
+        value: user.id,
+        label: `${user.user_name} / ${user.login_id}`,
+        keywords: [user.user_name, user.login_id],
+      })),
+    [users]
+  )
+  const itemOptions = useMemo(
+    () =>
+      items.map((item) => ({
+        value: String(item.id),
+        label: `${item.item_code} / ${item.item_name}`,
+        keywords: [item.item_code, item.item_name],
+      })),
     [items]
   )
 
@@ -433,15 +451,32 @@ export default function PurchaseOrderDetailPage({
 
     const typedPoItems = (poItemsData as PurchaseOrderItem[]) ?? []
     const now = new Date().toISOString()
+    const { data: defaultWarehouse } = await supabase
+      .from('warehouses')
+      .select('id')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    const warehouseId = defaultWarehouse?.id
+    if (!warehouseId) {
+      setErrorMessage('활성 창고가 없어 입고처리를 진행할 수 없습니다.')
+      return
+    }
 
     for (const line of typedPoItems) {
       const item = itemMap.get(line.item_id)
       const lineQty = Number(line.qty)
+      let inventoryIdForTx: number | null = null
 
       const { data: inventoryRow, error: inventorySelectError } = await supabase
         .from('inventory')
-        .select('id, item_id, current_qty, available_qty, quarantine_qty')
+        .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty')
         .eq('item_id', line.item_id)
+        .eq('warehouse_id', warehouseId)
+        .is('lot_no', null)
+        .is('exp_date', null)
+        .is('serial_no', null)
         .maybeSingle()
 
       if (inventorySelectError) {
@@ -466,21 +501,26 @@ export default function PurchaseOrderDetailPage({
           setErrorMessage(getPurchaseOrderErrorMessage(inventoryUpdateError))
           return
         }
+        inventoryIdForTx = current.id
       } else {
-        const { error: inventoryInsertError } = await supabase
+        const { data: insertedInventory, error: inventoryInsertError } = await supabase
           .from('inventory')
           .insert({
             item_id: line.item_id,
             current_qty: lineQty,
             available_qty: 0,
             quarantine_qty: lineQty,
+            warehouse_id: warehouseId,
             updated_at: now,
           })
+          .select('id')
+          .single()
 
         if (inventoryInsertError) {
           setErrorMessage(getPurchaseOrderErrorMessage(inventoryInsertError))
           return
         }
+        inventoryIdForTx = insertedInventory?.id ?? null
       }
 
       const { error: txError } = await supabase
@@ -495,6 +535,8 @@ export default function PurchaseOrderDetailPage({
           remarks: `발주서 ${poNo} 입고처리 (격리재고 적치)`,
           created_by: userId || null,
           created_at: now,
+          warehouse_id: warehouseId,
+          inventory_id: inventoryIdForTx,
         })
 
       if (txError) {
@@ -502,7 +544,11 @@ export default function PurchaseOrderDetailPage({
         return
       }
 
-      const qcNo = makeQcNo()
+      const qcNo = await generateNextSerialDocNo(supabase, {
+        table: 'qc_requests',
+        column: 'qc_no',
+        code: 'QC',
+      })
 
       const { error: qcInsertError } = await supabase
         .from('qc_requests')
@@ -592,34 +638,22 @@ export default function PurchaseOrderDetailPage({
 
             <div className="erp-field">
               <label className="erp-label">공급처</label>
-              <select
-                value={customerId}
-                onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : '')}
-                className="erp-select"
-              >
-                <option value="">공급처 선택</option>
-                {customers.map((customer) => (
-                  <option key={customer.id} value={customer.id}>
-                    {customer.customer_name}
-                  </option>
-                ))}
-              </select>
+              <SearchableCombobox
+                value={customerId ? String(customerId) : ''}
+                onChange={(v) => setCustomerId(v ? Number(v) : '')}
+                options={customerOptions}
+                placeholder="공급처 선택"
+              />
             </div>
 
             <div className="erp-field">
               <label className="erp-label">작성자</label>
-              <select
+              <SearchableCombobox
                 value={userId}
-                onChange={(e) => setUserId(e.target.value)}
-                className="erp-select"
-              >
-                <option value="">작성자 선택</option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.user_name} / {user.login_id}
-                  </option>
-                ))}
-              </select>
+                onChange={setUserId}
+                options={userOptions}
+                placeholder="작성자 선택"
+              />
             </div>
 
             <div className="erp-field">
@@ -656,18 +690,12 @@ export default function PurchaseOrderDetailPage({
                 >
                   <div className="erp-field">
                     <label className="erp-label">품목</label>
-                    <select
-                      value={line.item_id}
-                      onChange={(e) => handleItemChange(index, e.target.value)}
-                      className="erp-select"
-                    >
-                      <option value="">품목 선택</option>
-                      {items.map((item) => (
-                        <option key={item.id} value={item.id}>
-                          {item.item_code} / {item.item_name}
-                        </option>
-                      ))}
-                    </select>
+                    <SearchableCombobox
+                      value={line.item_id ? String(line.item_id) : ''}
+                      onChange={(v) => handleItemChange(index, v)}
+                      options={itemOptions}
+                      placeholder="품목 선택"
+                    />
                   </div>
 
                   <div className="erp-field">

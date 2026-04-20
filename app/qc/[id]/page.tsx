@@ -35,6 +35,7 @@ type Item = {
 type InventoryRow = {
   id: number
   item_id: number
+  warehouse_id: number
   current_qty: number
   available_qty: number
   quarantine_qty: number
@@ -65,25 +66,6 @@ function getSourceLabel(sourceTable: string | null, sourceId: number | null) {
   }
 
   return `${sourceTable} / ${sourceId}`
-}
-
-function getQcStatusLabel(status: string) {
-  switch (status) {
-    case 'requested':
-      return '의뢰됨'
-    case 'received':
-      return '접수됨'
-    case 'testing':
-      return '시험중'
-    case 'pass':
-      return '합격'
-    case 'fail':
-      return '불합격'
-    case 'hold':
-      return '보류'
-    default:
-      return status
-  }
 }
 
 function getResultStatusLabel(status: string) {
@@ -278,10 +260,23 @@ export default function QcDetailPage({
       throw new Error('원자재 QC 합격 처리에는 검사 수량이 필요합니다.')
     }
 
+    const { data: defaultWarehouse } = await supabase
+      .from('warehouses')
+      .select('id')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    const warehouseId = defaultWarehouse?.id
+    if (!warehouseId) {
+      throw new Error('활성 창고가 없어 재고 전환을 진행할 수 없습니다.')
+    }
+
     const { data: inventoryData, error: inventoryError } = await supabase
       .from('inventory')
-      .select('id, item_id, current_qty, available_qty, quarantine_qty')
+      .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty')
       .eq('item_id', qc.item_id)
+      .eq('warehouse_id', warehouseId)
       .single()
 
     if (inventoryError || !inventoryData) {
@@ -334,6 +329,8 @@ export default function QcDetailPage({
         remarks: `원자재 QC 합격으로 격리재고 해제 (available +${releaseQty}, quarantine -${releaseQty})`,
         created_by: user?.id ?? null,
         created_at: now,
+        warehouse_id: warehouseId,
+        inventory_id: inventory.id,
       })
 
     if (txError) {

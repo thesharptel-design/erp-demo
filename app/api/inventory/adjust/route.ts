@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { hasManagePermission } from '@/lib/permissions'
 
 type AdjustmentType =
   | 'available_increase'
@@ -9,9 +10,13 @@ type AdjustmentType =
 
 type RequestBody = {
   item_id: number
+  warehouse_id: number
   adjustment_type: AdjustmentType
   qty: number
   remarks: string
+  lot_no?: string | null
+  exp_date?: string | null
+  serial_no?: string | null
 }
 
 function isValidAdjustmentType(value: string): value is AdjustmentType {
@@ -66,6 +71,8 @@ export async function POST(request: NextRequest) {
       .select(`
         id,
         role_name,
+        can_material_manage,
+        can_production_manage,
         can_receive_stock,
         can_manage_permissions,
         can_qc_manage
@@ -81,12 +88,9 @@ export async function POST(request: NextRequest) {
     }
 
     const canAdjustInventory =
-      currentAppUser.role_name === 'admin' ||
-      currentAppUser.role_name === 'purchase' ||
-      currentAppUser.role_name === 'production' ||
-      currentAppUser.can_receive_stock === true ||
-      currentAppUser.can_manage_permissions === true ||
-      currentAppUser.can_qc_manage === true
+      hasManagePermission(currentAppUser, 'can_material_manage') ||
+      hasManagePermission(currentAppUser, 'can_production_manage') ||
+      hasManagePermission(currentAppUser, 'can_qc_manage')
 
     if (!canAdjustInventory) {
       return NextResponse.json(
@@ -100,6 +104,12 @@ export async function POST(request: NextRequest) {
     if (!body.item_id || Number(body.item_id) <= 0) {
       return NextResponse.json(
         { error: '조정 대상 품목이 올바르지 않습니다.' },
+        { status: 400 }
+      )
+    }
+    if (!body.warehouse_id || Number(body.warehouse_id) <= 0) {
+      return NextResponse.json(
+        { error: '조정 대상 창고가 올바르지 않습니다.' },
         { status: 400 }
       )
     }
@@ -128,8 +138,12 @@ export async function POST(request: NextRequest) {
 
     const { data: inventoryRow, error: inventorySelectError } = await adminClient
       .from('inventory')
-      .select('id, item_id, current_qty, available_qty, quarantine_qty')
+      .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty, lot_no, exp_date, serial_no')
       .eq('item_id', body.item_id)
+      .eq('warehouse_id', body.warehouse_id)
+      .is('lot_no', body.lot_no ?? null)
+      .is('exp_date', body.exp_date ?? null)
+      .is('serial_no', body.serial_no ?? null)
       .maybeSingle()
 
     if (inventorySelectError) {
@@ -206,15 +220,21 @@ export async function POST(request: NextRequest) {
         )
       }
     } else {
-      const { error: insertError } = await adminClient
+      const { data: insertedInventory, error: insertError } = await adminClient
         .from('inventory')
         .insert({
           item_id: body.item_id,
+          warehouse_id: body.warehouse_id,
+          lot_no: body.lot_no ?? null,
+          exp_date: body.exp_date ?? null,
+          serial_no: body.serial_no ?? null,
           current_qty: nextCurrentQty,
           available_qty: nextAvailableQty,
           quarantine_qty: nextQuarantineQty,
           updated_at: now,
         })
+        .select('id')
+        .single()
 
       if (insertError) {
         return NextResponse.json(
@@ -222,6 +242,7 @@ export async function POST(request: NextRequest) {
           { status: 500 }
         )
       }
+      inventoryId = insertedInventory?.id ?? null
     }
 
     const adjustTypeLabelMap: Record<AdjustmentType, string> = {
@@ -238,6 +259,11 @@ export async function POST(request: NextRequest) {
         trans_type: 'ADJUST',
         item_id: body.item_id,
         qty,
+        warehouse_id: body.warehouse_id,
+        inventory_id: inventoryId,
+        lot_no: body.lot_no ?? null,
+        exp_date: body.exp_date ?? null,
+        serial_no: body.serial_no ?? null,
         ref_table: 'inventory_adjustments',
         ref_id: null,
         remarks: `[${adjustTypeLabelMap[body.adjustment_type]}] ${body.remarks.trim()}`,

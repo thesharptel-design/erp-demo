@@ -6,12 +6,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "lint:ci": "eslint app/api/auth/login-audit/route.ts app/admin/login-audit/page.tsx app/admin/warehouses/page.tsx app/admin/coa-files/page.tsx lib/approval-roles.ts lib/approval-participants.ts lib/document-access.ts lib/employee-no.ts lib/login-audit.ts lib/approval-participants.test.ts lib/document-access.test.ts lib/employee-no.test.ts lib/approval-status.test.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.103.3",
-    "next": "16.2.2",
+    "next": "^16.2.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "xlsx": "^0.18.5"
@@ -24,6 +27,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   }
 }

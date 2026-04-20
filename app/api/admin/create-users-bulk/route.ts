@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { generateEmployeeNoWithRetry } from '@/lib/employee-no'
+import { hasManagePermission } from '@/lib/permissions'
 
 type RoleName =
   | 'admin'
@@ -17,13 +19,18 @@ type BulkCreateRow = {
   password: string
   role_name: string
   is_active: string
+  can_manage_master: string
+  can_sales_manage: string
+  can_material_manage: string
+  can_production_manage: string
+  can_qc_manage: string
+  can_admin_manage: string
+  can_manage_permissions: string
   can_quote_create: string
   can_po_create: string
   can_receive_stock: string
   can_prod_complete: string
   can_approve: string
-  can_manage_permissions: string
-  can_qc_manage: string
 }
 
 function isValidRoleName(roleName: string): roleName is RoleName {
@@ -35,6 +42,37 @@ function isValidRoleName(roleName: string): roleName is RoleName {
 function parseBoolean(value: string) {
   const normalized = String(value ?? '').trim().toLowerCase()
   return ['true', '1', 'y', 'yes'].includes(normalized)
+}
+
+function normalizeBulkPermissions(row: BulkCreateRow) {
+  const canSalesManage =
+    parseBoolean(row.can_sales_manage) || parseBoolean(row.can_po_create) || parseBoolean(row.can_quote_create)
+  const canMaterialManage =
+    parseBoolean(row.can_material_manage) || parseBoolean(row.can_receive_stock)
+  const canProductionManage =
+    parseBoolean(row.can_production_manage) || parseBoolean(row.can_prod_complete)
+  const canQcManage =
+    parseBoolean(row.can_qc_manage) || parseBoolean(row.can_approve)
+  const canAdminManage =
+    parseBoolean(row.can_admin_manage) || parseBoolean(row.can_manage_permissions)
+  const canManageMaster = parseBoolean(row.can_manage_master)
+  const canManagePermissions = parseBoolean(row.can_manage_permissions)
+
+  return {
+    can_manage_master: canManageMaster,
+    can_sales_manage: canSalesManage,
+    can_material_manage: canMaterialManage,
+    can_production_manage: canProductionManage,
+    can_qc_manage: canQcManage,
+    can_admin_manage: canAdminManage,
+    can_manage_permissions: canManagePermissions,
+    // legacy fallback columns
+    can_quote_create: canSalesManage,
+    can_po_create: canSalesManage,
+    can_receive_stock: canMaterialManage,
+    can_prod_complete: canProductionManage,
+    can_approve: canQcManage,
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -80,17 +118,14 @@ export async function POST(request: NextRequest) {
 
     const { data: currentAppUser, error: currentAppUserError } = await adminClient
       .from('app_users')
-      .select('id, role_name, can_manage_permissions')
+      .select('id, role_name, can_manage_permissions, can_admin_manage')
       .eq('email', currentUser.email)
       .single()
 
     if (
       currentAppUserError ||
       !currentAppUser ||
-      !(
-        currentAppUser.role_name === 'admin' ||
-        currentAppUser.can_manage_permissions === true
-      )
+      !hasManagePermission(currentAppUser, 'can_manage_permissions')
     ) {
       return NextResponse.json(
         { error: '사용자 생성 권한이 없습니다.' },
@@ -208,23 +243,32 @@ export async function POST(request: NextRequest) {
 
         const newUserId = createdAuthUser.user.id
 
-        const { error: insertAppUserError } = await adminClient
-          .from('app_users')
-          .insert({
+        let insertAppUserError: { message?: string } | null = null
+        for (let insertAttempt = 0; insertAttempt < 5; insertAttempt += 1) {
+          const employeeNo = await generateEmployeeNoWithRetry(adminClient)
+          const normalizedPermissions = normalizeBulkPermissions(row)
+          const { error } = await adminClient.from('app_users').insert({
             id: newUserId,
             login_id: loginId,
             user_name: userName,
             role_name: roleName,
             email,
+            employee_no: employeeNo,
             is_active: parseBoolean(row.is_active),
-            can_quote_create: parseBoolean(row.can_quote_create),
-            can_po_create: parseBoolean(row.can_po_create),
-            can_receive_stock: parseBoolean(row.can_receive_stock),
-            can_prod_complete: parseBoolean(row.can_prod_complete),
-            can_approve: parseBoolean(row.can_approve),
-            can_manage_permissions: parseBoolean(row.can_manage_permissions),
-            can_qc_manage: parseBoolean(row.can_qc_manage),
+            ...normalizedPermissions,
           })
+
+          if (!error) {
+            insertAppUserError = null
+            break
+          }
+
+          insertAppUserError = error
+          if (String(error.message ?? '').toLowerCase().includes('employee_no')) {
+            continue
+          }
+          break
+        }
 
         if (insertAppUserError) {
           await adminClient.auth.admin.deleteUser(newUserId)

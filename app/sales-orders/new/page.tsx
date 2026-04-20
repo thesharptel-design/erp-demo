@@ -3,6 +3,7 @@
 import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
 
 function OutboundEntryForm() {
   const router = useRouter()
@@ -21,7 +22,7 @@ function OutboundEntryForm() {
   const fetchSalesOrderData = async (id: string) => {
     setLoading(true)
     // 1. 수주 마스터 및 상세 품목 조인해서 가져오기
-    const { data: items, error } = await supabase
+    const { data: items } = await supabase
       .from('sales_order_items')
       .select('*, items(*), sales_orders(*, customers(*))')
       .eq('so_id', id)
@@ -55,7 +56,11 @@ function OutboundEntryForm() {
     if (rows.length === 0) return alert('출고할 품목이 없습니다.')
     setLoading(true)
     try {
-      const outboundNo = `OUT-${new Date().toISOString().slice(2, 10).replace(/-/g, '')}-${Math.floor(Math.random() * 1000)}`
+      const outboundNo = await generateNextSerialDocNo(supabase, {
+        table: 'outbound_orders',
+        column: 'outbound_no',
+        code: 'OUT',
+      })
 
       // 1. 출고 마스터 저장
       const { data: out, error: outErr } = await supabase.from('outbound_orders').insert({

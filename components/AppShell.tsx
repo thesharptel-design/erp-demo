@@ -18,6 +18,16 @@ export default function AppShell({ children }: Props) {
   const [isLoading, setIsLoading] = useState(true)
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [sessionId, setSessionId] = useState<string>('')
+
+  const getOrCreateSessionId = (userId: string) => {
+    const key = `erp-active-session:${userId}`
+    const existing = window.sessionStorage.getItem(key)
+    if (existing) return existing
+    const next = `sid-${userId}-${crypto.randomUUID()}`
+    window.sessionStorage.setItem(key, next)
+    return next
+  }
 
   useEffect(() => {
     let mounted = true
@@ -30,6 +40,7 @@ export default function AppShell({ children }: Props) {
       if (!mounted) return
 
       setIsLoggedIn(!!session?.user)
+      if (session?.user?.id) setSessionId(getOrCreateSessionId(session.user.id))
       setIsLoading(false)
     }
 
@@ -40,6 +51,7 @@ export default function AppShell({ children }: Props) {
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return
       setIsLoggedIn(!!session?.user)
+      if (session?.user?.id) setSessionId(getOrCreateSessionId(session.user.id))
       setIsLoading(false)
     })
 
@@ -65,6 +77,58 @@ export default function AppShell({ children }: Props) {
   useEffect(() => {
     setMobileMenuOpen(false)
   }, [pathname])
+
+  useEffect(() => {
+    if (isLoading || !isLoggedIn || !sessionId) return
+
+    let disposed = false
+    let timer: ReturnType<typeof setInterval> | null = null
+
+    const sendHeartbeat = async (isOnline = true, keepalive = false) => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      if (!session?.access_token || disposed) return
+      await fetch('/api/auth/session-heartbeat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        keepalive,
+        body: JSON.stringify({
+          sessionId,
+          currentPath: pathname || '/',
+          isOnline,
+        }),
+      }).catch(() => undefined)
+    }
+
+    void sendHeartbeat(true)
+    timer = setInterval(() => {
+      void sendHeartbeat(true)
+    }, 20000)
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void sendHeartbeat(true)
+      }
+    }
+    const onPageHide = () => {
+      void sendHeartbeat(false, true)
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('pagehide', onPageHide)
+    window.addEventListener('beforeunload', onPageHide)
+    return () => {
+      disposed = true
+      if (timer) clearInterval(timer)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('pagehide', onPageHide)
+      window.removeEventListener('beforeunload', onPageHide)
+    }
+  }, [isLoading, isLoggedIn, sessionId, pathname])
 
   if (pathname === '/login') {
     return <>{children}</>

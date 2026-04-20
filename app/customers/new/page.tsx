@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import SearchableCombobox from '@/components/SearchableCombobox'
 
 type SupabaseInsertError = {
   code?: string
@@ -36,6 +37,11 @@ export default function NewCustomerPage() {
   
   const [isSaving, setIsSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
+  const customerTypeOptions = [
+    { value: 'sales', label: '매출처' },
+    { value: 'purchase', label: '매입처' },
+    { value: 'both', label: '겸용' },
+  ]
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -82,7 +88,7 @@ export default function NewCustomerPage() {
       router.push('/customers')
       router.refresh()
 
-    } catch (err) {
+    } catch {
       setErrorMessage('예상치 못한 오류가 발생했습니다.');
       setIsSaving(false);
     }
@@ -112,11 +118,12 @@ export default function NewCustomerPage() {
 
           <div>
             <label className="mb-2 block text-sm font-bold text-gray-700">거래처구분</label>
-            <select value={customerType} onChange={(e) => setCustomerType(e.target.value)} className="w-full rounded-xl border border-gray-300 px-4 py-3 font-medium outline-none focus:border-black transition-all">
-              <option value="sales">매출처</option>
-              <option value="purchase">매입처</option>
-              <option value="both">겸용</option>
-            </select>
+            <SearchableCombobox
+              value={customerType}
+              onChange={setCustomerType}
+              options={customerTypeOptions}
+              placeholder="거래처구분 선택"
+            />
           </div>
 
           <div>

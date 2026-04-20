@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import SearchableCombobox from '@/components/SearchableCombobox'
 
 type SupabaseInsertError = {
   code?: string
@@ -46,8 +47,8 @@ export default function NewItemPage() {
   const [itemSpec, setItemSpec] = useState('')
   const [unit, setUnit] = useState('EA')
   const [itemType, setItemType] = useState('finished')
-  const [salesPrice, setSalesPrice] = useState('0')
-  const [purchasePrice, setPurchasePrice] = useState('0')
+  const [salesPrice] = useState('0')
+  const [purchasePrice] = useState('0')
   const [safetyStockQty, setSafetyStockQty] = useState('0')
   
   const [isLotManaged, setIsLotManaged] = useState(false)
@@ -56,6 +57,11 @@ export default function NewItemPage() {
 
   const [isSaving, setIsSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
+  const itemTypeOptions = [
+    { value: 'finished', label: '완제품' },
+    { value: 'raw_material', label: '원재료' },
+    { value: 'sub_material', label: '부자재' },
+  ]
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -106,7 +112,7 @@ export default function NewItemPage() {
       router.push('/items')
       router.refresh()
 
-    } catch (err) {
+    } catch {
       setErrorMessage('예상치 못한 오류가 발생했습니다.');
       setIsSaving(false);
     }
@@ -146,11 +152,12 @@ export default function NewItemPage() {
 
           <div>
             <label className="mb-2 block text-sm font-bold text-gray-700">품목유형</label>
-            <select value={itemType} onChange={(e) => setItemType(e.target.value)} className="w-full rounded-xl border border-gray-300 px-4 py-3 font-medium focus:border-black transition-all">
-              <option value="finished">완제품</option>
-              <option value="raw_material">원재료</option>
-              <option value="sub_material">부자재</option>
-            </select>
+            <SearchableCombobox
+              value={itemType}
+              onChange={setItemType}
+              options={itemTypeOptions}
+              placeholder="품목유형 선택"
+            />
           </div>
 
           <div>

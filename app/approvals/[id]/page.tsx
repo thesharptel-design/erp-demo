@@ -1,7 +1,9 @@
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
-import { supabase } from '@/lib/supabase'
+import { notFound, redirect } from 'next/navigation'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import { createServerSupabaseClient } from '@/lib/supabase/server'
 import ApprovalActionButtons from '@/components/ApprovalActionButtons'
+import { getApprovalRoleLabel } from '@/lib/approval-roles'
 
 // --- 타입 정의 ---
 type ApprovalDoc = {
@@ -45,9 +47,29 @@ function getActionLabel(actionType: string) {
 
 function getRoleName(role: string) {
   if (role === 'drafter') return '기안자';
-  if (role === 'review' || role === 'reviewer') return '검토자';
-  if (role === 'approve' || role === 'approver') return '결재자';
-  return role;
+  return getApprovalRoleLabel(role);
+}
+
+function getIsAdmin(users: any[], currentUserId: string | null) {
+  if (!currentUserId) return false
+  const currentUserProfile = users.find((u: any) => u.id === currentUserId)
+  return String(currentUserProfile?.role_name || '').toLowerCase() === 'admin'
+}
+
+function canViewDoc(params: {
+  isAdmin: boolean
+  currentUserId: string | null
+  writerId: string
+  lines: any[]
+  participants: any[]
+}) {
+  const { isAdmin, currentUserId, writerId, lines, participants } = params
+  if (isAdmin) return true
+  if (!currentUserId) return false
+  if (writerId === currentUserId) return true
+  if (lines.some((l: any) => l.approver_id === currentUserId)) return true
+  if (participants.some((p: any) => p.user_id === currentUserId)) return true
+  return false
 }
 
 function getDetailLineStatus(role: string, status: string) {
@@ -59,13 +81,12 @@ function getDetailLineStatus(role: string, status: string) {
 }
 
 // --- 데이터 로직 ---
-async function getApprovalDetail(id: string) {
+async function getApprovalDetail(supabase: SupabaseClient, id: string) {
   const docId = Number(id)
   if (Number.isNaN(docId)) return null
 
-  // 🌟 서버 측에서 세션 ID를 미리 가져옵니다.
-  const { data: { session } } = await supabase.auth.getSession();
-  const currentUserId = session?.user?.id || null;
+  const { data: { user } } = await supabase.auth.getUser()
+  const currentUserId = user?.id ?? null
 
   const [
     { data: doc, error: docError },
@@ -73,18 +94,27 @@ async function getApprovalDetail(id: string) {
     { data: departments },
     { data: lines },
     { data: histories },
+    { data: participants },
   ] = await Promise.all([
     supabase.from('approval_docs').select('*').eq('id', docId).single(),
     supabase.from('app_users').select('*'), // 🌟 role 확인을 위해 전체 필드 선택
     supabase.from('departments').select('id, dept_name'),
     supabase.from('approval_lines').select('*').eq('approval_doc_id', docId).order('line_no'),
     supabase.from('approval_histories').select('*').eq('approval_doc_id', docId).order('action_at'),
+    supabase.from('approval_participants').select('user_id, role').eq('approval_doc_id', docId),
   ])
 
   if (docError) return null
 
-  // 현재 사용자의 Role 정보를 찾습니다.
-  const currentUserProfile = users?.find((u: any) => u.id === currentUserId);
+  const isAdmin = getIsAdmin(users ?? [], currentUserId)
+  const canView = canViewDoc({
+    isAdmin,
+    currentUserId,
+    writerId: (doc as ApprovalDoc).writer_id,
+    lines: lines ?? [],
+    participants: participants ?? [],
+  })
+  if (!canView) return null
 
   return {
     doc: doc as ApprovalDoc,
@@ -93,17 +123,28 @@ async function getApprovalDetail(id: string) {
     lines: lines ?? [],
     histories: histories ?? [],
     currentUserId,
-    currentUserRole: currentUserProfile?.role || 'user'
+    currentUserRole: isAdmin ? 'admin' : 'user'
   }
 }
 
 export default async function ApprovalDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const supabase = await createServerSupabaseClient()
   const { id } = await params
-  const result = await getApprovalDetail(id)
+  const docId = Number(id)
+  if (Number.isNaN(docId)) notFound()
+
+  const { data: head } = await supabase.from('approval_docs').select('id, doc_type').eq('id', docId).single()
+  if (!head) notFound()
+  if (head.doc_type === 'outbound_request') {
+    const { data: req } = await supabase.from('outbound_requests').select('id').eq('approval_doc_id', docId).maybeSingle()
+    if (req?.id != null) redirect(`/outbound-requests/${req.id}`)
+  }
+
+  const result = await getApprovalDetail(supabase, id)
 
   if (!result) notFound()
 
-  const { doc, users, departments, lines, histories, currentUserId, currentUserRole } = result
+  const { doc, users, departments, lines, histories } = result
 
   const userMap = new Map(users.map((u: any) => [u.id, u.user_name]))
   const deptMap = new Map(departments.map((d: any) => [d.id, d.dept_name]))

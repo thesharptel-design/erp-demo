@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import SearchableCombobox from '@/components/SearchableCombobox';
 
 export default function ItemEditPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
@@ -26,6 +27,11 @@ export default function ItemEditPage({ params }: { params: Promise<{ id: string 
   const [isExpManaged, setIsExpManaged] = useState(false);
   const [isSnManaged, setIsSnManaged] = useState(false);
   const [isActive, setIsActive] = useState(true);
+  const itemTypeOptions = [
+    { value: 'finished', label: '완제품' },
+    { value: 'raw_material', label: '원재료' },
+    { value: 'sub_material', label: '부자재' },
+  ];
 
   // 1. 기존 데이터 불러오기
   useEffect(() => {
@@ -129,11 +135,12 @@ export default function ItemEditPage({ params }: { params: Promise<{ id: string 
           </div>
           <div>
             <label className="mb-2 block text-sm font-bold text-gray-700">품목유형</label>
-            <select value={itemType} onChange={(e) => setItemType(e.target.value)} className="w-full rounded-xl border border-gray-300 px-4 py-3 font-medium focus:border-black outline-none transition-all">
-              <option value="finished">완제품</option>
-              <option value="raw_material">원재료</option>
-              <option value="sub_material">부자재</option>
-            </select>
+            <SearchableCombobox
+              value={itemType}
+              onChange={setItemType}
+              options={itemTypeOptions}
+              placeholder="품목유형 선택"
+            />
           </div>
           <div>
             <label className="mb-2 block text-sm font-bold text-gray-700">안전재고</label>

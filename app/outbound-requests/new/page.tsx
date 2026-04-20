@@ -1,9 +1,12 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { generateNextDroDocNo } from '@/lib/approval-doc-no';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+import { APPROVAL_ROLES, getApprovalRoleLabel } from '@/lib/approval-roles';
+import { buildApprovalLines, buildApprovalParticipantsRows, normalizeParticipants } from '@/lib/approval-participants';
+import SearchableCombobox from '@/components/SearchableCombobox';
 
 export default function NewOutboundPage() {
   const router = useRouter();
@@ -12,13 +15,28 @@ export default function NewOutboundPage() {
   const [userProfile, setUserProfile] = useState<any>(null); 
   const [items, setItems] = useState<any[]>([]); 
   const [appUsers, setAppUsers] = useState<any[]>([]);
+  const [warehouses, setWarehouses] = useState<any[]>([]);
 
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [selectedItems, setSelectedItems] = useState([{ item_id: '', quantity: 1 }]);
+  const [itemSearchKeyword, setItemSearchKeyword] = useState('');
   
-  const [reviewers, setReviewers] = useState<string[]>(['']); 
-  const [approvers, setApprovers] = useState<string[]>(['']); 
+  const [warehouseId, setWarehouseId] = useState('');
+  const [roleAssignees, setRoleAssignees] = useState<Record<string, string[]>>({
+    reviewer: [''],
+    pre_cooperator: [''],
+    final_approver: [''],
+    post_cooperator: [''],
+    reference: [''],
+  });
+  const [roleSearches, setRoleSearches] = useState<Record<string, string>>({
+    reviewer: '',
+    pre_cooperator: '',
+    final_approver: '',
+    post_cooperator: '',
+    reference: '',
+  });
 
   const getDeptName = (id: number) => {
     const depts: any = {
@@ -26,6 +44,40 @@ export default function NewOutboundPage() {
     };
     return depts[id] || '미소속';
   };
+
+  const filteredUsersByRole = useMemo(
+    () =>
+      APPROVAL_ROLES.reduce<Record<string, any[]>>((acc, role) => {
+        const keyword = (roleSearches[role] ?? '').trim().toLowerCase();
+        acc[role] = appUsers.filter((u) => {
+          if (!keyword) return true;
+          return (
+            String(u.user_name ?? '').toLowerCase().includes(keyword) ||
+            String(u.role_name ?? '').toLowerCase().includes(keyword) ||
+            String(getDeptName(u.dept_id)).toLowerCase().includes(keyword)
+          );
+        });
+        return acc;
+      }, {}),
+    [appUsers, roleSearches]
+  );
+  const filteredItems = useMemo(() => {
+    const keyword = itemSearchKeyword.trim().toLowerCase();
+    if (!keyword) return items;
+    return items.filter((item) =>
+      String(item.item_code ?? '').toLowerCase().includes(keyword) ||
+      String(item.item_name ?? '').toLowerCase().includes(keyword)
+    );
+  }, [items, itemSearchKeyword]);
+  const itemOptions = useMemo(
+    () =>
+      filteredItems.map((item) => ({
+        value: String(item.id),
+        label: `[${item.item_code}] ${item.item_name}`,
+        keywords: [item.item_code, item.item_name],
+      })),
+    [filteredItems]
+  );
 
   useEffect(() => {
     const initData = async () => {
@@ -38,6 +90,13 @@ export default function NewOutboundPage() {
       setItems(itemsData || []);
       const { data: usersData } = await supabase.from('app_users').select('id, user_name, role_name, dept_id').neq('id', user?.id || '');
       setAppUsers(usersData || []);
+      const { data: warehouseData } = await supabase
+        .from('warehouses')
+        .select('id, name, is_active, sort_order')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true });
+      setWarehouses(warehouseData || []);
+      if (warehouseData?.[0]?.id) setWarehouseId(String(warehouseData[0].id));
     };
     initData();
   }, []);
@@ -45,36 +104,25 @@ export default function NewOutboundPage() {
   const addItemRow = () => setSelectedItems([...selectedItems, { item_id: '', quantity: 1 }]);
   const removeItemRow = (index: number) => setSelectedItems(selectedItems.filter((_, i) => i !== index));
 
-  const addReviewer = () => setReviewers([...reviewers, '']);
-  const removeReviewer = (index: number) => setReviewers(reviewers.filter((_, i) => i !== index));
-  const updateReviewer = (index: number, val: string) => {
-    const newArr = [...reviewers]; newArr[index] = val; setReviewers(newArr);
-  };
-
-  const addApprover = () => setApprovers([...approvers, '']);
-  const removeApprover = (index: number) => setApprovers(approvers.filter((_, i) => i !== index));
-  const updateApprover = (index: number, val: string) => {
-    const newArr = [...approvers]; newArr[index] = val; setApprovers(newArr);
-  };
-
-  const generateDocNo = (prefix: string) => {
-    const today = new Date();
-    const dateStr = today.getFullYear() + String(today.getMonth() + 1).padStart(2, '0') + String(today.getDate()).padStart(2, '0');
-    const randomStr = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-    return `${prefix}-${dateStr}-${randomStr}`;
-  };
-
   const handleSave = async (isSubmit: boolean) => {
-    const validReviewers = reviewers.filter(id => id.trim() !== '');
-    const validApprovers = approvers.filter(id => id.trim() !== '');
+    const participants = normalizeParticipants(
+      APPROVAL_ROLES.flatMap((role) =>
+        (roleAssignees[role] ?? []).map((userId) => ({ role, userId }))
+      )
+    )
 
     if (!title) return alert('기안 제목을 입력하세요.');
-    if (isSubmit && validApprovers.length === 0) return alert('최종 결재자를 최소 1명 지정하세요.');
+    if (!warehouseId) return alert('출고 창고를 선택하세요.');
+    if (!userProfile?.id) return alert('사용자 정보가 없어 저장할 수 없습니다.');
+    if (userProfile?.dept_id === null || userProfile?.dept_id === undefined) {
+      return alert('작성자 부서 정보가 없어 저장할 수 없습니다.');
+    }
+    if (isSubmit && !roleAssignees.final_approver.some((id) => id.trim())) return alert('최종 결재자를 지정하세요.');
 
     setLoading(true);
     try {
       // 1. [STEP 1] 결재 마스터 (approval_docs)
-      const docNo = generateDocNo('APP');
+      const docNo = await generateNextDroDocNo(supabase);
       const { data: doc, error: docError } = await supabase
         .from('approval_docs')
         .insert([{
@@ -93,40 +141,23 @@ export default function NewOutboundPage() {
       if (docError) throw new Error(`[결재마스터 에러] ${docError.message}`);
 
       // 🌟 2. [STEP 2] 결재선 (approval_lines) 핵심 버그 수정!!
-      const lines = [];
-      let step = 1;
+      const linesToInsert = buildApprovalLines(doc.id, participants).map((line) => ({
+        ...line,
+        status: isSubmit ? line.status : 'waiting',
+      }));
+      const participantRows = buildApprovalParticipantsRows(doc.id, participants);
 
-      for (const id of validReviewers) {
-        lines.push({ 
-          approval_doc_id: doc.id, 
-          approver_id: id, 
-          line_no: step, 
-          approver_role: 'review',
-          // 🌟 여기가 핵심입니다! 상신 시 1번 타자에게만 'pending'(지금 네 차례야!) 부여
-          status: (isSubmit && step === 1) ? 'pending' : 'waiting' 
-        });
-        step++;
-      }
-      
-      for (const id of validApprovers) {
-        lines.push({ 
-          approval_doc_id: doc.id, 
-          approver_id: id, 
-          line_no: step, 
-          approver_role: 'approve', 
-          // 🌟 검토자가 없고 바로 결재자일 수도 있으니 여기도 동일 로직 적용
-          status: (isSubmit && step === 1) ? 'pending' : 'waiting'
-        });
-        step++;
-      }
-
-      if (lines.length > 0) {
-        const { error: lineError } = await supabase.from('approval_lines').insert(lines);
+      if (linesToInsert.length > 0) {
+        const { error: lineError } = await supabase.from('approval_lines').insert(linesToInsert);
         if (lineError) throw new Error(`[결재선 에러] ${lineError.message}`);
+      }
+      if (participantRows.length > 0) {
+        const { error: participantError } = await supabase.from('approval_participants').insert(participantRows);
+        if (participantError) throw new Error(`[참여자 에러] ${participantError.message}`);
       }
 
       // 3. [STEP 3] 출고 요청서 본문 (outbound_requests)
-      const reqNo = generateDocNo('REQ');
+      const reqNo = docNo;
       const { data: req, error: reqError } = await supabase
         .from('outbound_requests')
         .insert([{ 
@@ -134,6 +165,7 @@ export default function NewOutboundPage() {
           requester_id: userProfile.id,
           purpose: description,
           approval_doc_id: doc.id,
+          warehouse_id: Number(warehouseId),
           status: isSubmit ? 'submitted' : 'draft'
         }])
         .select().single();
@@ -163,7 +195,7 @@ export default function NewOutboundPage() {
 
       // 모든 과정 성공!
       alert(isSubmit ? '상신 완료!' : '저장 완료!');
-      router.push('/outbound-requests'); // 🌟 상신 완료 후 출고 요청 목록으로 보내는 게 자연스럽습니다
+      router.push('/approvals');
       
     } catch (err: any) {
       console.error(err);
@@ -200,6 +232,13 @@ export default function NewOutboundPage() {
             <h3 className="text-sm font-bold text-gray-700 mb-3">문서 정보</h3>
             <input type="text" placeholder="기안 제목을 입력하세요" className="w-full p-2.5 border border-gray-300 rounded mb-3 text-sm focus:border-blue-500 outline-none transition-shadow" value={title} onChange={e => setTitle(e.target.value)} />
             <textarea placeholder="요청 사유 상세" rows={4} className="w-full p-2.5 border border-gray-300 rounded text-sm focus:border-blue-500 outline-none resize-none transition-shadow" value={description} onChange={e => setDescription(e.target.value)} />
+            <SearchableCombobox
+              className="mt-3"
+              value={warehouseId}
+              onChange={setWarehouseId}
+              options={warehouses.map((wh) => ({ value: String(wh.id), label: wh.name, keywords: [wh.name] }))}
+              placeholder="출고 창고 선택..."
+            />
           </section>
 
           <section className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm">
@@ -209,6 +248,12 @@ export default function NewOutboundPage() {
                 + 품목 추가
               </button>
             </div>
+            <input
+              value={itemSearchKeyword}
+              onChange={(e) => setItemSearchKeyword(e.target.value)}
+              placeholder="품목 검색 (코드/명)"
+              className="mb-3 w-full rounded border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
+            />
             
             {/* 🌟 모바일 호환: 표(Table) 가로 스크롤 적용 구역 */}
             <div className="overflow-x-auto rounded-lg border border-gray-200">
@@ -224,12 +269,16 @@ export default function NewOutboundPage() {
                   {selectedItems.map((si, idx) => (
                     <tr key={idx} className="hover:bg-gray-50 transition-colors">
                       <td className="px-4 py-3">
-                        <select className="w-full p-2 border border-gray-300 rounded outline-none focus:border-blue-500 bg-white" value={si.item_id} onChange={e => {
-                          const newArr = [...selectedItems]; newArr[idx].item_id = e.target.value; setSelectedItems(newArr);
-                        }}>
-                          <option value="">품목 선택...</option>
-                          {items.map(i => <option key={i.id} value={i.id}>[{i.item_code}] {i.item_name}</option>)}
-                        </select>
+                        <SearchableCombobox
+                          value={String(si.item_id || '')}
+                          onChange={(nextValue) => {
+                            const newArr = [...selectedItems];
+                            newArr[idx].item_id = nextValue;
+                            setSelectedItems(newArr);
+                          }}
+                          options={itemOptions}
+                          placeholder="품목 선택..."
+                        />
                       </td>
                       <td className="px-4 py-3">
                         <input type="number" min="1" className="w-full p-2 border border-gray-300 rounded text-center outline-none focus:border-blue-500" value={si.quantity} onChange={e => {
@@ -261,35 +310,74 @@ export default function NewOutboundPage() {
                 </div>
               </div>
 
-              {/* 검토자 */}
-              {reviewers.map((id, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <div className="w-9 h-9 shrink-0 rounded bg-blue-50 flex items-center justify-center text-xs font-bold text-blue-500">검토</div>
-                  <select className="flex-1 border border-gray-300 rounded p-2 text-sm outline-none focus:border-blue-500 bg-white" value={id} onChange={e => updateReviewer(idx, e.target.value)}>
-                    <option value="">검토자 선택...</option>
-                    {appUsers.map(u => <option key={u.id} value={u.id}>{u.user_name} ({getDeptName(u.dept_id)})</option>)}
-                  </select>
-                  <button onClick={() => removeReviewer(idx)} className="text-gray-400 hover:text-red-500 font-bold px-1">✕</button>
+              {APPROVAL_ROLES.map((role) => (
+                <div key={role} className="space-y-1.5">
+                  <input
+                    value={roleSearches[role] ?? ''}
+                    onChange={(e) =>
+                      setRoleSearches((prev) => ({
+                        ...prev,
+                        [role]: e.target.value,
+                      }))
+                    }
+                    placeholder={`${getApprovalRoleLabel(role)} 검색 (이름/부서)`}
+                    className="w-full rounded border border-gray-200 px-3 py-1.5 text-xs text-gray-700 outline-none focus:border-blue-500"
+                  />
+                  {(roleAssignees[role] ?? ['']).map((assignee, idx) => (
+                    <div key={`${role}-${idx}`} className="flex items-center gap-2 pt-2">
+                      <div className="w-20 h-9 shrink-0 rounded bg-blue-50 flex items-center justify-center text-[10px] font-bold text-blue-700">
+                        {idx === 0 ? getApprovalRoleLabel(role) : `${getApprovalRoleLabel(role)} ${idx + 1}`}
+                      </div>
+                      <SearchableCombobox
+                        value={assignee}
+                        onChange={(nextValue) =>
+                          setRoleAssignees((prev) => {
+                            const next = [...(prev[role] ?? [''])]
+                            next[idx] = nextValue
+                            return { ...prev, [role]: next }
+                          })
+                        }
+                        options={(filteredUsersByRole[role] ?? []).map((u) => ({
+                          value: u.id,
+                          label: `${u.user_name} (${getDeptName(u.dept_id)})`,
+                          keywords: [u.user_name, getDeptName(u.dept_id), u.role_name ?? ''],
+                        }))}
+                        placeholder={role === 'final_approver' ? '필수 선택' : '선택 안 함'}
+                        className="flex-1"
+                      />
+                      {idx > 0 && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRoleAssignees((prev) => {
+                              const next = [...(prev[role] ?? [''])]
+                              next.splice(idx, 1)
+                              return { ...prev, [role]: next.length > 0 ? next : [''] }
+                            })
+                          }
+                          className="px-2 py-1 rounded border border-red-200 text-red-600 text-xs font-black"
+                        >
+                          삭제
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <div className="pl-[5.5rem]">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setRoleAssignees((prev) => ({
+                          ...prev,
+                          [role]: [...(prev[role] ?? ['']), ''],
+                        }))
+                      }
+                      className="px-2 py-1 rounded border border-dashed border-blue-300 text-blue-700 text-xs font-black"
+                    >
+                      + {getApprovalRoleLabel(role)} 추가
+                    </button>
+                  </div>
                 </div>
               ))}
-              <button onClick={addReviewer} className="w-full py-2 border border-dashed border-gray-300 rounded text-xs text-gray-500 hover:bg-gray-50 transition-colors font-medium">
-                + 검토 추가
-              </button>
-
-              {/* 결재자 */}
-              {approvers.map((id, idx) => (
-                <div key={idx} className="flex items-center gap-2 pt-2">
-                  <div className="w-9 h-9 shrink-0 rounded bg-blue-600 flex items-center justify-center text-xs font-bold text-white">결재</div>
-                  <select className="flex-1 border border-gray-300 rounded p-2 text-sm outline-none focus:border-blue-500 bg-white" value={id} onChange={e => updateApprover(idx, e.target.value)}>
-                    <option value="">결재자 선택...</option>
-                    {appUsers.map(u => <option key={u.id} value={u.id}>{u.user_name} ({getDeptName(u.dept_id)})</option>)}
-                  </select>
-                  <button onClick={() => removeApprover(idx)} className="text-gray-400 hover:text-red-500 font-bold px-1">✕</button>
-                </div>
-              ))}
-              <button onClick={addApprover} className="w-full py-2 border border-dashed border-gray-300 rounded text-xs text-gray-500 hover:bg-gray-50 transition-colors font-medium">
-                + 결재 추가
-              </button>
             </div>
           </div>
         </aside>

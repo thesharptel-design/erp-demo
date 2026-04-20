@@ -4,7 +4,9 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { getCurrentUserPermissions } from '@/lib/permissions'
+import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
+import { getCurrentUserPermissions, hasManagePermission } from '@/lib/permissions'
+import SearchableCombobox from '@/components/SearchableCombobox'
 
 type Item = {
   id: number
@@ -53,6 +55,7 @@ type ProductionOrder = {
 type InventoryRow = {
   id: number
   item_id: number
+  warehouse_id: number
   current_qty: number
   available_qty: number | null
   quarantine_qty: number | null
@@ -140,18 +143,6 @@ function getQcStatusLabel(status: string) {
     default:
       return status
   }
-}
-
-function makeQcNo() {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = String(now.getMonth() + 1).padStart(2, '0')
-  const d = String(now.getDate()).padStart(2, '0')
-  const hh = String(now.getHours()).padStart(2, '0')
-  const mm = String(now.getMinutes()).padStart(2, '0')
-  const ss = String(now.getSeconds()).padStart(2, '0')
-
-  return `QC-${y}${m}${d}-${hh}${mm}${ss}`
 }
 
 export default function ProductionOrderDetailPage({
@@ -279,12 +270,8 @@ export default function ProductionOrderDetailPage({
         setBoms((bomsData as Bom[]) ?? [])
         setUsers((usersData as AppUser[]) ?? [])
 
-        setCanProdComplete(
-          permissions?.role_name === 'admin' || permissions?.can_prod_complete || false
-        )
-        setCanReceiveStock(
-          permissions?.role_name === 'admin' || permissions?.can_receive_stock || false
-        )
+        setCanProdComplete(hasManagePermission(permissions, 'can_production_manage'))
+        setCanReceiveStock(hasManagePermission(permissions, 'can_material_manage'))
 
         const qc = (qcData as QcRequestRow | null) ?? null
         setQcRequestId(qc?.id ?? null)
@@ -310,10 +297,34 @@ export default function ProductionOrderDetailPage({
     () => new Map(items.map((item) => [item.id, item])),
     [items]
   )
-
-  const filteredBoms = useMemo(
-    () => boms.filter((bom) => bom.parent_item_id === itemId),
+  const finishedItemOptions = useMemo(
+    () =>
+      items.map((item) => ({
+        value: String(item.id),
+        label: `${item.item_code} / ${item.item_name}`,
+        keywords: [item.item_code, item.item_name],
+      })),
+    [items]
+  )
+  const bomOptions = useMemo(
+    () =>
+      boms
+        .filter((bom) => bom.parent_item_id === itemId)
+        .map((bom) => ({
+        value: String(bom.id),
+        label: `${bom.bom_code} / 버전 ${bom.version_no}`,
+        keywords: [bom.bom_code, bom.version_no],
+      })),
     [boms, itemId]
+  )
+  const userOptions = useMemo(
+    () =>
+      users.map((user) => ({
+        value: user.id,
+        label: `${user.user_name} / ${user.login_id}`,
+        keywords: [user.user_name, user.login_id],
+      })),
+    [users]
   )
 
   const isCompleted = status === 'completed'
@@ -412,7 +423,11 @@ export default function ProductionOrderDetailPage({
     setSuccessMessage('')
     setActionMessage('')
 
-    const newQcNo = makeQcNo()
+    const newQcNo = await generateNextSerialDocNo(supabase, {
+      table: 'qc_requests',
+      column: 'qc_no',
+      code: 'QC',
+    })
 
     const { data, error } = await supabase
       .from('qc_requests')
@@ -589,6 +604,18 @@ export default function ProductionOrderDetailPage({
     setActionMessage('')
 
     const now = new Date().toISOString()
+    const { data: defaultWarehouse } = await supabase
+      .from('warehouses')
+      .select('id')
+      .eq('is_active', true)
+      .order('sort_order', { ascending: true })
+      .limit(1)
+      .maybeSingle()
+    const warehouseId = defaultWarehouse?.id
+    if (!warehouseId) {
+      setErrorMessage('활성 창고가 없어 입고처리를 진행할 수 없습니다.')
+      return
+    }
 
     const { data: bomItemsData, error: bomItemsError } = await supabase
       .from('bom_items')
@@ -608,8 +635,9 @@ export default function ProductionOrderDetailPage({
 
       const { data: inventoryRow, error: inventorySelectError } = await supabase
         .from('inventory')
-        .select('id, item_id, current_qty, available_qty, quarantine_qty')
+        .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty')
         .eq('item_id', bomItem.child_item_id)
+        .eq('warehouse_id', warehouseId)
         .maybeSingle()
 
       if (inventorySelectError) {
@@ -642,8 +670,9 @@ export default function ProductionOrderDetailPage({
 
       const { data: inventoryRow, error: inventorySelectError } = await supabase
         .from('inventory')
-        .select('id, item_id, current_qty, available_qty, quarantine_qty')
+        .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty')
         .eq('item_id', bomItem.child_item_id)
+        .eq('warehouse_id', warehouseId)
         .maybeSingle()
 
       if (inventorySelectError) {
@@ -691,6 +720,8 @@ export default function ProductionOrderDetailPage({
           remarks: `생산지시 ${prodNo} 자재출고`,
           created_by: userId || null,
           created_at: now,
+          warehouse_id: warehouseId,
+          inventory_id: materialInventory.id,
         })
 
       if (txError) {
@@ -701,8 +732,9 @@ export default function ProductionOrderDetailPage({
 
     const { data: finishedInventoryRow, error: finishedInventorySelectError } = await supabase
       .from('inventory')
-      .select('id, item_id, current_qty, available_qty, quarantine_qty')
+      .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty')
       .eq('item_id', itemId)
+      .eq('warehouse_id', warehouseId)
       .maybeSingle()
 
     if (finishedInventorySelectError) {
@@ -738,6 +770,7 @@ export default function ProductionOrderDetailPage({
           current_qty: effectiveInboundQty,
           available_qty: effectiveInboundQty,
           quarantine_qty: 0,
+          warehouse_id: warehouseId,
           updated_at: now,
         })
 
@@ -759,6 +792,8 @@ export default function ProductionOrderDetailPage({
         remarks: `생산지시 ${prodNo} 완제품입고`,
         created_by: userId || null,
         created_at: now,
+        warehouse_id: warehouseId,
+        inventory_id: finishedInventoryRow ? (finishedInventoryRow as InventoryRow).id : null,
       })
 
     if (prodInTxError) {
@@ -842,36 +877,24 @@ export default function ProductionOrderDetailPage({
 
             <div className="erp-field">
               <label className="erp-label">완제품</label>
-              <select
-                value={itemId}
-                onChange={(e) => handleFinishedItemChange(e.target.value)}
+              <SearchableCombobox
+                value={itemId ? String(itemId) : ''}
+                onChange={handleFinishedItemChange}
                 disabled={isCompleted}
-                className="erp-select"
-              >
-                <option value="">완제품 선택</option>
-                {items.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.item_code} / {item.item_name}
-                  </option>
-                ))}
-              </select>
+                options={finishedItemOptions}
+                placeholder="완제품 선택"
+              />
             </div>
 
             <div className="erp-field">
               <label className="erp-label">BOM</label>
-              <select
-                value={bomId}
-                onChange={(e) => setBomId(e.target.value ? Number(e.target.value) : '')}
+              <SearchableCombobox
+                value={bomId ? String(bomId) : ''}
+                onChange={(v) => setBomId(v ? Number(v) : '')}
                 disabled={isCompleted}
-                className="erp-select"
-              >
-                <option value="">BOM 선택</option>
-                {filteredBoms.map((bom) => (
-                  <option key={bom.id} value={bom.id}>
-                    {bom.bom_code} / 버전 {bom.version_no}
-                  </option>
-                ))}
-              </select>
+                options={bomOptions}
+                placeholder="BOM 선택"
+              />
             </div>
 
             <div className="erp-field">
@@ -899,19 +922,13 @@ export default function ProductionOrderDetailPage({
 
             <div className="erp-field">
               <label className="erp-label">작성자</label>
-              <select
+              <SearchableCombobox
                 value={userId}
-                onChange={(e) => setUserId(e.target.value)}
+                onChange={setUserId}
                 disabled={isCompleted}
-                className="erp-select"
-              >
-                <option value="">작성자 선택</option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.user_name} / {user.login_id}
-                  </option>
-                ))}
-              </select>
+                options={userOptions}
+                placeholder="작성자 선택"
+              />
             </div>
 
             <div className="erp-field md:col-span-2">

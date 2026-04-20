@@ -1,48 +1,80 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
+import type { Database } from '@/lib/database.types';
+import SearchableCombobox from '@/components/SearchableCombobox';
 
-const generateId = () => Math.random().toString(36).substr(2, 9);
+const generateId = () => Math.random().toString(36).substring(2, 11);
+
+type InventoryRow = Database['public']['Tables']['inventory']['Row'];
+type OutboundRequestRow = Database['public']['Tables']['outbound_requests']['Row'] & {
+  app_users?: { user_name: string | null } | null;
+  warehouses?: { name: string | null } | null;
+};
+
+type RequestItemRow = {
+  id: number;
+  item_id: number;
+  qty: number;
+  item: {
+    item_code: string;
+    item_name: string;
+    is_lot_managed: boolean;
+    is_sn_managed: boolean;
+    is_exp_managed: boolean;
+  };
+};
+
+type FulfillmentLine = {
+  id: string;
+  req_item_id: number;
+  item_id: number;
+  item_code: string;
+  item_name: string;
+  is_lot: boolean;
+  is_sn: boolean;
+  is_exp: boolean;
+  isTracked: boolean;
+  req_qty: number;
+  selected_lot: string;
+  selected_sn: string;
+  selected_exp: string;
+  stock_id: string;
+  out_qty: number;
+};
 
 export default function OutboundInstructionsPage() {
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
-  const [currentUser, setCurrentUser] = useState<any>(null);
 
-  const [approvedRequests, setApprovedRequests] = useState<any[]>([]);
-  const [selectedRequest, setSelectedRequest] = useState<any>(null);
-  
-  const [requestItems, setRequestItems] = useState<any[]>([]);
-  const [availableStocks, setAvailableStocks] = useState<any[]>([]);
-  const [fulfillments, setFulfillments] = useState<any[]>([]);
+  const [approvedRequests, setApprovedRequests] = useState<OutboundRequestRow[]>([]);
+  const [selectedRequest, setSelectedRequest] = useState<OutboundRequestRow | null>(null);
 
-  useEffect(() => {
-    initData();
-  }, []);
+  const [availableStocks, setAvailableStocks] = useState<InventoryRow[]>([]);
+  const [fulfillments, setFulfillments] = useState<FulfillmentLine[]>([]);
 
-  const initData = async () => {
-    setLoading(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      const { data: profile } = await supabase.from('app_users').select('*').eq('id', user.id).single();
-      setCurrentUser(profile || user);
-    }
-    await fetchApprovedRequests();
-    setLoading(false);
-  };
-
-  const fetchApprovedRequests = async () => {
+  const fetchApprovedRequests = useCallback(async () => {
     const { data, error } = await supabase
       .from('outbound_requests')
-      .select('*, app_users:requester_id (user_name)')
+      .select('*, app_users:requester_id (user_name), warehouses:warehouse_id(name)')
       .eq('status', 'approved')
       .order('created_at', { ascending: true });
 
-    if (!error && data) setApprovedRequests(data);
-  };
+    if (!error && data) setApprovedRequests(data as OutboundRequestRow[]);
+  }, []);
 
-  const handleSelectRequest = async (req: any) => {
+  const initData = useCallback(async () => {
+    setLoading(true);
+    await fetchApprovedRequests();
+    setLoading(false);
+  }, [fetchApprovedRequests]);
+
+  useEffect(() => {
+    void initData();
+  }, [initData]);
+
+  const handleSelectRequest = async (req: OutboundRequestRow) => {
     setSelectedRequest(req);
     setFulfillments([]);
 
@@ -51,12 +83,20 @@ export default function OutboundInstructionsPage() {
       .select('id, item_id, qty, item:items(item_code, item_name, is_lot_managed, is_sn_managed, is_exp_managed)')
       .eq('outbound_request_id', req.id);
 
-    if (items) {
-      setRequestItems(items);
-      const { data: stocks } = await supabase.from('inventory').select('*').in('item_id', items.map((i: any) => i.item_id)).gt('current_qty', 0);
-      setAvailableStocks(stocks || []);
+    if (items && Array.isArray(items)) {
+      const typedItems = items as unknown as RequestItemRow[];
+      const { data: stocks } = await supabase
+        .from('inventory')
+        .select('*')
+        .in(
+          'item_id',
+          typedItems.map((i) => i.item_id)
+        )
+        .eq('warehouse_id', req.warehouse_id)
+        .gt('current_qty', 0);
+      setAvailableStocks((stocks as InventoryRow[]) || []);
 
-      const initialFulfillments = items.map((i: any) => ({
+      const initialFulfillments: FulfillmentLine[] = typedItems.map((i) => ({
         id: generateId(),
         req_item_id: i.id,
         item_id: i.item_id,
@@ -71,38 +111,36 @@ export default function OutboundInstructionsPage() {
         selected_sn: '',
         selected_exp: '',
         stock_id: '',
-        out_qty: i.qty 
+        out_qty: i.qty,
       }));
       setFulfillments(initialFulfillments);
     }
   };
 
-  const handleSmartFilter = (index: number, field: string, value: string) => {
+  const handleSmartFilter = (index: number, field: 'selected_lot' | 'selected_sn' | 'selected_exp', value: string) => {
     const newFulfillments = [...fulfillments];
-    const f = newFulfillments[index];
-    f[field] = value;
+    const f = { ...newFulfillments[index], [field]: value } as FulfillmentLine;
 
-    const myStocks = availableStocks.filter(s => s.item_id === f.item_id);
+    const myStocks = availableStocks.filter((s) => s.item_id === f.item_id);
 
     const getFiltered = (lot: string, sn: string, exp: string) => {
-      return myStocks.filter(s => 
-        (!lot || s.lot_no === lot) &&
-        (!sn || s.serial_no === sn) &&
-        (!exp || s.exp_date === exp)
+      return myStocks.filter(
+        (s) =>
+          (!lot || s.lot_no === lot) && (!sn || s.serial_no === sn) && (!exp || s.exp_date === exp)
       );
     };
 
     let filtered = getFiltered(f.selected_lot, f.selected_sn, f.selected_exp);
 
-    if (value !== "") {
-      const uniqueLots = [...new Set(filtered.map(s => s.lot_no).filter(Boolean))];
-      const uniqueSns = [...new Set(filtered.map(s => s.serial_no).filter(Boolean))];
-      const uniqueExps = [...new Set(filtered.map(s => s.exp_date).filter(Boolean))];
+    if (value !== '') {
+      const uniqueLots = [...new Set(filtered.map((s) => s.lot_no).filter(Boolean))];
+      const uniqueSns = [...new Set(filtered.map((s) => s.serial_no).filter(Boolean))];
+      const uniqueExps = [...new Set(filtered.map((s) => s.exp_date).filter(Boolean))];
 
       if (f.is_lot && uniqueLots.length === 1) f.selected_lot = uniqueLots[0] as string;
       if (f.is_sn && uniqueSns.length === 1) f.selected_sn = uniqueSns[0] as string;
       if (f.is_exp && uniqueExps.length === 1) f.selected_exp = uniqueExps[0] as string;
-      
+
       filtered = getFiltered(f.selected_lot, f.selected_sn, f.selected_exp);
     }
 
@@ -120,21 +158,21 @@ export default function OutboundInstructionsPage() {
       f.stock_id = '';
     }
 
+    newFulfillments[index] = f;
     setFulfillments(newFulfillments);
   };
 
-  // 🌟 [핵심 변경] 개별 필드 전용 리셋 함수
   const handleResetField = (index: number, field: 'selected_lot' | 'selected_sn' | 'selected_exp') => {
     const newFulfillments = [...fulfillments];
-    const f = newFulfillments[index];
-    f[field] = '';      // 해당 필드만 초기화
-    f.stock_id = '';    // 매핑 ID 제거 (다시 계산 유도)
-    
-    // S/N 필드를 리셋했다면, 고정되었던 수량을 다시 기안 요청 수량으로 풀어줌
+    const f = { ...newFulfillments[index] };
+    f[field] = '';
+    f.stock_id = '';
+
     if (field === 'selected_sn') {
       f.out_qty = f.req_qty;
     }
-    
+
+    newFulfillments[index] = f;
     setFulfillments(newFulfillments);
   };
 
@@ -142,30 +180,54 @@ export default function OutboundInstructionsPage() {
     for (const f of fulfillments) {
       if (f.isTracked && !f.stock_id) return alert(`[${f.item_name}] 재고 매핑을 완료해주세요.`);
       if (f.out_qty <= 0) return alert(`[${f.item_name}] 수량을 입력해주세요.`);
-      
-      const stock = f.isTracked ? availableStocks.find(s => s.id === parseInt(f.stock_id)) : availableStocks.find(s => s.item_id === f.item_id);
-      if (!stock || f.out_qty > stock.current_qty) return alert(`[${f.item_name}] 잔량이 부족합니다.`);
+
+      const stock = f.isTracked
+        ? availableStocks.find((s) => s.id === parseInt(f.stock_id, 10))
+        : availableStocks.find((s) => s.item_id === f.item_id);
+      if (!stock || f.out_qty > Number(stock.current_qty))
+        return alert(`[${f.item_name}] 잔량이 부족합니다.`);
     }
 
     if (!confirm('출고를 진행하시겠습니까?')) return;
+    if (!selectedRequest) return;
+
     setProcessing(true);
     try {
-      for (const f of fulfillments) {
-        const stock = f.isTracked ? availableStocks.find(s => s.id === parseInt(f.stock_id)) : availableStocks.find(s => s.item_id === f.item_id);
-        const { error: invErr } = await supabase.from('inventory').update({ current_qty: stock.current_qty - f.out_qty, available_qty: stock.available_qty - f.out_qty, updated_at: new Date().toISOString() }).eq('id', stock.id);
-        if (invErr) throw invErr;
+      const lines = fulfillments.map((f) => {
+        const stock = f.isTracked
+          ? availableStocks.find((s) => s.id === parseInt(f.stock_id, 10))
+          : availableStocks.find((s) => s.item_id === f.item_id);
+        if (!stock) throw new Error(`재고 행을 찾을 수 없습니다: ${f.item_name}`);
+        return { inventory_id: stock.id, item_id: f.item_id, qty: f.out_qty };
+      });
 
-        await supabase.from('inventory_transactions').insert({ item_id: f.item_id, trans_type: 'OUT', qty: f.out_qty, lot_no: stock.lot_no, exp_date: stock.exp_date, serial_no: stock.serial_no, remarks: `출고요청(${selectedRequest.req_no}) 기반`, trans_date: new Date().toISOString(), actor_id: currentUser.id, created_by: currentUser.id });
-      }
-      await supabase.from('outbound_requests').update({ status: 'completed' }).eq('id', selectedRequest.id);
+      const { error: rpcError } = await supabase.rpc('execute_outbound_request_fulfillment', {
+        p_outbound_request_id: selectedRequest.id,
+        p_lines: lines,
+      });
+      if (rpcError) throw rpcError;
+
       alert('✅ 출고 완료!');
-      setSelectedRequest(null); fetchApprovedRequests();
-    } catch (e: any) { alert(e.message); } finally { setProcessing(false); }
+      setSelectedRequest(null);
+      void fetchApprovedRequests();
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProcessing(false);
+    }
   };
 
   const handleSplitLine = (index: number) => {
     const newF = [...fulfillments];
-    newF.splice(index + 1, 0, { ...newF[index], id: generateId(), stock_id: '', selected_lot: '', selected_sn: '', selected_exp: '', out_qty: 0 });
+    newF.splice(index + 1, 0, {
+      ...newF[index],
+      id: generateId(),
+      stock_id: '',
+      selected_lot: '',
+      selected_sn: '',
+      selected_exp: '',
+      out_qty: 0,
+    });
     setFulfillments(newF);
   };
 
@@ -177,32 +239,55 @@ export default function OutboundInstructionsPage() {
 
   return (
     <div className="p-8 max-w-screen-2xl mx-auto text-gray-800 font-sans bg-gray-50 min-h-screen">
-      <div className="mb-8"><h1 className="text-3xl font-black text-blue-700 uppercase tracking-tighter">Outbound Instruction</h1></div>
+      <div className="mb-8">
+        <h1 className="text-3xl font-black text-blue-700 uppercase tracking-tighter">Outbound Instruction</h1>
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[75vh]">
-        {/* 좌측 리스트 */}
         <div className="lg:col-span-4 bg-white border rounded-3xl flex flex-col overflow-hidden shadow-sm">
           <div className="p-5 border-b bg-gray-50/50 font-black">출고 대기 목록 ({approvedRequests.length})</div>
           <div className="flex-1 overflow-y-auto p-3 space-y-2">
-            {approvedRequests.map(req => (
-              <div key={req.id} onClick={() => handleSelectRequest(req)} className={`p-4 rounded-2xl cursor-pointer border-2 transition-all ${selectedRequest?.id === req.id ? 'border-blue-500 bg-blue-50/30' : 'border-transparent bg-gray-50 hover:bg-gray-100'}`}>
+            {approvedRequests.map((req) => (
+              <div
+                key={req.id}
+                onClick={() => handleSelectRequest(req)}
+                className={`p-4 rounded-2xl cursor-pointer border-2 transition-all ${
+                  selectedRequest?.id === req.id
+                    ? 'border-blue-500 bg-blue-50/30'
+                    : 'border-transparent bg-gray-50 hover:bg-gray-100'
+                }`}
+              >
                 <div className="text-xs font-black text-gray-400 mb-1">{req.req_no}</div>
                 <div className="font-black text-gray-800 truncate">{req.purpose}</div>
-                <div className="text-[10px] font-bold text-gray-500 mt-2">요청자: {req.app_users?.user_name}</div>
+                <div className="text-[10px] font-bold text-gray-500 mt-2">
+                  요청자: {req.app_users?.user_name} / 창고: {req.warehouses?.name ?? '-'}
+                </div>
               </div>
             ))}
           </div>
         </div>
 
-        {/* 우측 상세 폼 */}
         <div className="lg:col-span-8 bg-white border rounded-3xl flex flex-col overflow-hidden shadow-sm">
           {!selectedRequest ? (
-            <div className="flex-1 flex items-center justify-center text-gray-400 font-bold">📦 요청서를 선택해주세요.</div>
+            <div className="flex-1 flex items-center justify-center text-gray-400 font-bold">
+              요청서를 선택해주세요.
+            </div>
           ) : (
             <>
               <div className="p-6 border-b bg-gray-50/50 flex justify-between items-center">
-                <div><h2 className="text-xl font-black">{selectedRequest.purpose}</h2><p className="text-xs font-bold text-gray-400">{selectedRequest.req_no}</p></div>
-                <button onClick={handleExecuteOutbound} disabled={processing} className="px-6 py-3 bg-black text-white rounded-xl font-black text-sm hover:bg-gray-800 transition-colors">실출고 차감 실행</button>
+                <div>
+                  <h2 className="text-xl font-black">{selectedRequest.purpose}</h2>
+                  <p className="text-xs font-bold text-gray-400">
+                    {selectedRequest.req_no} / {selectedRequest.warehouses?.name ?? '-'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => void handleExecuteOutbound()}
+                  disabled={processing}
+                  className="px-6 py-3 bg-black text-white rounded-xl font-black text-sm hover:bg-gray-800 transition-colors"
+                >
+                  실출고 차감 실행
+                </button>
               </div>
 
               <div className="flex-1 overflow-y-auto p-6">
@@ -218,10 +303,43 @@ export default function OutboundInstructionsPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {fulfillments.map((f, idx) => {
-                      const myStocks = availableStocks.filter(s => s.item_id === f.item_id);
-                      const availableLots = [...new Set(myStocks.filter(s => (!f.selected_sn || s.serial_no === f.selected_sn) && (!f.selected_exp || s.exp_date === f.selected_exp)).map(s => s.lot_no).filter(Boolean))];
-                      const availableSns = [...new Set(myStocks.filter(s => (!f.selected_lot || s.lot_no === f.selected_lot) && (!f.selected_exp || s.exp_date === f.selected_exp)).map(s => s.serial_no).filter(Boolean))];
-                      const availableExps = [...new Set(myStocks.filter(s => (!f.selected_lot || s.lot_no === f.selected_lot) && (!f.selected_sn || s.serial_no === f.selected_sn)).map(s => s.exp_date).filter(Boolean))];
+                      const myStocks = availableStocks.filter((s) => s.item_id === f.item_id);
+                      const availableLots = [
+                        ...new Set(
+                          myStocks
+                            .filter(
+                              (s) =>
+                                (!f.selected_sn || s.serial_no === f.selected_sn) &&
+                                (!f.selected_exp || s.exp_date === f.selected_exp)
+                            )
+                            .map((s) => s.lot_no)
+                            .filter(Boolean)
+                        ),
+                      ];
+                      const availableSns = [
+                        ...new Set(
+                          myStocks
+                            .filter(
+                              (s) =>
+                                (!f.selected_lot || s.lot_no === f.selected_lot) &&
+                                (!f.selected_exp || s.exp_date === f.selected_exp)
+                            )
+                            .map((s) => s.serial_no)
+                            .filter(Boolean)
+                        ),
+                      ];
+                      const availableExps = [
+                        ...new Set(
+                          myStocks
+                            .filter(
+                              (s) =>
+                                (!f.selected_lot || s.lot_no === f.selected_lot) &&
+                                (!f.selected_sn || s.serial_no === f.selected_sn)
+                            )
+                            .map((s) => s.exp_date)
+                            .filter(Boolean)
+                        ),
+                      ];
 
                       return (
                         <tr key={f.id} className="hover:bg-gray-50/50 transition-colors">
@@ -233,63 +351,116 @@ export default function OutboundInstructionsPage() {
                           <td className="px-4 py-4">
                             {f.isTracked ? (
                               <div className="space-y-1.5">
-                                {/* 🌟 LOT 드롭다운 + 우측 리셋 버튼 */}
                                 {f.is_lot && (
                                   <div className="flex gap-1.5 items-center">
-                                    <span className="w-8 text-[10px] font-black text-blue-500 bg-blue-50 px-1 rounded text-center">LOT</span>
-                                    <select value={f.selected_lot} onChange={e => handleSmartFilter(idx, 'selected_lot', e.target.value)} className="flex-1 p-1 border rounded text-xs font-bold outline-none focus:border-blue-500 bg-white">
-                                      <option value="">선택</option>
-                                      {availableLots.map(v => <option key={String(v)} value={String(v)}>{String(v)}</option>)}
-                                    </select>
-                                    <button onClick={() => handleResetField(idx, 'selected_lot')} title="LOT 초기화" className="w-6 h-6 flex items-center justify-center bg-gray-50 text-[10px] text-gray-400 hover:text-orange-500 border rounded transition-all">🔄</button>
+                                    <span className="w-8 text-[10px] font-black text-blue-500 bg-blue-50 px-1 rounded text-center">
+                                      LOT
+                                    </span>
+                                    <SearchableCombobox
+                                      className="flex-1"
+                                      value={f.selected_lot}
+                                      onChange={(v) => handleSmartFilter(idx, 'selected_lot', v)}
+                                      options={availableLots.map((v) => ({ value: String(v), label: String(v) }))}
+                                      placeholder="선택"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleResetField(idx, 'selected_lot')}
+                                      title="LOT 초기화"
+                                      className="w-6 h-6 flex items-center justify-center bg-gray-50 text-[10px] text-gray-400 hover:text-orange-500 border rounded transition-all"
+                                    >
+                                      ↺
+                                    </button>
                                   </div>
                                 )}
-                                {/* 🌟 S/N 드롭다운 + 우측 리셋 버튼 */}
                                 {f.is_sn && (
                                   <div className="flex gap-1.5 items-center">
-                                    <span className="w-8 text-[10px] font-black text-purple-500 bg-purple-50 px-1 rounded text-center">S/N</span>
-                                    <select value={f.selected_sn} onChange={e => handleSmartFilter(idx, 'selected_sn', e.target.value)} className="flex-1 p-1 border rounded text-xs font-bold outline-none focus:border-purple-500 bg-white">
-                                      <option value="">선택</option>
-                                      {availableSns.map(v => <option key={String(v)} value={String(v)}>{String(v)}</option>)}
-                                    </select>
-                                    <button onClick={() => handleResetField(idx, 'selected_sn')} title="SN 초기화" className="w-6 h-6 flex items-center justify-center bg-gray-50 text-[10px] text-gray-400 hover:text-orange-500 border rounded transition-all">🔄</button>
+                                    <span className="w-8 text-[10px] font-black text-purple-500 bg-purple-50 px-1 rounded text-center">
+                                      S/N
+                                    </span>
+                                    <SearchableCombobox
+                                      className="flex-1"
+                                      value={f.selected_sn}
+                                      onChange={(v) => handleSmartFilter(idx, 'selected_sn', v)}
+                                      options={availableSns.map((v) => ({ value: String(v), label: String(v) }))}
+                                      placeholder="선택"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleResetField(idx, 'selected_sn')}
+                                      title="SN 초기화"
+                                      className="w-6 h-6 flex items-center justify-center bg-gray-50 text-[10px] text-gray-400 hover:text-orange-500 border rounded transition-all"
+                                    >
+                                      ↺
+                                    </button>
                                   </div>
                                 )}
-                                {/* 🌟 EXP 드롭다운 + 우측 리셋 버튼 */}
                                 {f.is_exp && (
                                   <div className="flex gap-1.5 items-center">
-                                    <span className="w-8 text-[10px] font-black text-green-500 bg-green-50 px-1 rounded text-center">EXP</span>
-                                    <select value={f.selected_exp} onChange={e => handleSmartFilter(idx, 'selected_exp', e.target.value)} className="flex-1 p-1 border rounded text-xs font-bold outline-none focus:border-green-500 bg-white">
-                                      <option value="">선택</option>
-                                      {availableExps.map(v => <option key={String(v)} value={String(v)}>{String(v)}</option>)}
-                                    </select>
-                                    <button onClick={() => handleResetField(idx, 'selected_exp')} title="EXP 초기화" className="w-6 h-6 flex items-center justify-center bg-gray-50 text-[10px] text-gray-400 hover:text-orange-500 border rounded transition-all">🔄</button>
+                                    <span className="w-8 text-[10px] font-black text-green-500 bg-green-50 px-1 rounded text-center">
+                                      EXP
+                                    </span>
+                                    <SearchableCombobox
+                                      className="flex-1"
+                                      value={f.selected_exp}
+                                      onChange={(v) => handleSmartFilter(idx, 'selected_exp', v)}
+                                      options={availableExps.map((v) => ({ value: String(v), label: String(v) }))}
+                                      placeholder="선택"
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => handleResetField(idx, 'selected_exp')}
+                                      title="EXP 초기화"
+                                      className="w-6 h-6 flex items-center justify-center bg-gray-50 text-[10px] text-gray-400 hover:text-orange-500 border rounded transition-all"
+                                    >
+                                      ↺
+                                    </button>
                                   </div>
                                 )}
-                                {f.stock_id && <div className="text-[10px] text-blue-600 font-bold mt-1 pl-10">↳ 가용 잔량: {availableStocks.find(s=>s.id.toString()===f.stock_id)?.current_qty}</div>}
+                                {f.stock_id && (
+                                  <div className="text-[10px] text-blue-600 font-bold mt-1 pl-10">
+                                    ↳ 가용 잔량:{' '}
+                                    {availableStocks.find((s) => s.id.toString() === f.stock_id)?.current_qty}
+                                  </div>
+                                )}
                               </div>
                             ) : (
                               <div className="text-xs text-gray-400 italic">추적 관리 안함</div>
                             )}
                           </td>
                           <td className="px-4 py-4">
-                            <input 
-                              type="number" 
-                              value={f.out_qty} 
-                              disabled={f.is_sn && f.selected_sn !== ''} 
-                              onChange={e => {
+                            <input
+                              type="number"
+                              value={f.out_qty}
+                              disabled={f.is_sn && f.selected_sn !== ''}
+                              onChange={(e) => {
                                 const newF = [...fulfillments];
-                                newF[idx].out_qty = parseInt(e.target.value) || 0;
+                                newF[idx] = { ...newF[idx], out_qty: parseInt(e.target.value, 10) || 0 };
                                 setFulfillments(newF);
-                              }} 
-                              className={`w-16 p-2 border rounded-lg text-center font-black text-red-600 outline-none focus:border-red-500 ${f.is_sn && f.selected_sn !== '' ? 'bg-gray-100 opacity-50' : ''}`} 
+                              }}
+                              className={`w-16 p-2 border rounded-lg text-center font-black text-red-600 outline-none focus:border-red-500 ${
+                                f.is_sn && f.selected_sn !== '' ? 'bg-gray-100 opacity-50' : ''
+                              }`}
                             />
                           </td>
                           <td className="px-4 py-4">
                             <div className="flex flex-col items-center justify-center gap-1">
-                              <button onClick={() => handleSplitLine(idx)} title="재고 분할" className="w-8 h-8 bg-gray-100 rounded-lg font-black text-gray-400 hover:bg-blue-600 hover:text-white transition-all">+</button>
-                              {fulfillments.filter(line => line.req_item_id === f.req_item_id).length > 1 && (
-                                <button onClick={() => handleRemoveLine(idx)} className="w-8 h-8 bg-gray-100 rounded-lg text-gray-400 hover:bg-red-500 hover:text-white transition-all">✕</button>
+                              <button
+                                type="button"
+                                onClick={() => handleSplitLine(idx)}
+                                title="재고 분할"
+                                className="w-8 h-8 bg-gray-100 rounded-lg font-black text-gray-400 hover:bg-blue-600 hover:text-white transition-all"
+                              >
+                                +
+                              </button>
+                              {fulfillments.filter((line) => line.req_item_id === f.req_item_id).length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemoveLine(idx)}
+                                  className="w-8 h-8 bg-gray-100 rounded-lg text-gray-400 hover:bg-red-500 hover:text-white transition-all"
+                                >
+                                  ✕
+                                </button>
                               )}
                             </div>
                           </td>

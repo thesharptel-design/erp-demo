@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import * as XLSX from 'xlsx';
+import SearchableCombobox from '@/components/SearchableCombobox';
 
 export default function UserPermissionsPage() {
   const [users, setUsers] = useState<any[]>([]);
@@ -14,6 +16,8 @@ export default function UserPermissionsPage() {
     id: '', user_name: '', email: '', phone: '', department: '', job_rank: '', new_password: ''
   });
   const [isUpdating, setIsUpdating] = useState(false);
+  const departmentOptions = ['영업', '자재', '생산', '구매', 'QC', '경영지원', '관리'].map((v) => ({ value: v, label: v }));
+  const rankOptions = ['사원', '대리', '과장', '차장', '부장', '이사', '대표'].map((v) => ({ value: v, label: v }));
 
   useEffect(() => { fetchUsers(); }, []);
 
@@ -140,6 +144,23 @@ export default function UserPermissionsPage() {
     }
   };
 
+  const handleDownloadUsersExcel = () => {
+    const rows = users.map((u) => ({
+      사번: u.employee_no ?? '-',
+      이름: u.user_name ?? '-',
+      이메일: u.email ?? '-',
+      연락처: u.phone ?? '-',
+      부서: u.department ?? '-',
+      직급: u.job_rank ?? '-',
+      역할: u.role_name ?? '-',
+      재직상태: u.is_active ? '재직' : '퇴사',
+    }));
+    const sheet = XLSX.utils.json_to_sheet(rows);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, sheet, 'users');
+    XLSX.writeFile(wb, `ERP_사용자목록_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
   return (
     // 🌟 전체 컨테이너 폭 축소: max-w-[1700px] -> max-w-[1500px]
     <div className="p-6 max-w-[1500px] mx-auto font-sans bg-gray-50 h-screen flex flex-col relative text-black">
@@ -151,15 +172,21 @@ export default function UserPermissionsPage() {
         
         {/* 🌟 우측 상단 일괄 처리 버튼 영역 */}
         <div className="flex gap-2">
-          <button 
+          <button disabled={loading}
+            onClick={handleDownloadUsersExcel}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-black shadow-sm hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-50"
+          >
+            ⬇️ 엑셀 다운로드
+          </button>
+          <button disabled={loading}
             onClick={handleBulkRetire}
-            className="px-4 py-2 bg-gray-800 text-white rounded-lg text-xs font-black shadow-sm hover:bg-gray-900 active:scale-95 transition-all"
+            className="px-4 py-2 bg-gray-800 text-white rounded-lg text-xs font-black shadow-sm hover:bg-gray-900 active:scale-95 transition-all disabled:opacity-50"
           >
             ⏸️ 일괄 퇴사
           </button>
-          <button 
+          <button disabled={loading}
             onClick={handleBulkDelete}
-            className="px-4 py-2 bg-white border-2 border-red-200 text-red-500 rounded-lg text-xs font-black shadow-sm hover:bg-red-50 active:scale-95 transition-all"
+            className="px-4 py-2 bg-white border-2 border-red-200 text-red-500 rounded-lg text-xs font-black shadow-sm hover:bg-red-50 active:scale-95 transition-all disabled:opacity-50"
           >
             🗑️ 일괄 삭제
           </button>
@@ -215,7 +242,7 @@ export default function UserPermissionsPage() {
                   <td className="px-3 py-3 text-center border-r-2"><span className="bg-gray-100 px-2 py-1 rounded font-black">{user.department}</span> <span className="text-gray-500 font-bold ml-1">{user.job_rank}</span></td>
                   
                   <td className="px-3 py-3 text-center"><input type="checkbox" checked={!!user.can_manage_master} onChange={() => togglePermission(user.id, 'can_manage_master', !!user.can_manage_master)} className="w-5 h-5 accent-black cursor-pointer" /></td>
-                  <td className="px-3 py-3 text-center"><input type="checkbox" checked={!!user.can_po_create} onChange={() => togglePermission(user.id, 'can_po_create', !!user.can_po_create)} className="w-5 h-5 accent-black cursor-pointer" /></td>
+                  <td className="px-3 py-3 text-center"><input type="checkbox" checked={!!user.can_sales_manage} onChange={() => togglePermission(user.id, 'can_sales_manage', !!user.can_sales_manage)} className="w-5 h-5 accent-black cursor-pointer" /></td>
                   <td className="px-3 py-3 text-center"><input type="checkbox" checked={!!user.can_material_manage} onChange={() => togglePermission(user.id, 'can_material_manage', !!user.can_material_manage)} className="w-5 h-5 accent-black cursor-pointer" /></td>
                   <td className="px-3 py-3 text-center"><input type="checkbox" checked={!!user.can_production_manage} onChange={() => togglePermission(user.id, 'can_production_manage', !!user.can_production_manage)} className="w-5 h-5 accent-black cursor-pointer" /></td>
                   <td className="px-3 py-3 text-center"><input type="checkbox" checked={!!user.can_qc_manage} onChange={() => togglePermission(user.id, 'can_qc_manage', !!user.can_qc_manage)} className="w-5 h-5 accent-black cursor-pointer" /></td>
@@ -267,15 +294,21 @@ export default function UserPermissionsPage() {
                 </div>
                 <div className="col-span-2 md:col-span-1 space-y-1">
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">부서</label>
-                  <select className="w-full p-3 border-2 border-gray-100 rounded-xl bg-white font-bold text-sm focus:border-black outline-none" value={editForm.department} onChange={e => setEditForm({...editForm, department: e.target.value})}>
-                    <option value="">선택</option><option value="영업">영업</option><option value="자재">자재</option><option value="생산">생산</option><option value="구매">구매</option><option value="QC">QC</option><option value="경영지원">경영지원</option><option value="관리">관리</option>
-                  </select>
+                  <SearchableCombobox
+                    value={editForm.department}
+                    onChange={(v) => setEditForm({ ...editForm, department: v })}
+                    options={departmentOptions}
+                    placeholder="선택"
+                  />
                 </div>
                 <div className="col-span-2 md:col-span-1 space-y-1">
                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">직급</label>
-                  <select className="w-full p-3 border-2 border-gray-100 rounded-xl bg-white font-bold text-sm focus:border-black outline-none" value={editForm.job_rank} onChange={e => setEditForm({...editForm, job_rank: e.target.value})}>
-                    <option value="">선택</option><option value="사원">사원</option><option value="대리">대리</option><option value="과장">과장</option><option value="차장">차장</option><option value="부장">부장</option><option value="이사">이사</option><option value="대표">대표</option>
-                  </select>
+                  <SearchableCombobox
+                    value={editForm.job_rank}
+                    onChange={(v) => setEditForm({ ...editForm, job_rank: v })}
+                    options={rankOptions}
+                    placeholder="선택"
+                  />
                 </div>
               </div>
 

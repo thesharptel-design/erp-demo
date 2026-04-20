@@ -4,12 +4,24 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { hasManagePermission, isAdminRole, type CurrentUserPermissions, type ManagePermissionKey } from '@/lib/permissions'
+
+type SidebarUser = CurrentUserPermissions
+type MenuItem = {
+  name: string
+  href: string
+  perm: ManagePermissionKey | null
+}
+type MenuGroup = {
+  title: string
+  items: MenuItem[]
+}
 
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   
-  const [userData, setUserData] = useState<any>(null);
+  const [userData, setUserData] = useState<SidebarUser | null>(null);
   const [loading, setLoading] = useState(true);
   
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
@@ -32,7 +44,6 @@ export default function Sidebar() {
           .select('*')
           .eq('id', session.user.id)
           .single();
-        console.log("현재 접속자 권한 정보:", data); // 🌟 디버깅용: 여기서 can_sales_manage가 true인지 확인!
         setUserData(data);
       }
       setLoading(false);
@@ -44,23 +55,18 @@ export default function Sidebar() {
     setOpenGroups(prev => ({ ...prev, [title]: !prev[title] }));
   };
 
-  const hasPermission = (permKey: string | null) => {
+  const hasPermission = (permKey: ManagePermissionKey | null) => {
     if (loading) return false;
     if (!userData) return false;
-    // 관리자(admin)는 무조건 통과
-    if (userData.role_name === 'admin') return true; 
-    // 권한 키가 없으면(null) 일반 사용자도 접근 가능
     if (!permKey) return true;
-    // 🌟 DB의 해당 컬럼이 true인지 확인
-    return !!userData[permKey]; 
+    return hasManagePermission(userData, permKey)
   };
 
-  const menuGroups = [
+  const menuGroups: MenuGroup[] = [
     {
       title: '기안/결재',
       items: [
-        { name: '결재문서함', href: '/approvals', perm: null },
-        { name: '출고요청 작성/조회', href: '/outbound-requests', perm: null }, 
+        { name: '통합결재문서함', href: '/approvals', perm: null },
       ]
     },
     {
@@ -95,10 +101,10 @@ export default function Sidebar() {
     {
       title: '자재 관리',
       items: [
-        { name: '입고 등록', href: '/inbound/new', perm: 'can_manage_master' }, 
-        { name: '출고 등록', href: '/outbound/new', perm: 'can_manage_master'},
-        { name: '출고 지시 현황', href: '/outbound-instructions', perm: 'can_manage_master'},
-        { name: '재고 실사/조정', href: '/inventory-adjustments', perm: 'can_manage_master' },
+        { name: '입고 등록', href: '/inbound/new', perm: 'can_material_manage' }, 
+        { name: '출고 등록', href: '/outbound-requests/new', perm: 'can_material_manage'},
+        { name: '출고 지시 현황', href: '/outbound-instructions', perm: 'can_material_manage'},
+        { name: '재고 실사/조정', href: '/inventory-adjustments', perm: 'can_material_manage' },
       ]
     },
     {
@@ -111,8 +117,11 @@ export default function Sidebar() {
     {
       title: 'ADMIN ONLY',
       items: [
-        { name: '사용자 가입 설정', href: '/admin/user-approvals', perm: 'can manage_permisiions'},
+        { name: '사용자 가입 설정', href: '/admin/user-approvals', perm: 'can_manage_permissions'},
         { name: '사용자 권한 설정', href: '/admin/user-permissions', perm: 'can_manage_permissions' },
+        { name: '로그인 감사 모니터', href: '/admin/login-audit', perm: 'can_manage_permissions' },
+        { name: '창고 관리', href: '/admin/warehouses', perm: 'can_manage_permissions' },
+        { name: 'CoA 파일 관리', href: '/admin/coa-files', perm: 'can_manage_permissions' },
         { name: '기업정보 설정', href: '/admin/company-settings', perm: 'can_manage_permissions' },
       ]
     }
@@ -128,14 +137,34 @@ export default function Sidebar() {
         </Link>
         {userData && (
           <div className="mt-2 text-[11px] font-bold text-gray-400 uppercase tracking-tight">
-            {userData.user_name} / {userData.role_name === 'admin' ? 'ADMIN' : 'STAFF'}
+            {userData.user_name} / {isAdminRole(userData.role_name) ? 'ADMIN' : 'STAFF'}
           </div>
         )}
       </div>
 
       <nav className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+        
+        {/* 대시보드 (HOME) 고정 버튼 */}
+        <div className="space-y-1 mb-2">
+          <Link 
+            href="/dashboard"
+            className={`w-full flex items-center px-2 py-2 text-[14px] font-black transition-colors uppercase tracking-tight ${
+              pathname === '/dashboard' 
+                ? 'text-blue-600' 
+                : 'text-gray-900 hover:text-blue-600'
+            }`}
+          >
+            DASHBOARD (HOME)
+          </Link>
+        </div>
+
+        {/* 기존 메뉴 그룹 렌더링 */}
         {menuGroups.map((group) => {
-          if (group.title === 'ADMIN ONLY' && userData?.role_name !== 'admin') return null;
+          if (group.title === 'ADMIN ONLY' && 
+              !isAdminRole(userData?.role_name) &&
+              !hasManagePermission(userData, 'can_manage_permissions')) {
+            return null;
+          }
 
           const isOpen = openGroups[group.title];
           return (

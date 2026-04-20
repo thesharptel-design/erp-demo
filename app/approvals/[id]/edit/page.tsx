@@ -4,6 +4,9 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { APPROVAL_ROLES, getApprovalRoleLabel, normalizeApprovalRole } from '@/lib/approval-roles'
+import { buildApprovalLines, buildApprovalParticipantsRows, normalizeParticipants } from '@/lib/approval-participants'
+import SearchableCombobox from '@/components/SearchableCombobox'
 
 type ApprovalDoc = {
   id: number
@@ -79,17 +82,31 @@ export default function EditApprovalPage({
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [writerId, setWriterId] = useState('')
-  const [reviewerId, setReviewerId] = useState('')
-  const [approverId, setApproverId] = useState('')
+  const [roleAssignees, setRoleAssignees] = useState<Record<string, string[]>>({
+    reviewer: [''],
+    pre_cooperator: [''],
+    final_approver: [''],
+    post_cooperator: [''],
+    reference: [''],
+  })
+  const [roleSearches, setRoleSearches] = useState<Record<string, string>>({
+    reviewer: '',
+    pre_cooperator: '',
+    final_approver: '',
+    post_cooperator: '',
+    reference: '',
+  })
   const [docStatus, setDocStatus] = useState('draft')
 
   const [users, setUsers] = useState<AppUser[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
-  const [line1Id, setLine1Id] = useState<number | null>(null)
-  const [line2Id, setLine2Id] = useState<number | null>(null)
-
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
+  const docTypeOptions = [
+    { value: 'purchase_request', label: '구매품의' },
+    { value: 'draft_doc', label: '일반기안' },
+    { value: 'leave_request', label: '휴가신청' },
+  ]
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
 
@@ -109,6 +126,8 @@ export default function EditApprovalPage({
         { data: lines, error: linesError },
         { data: usersData, error: usersError },
         { data: deptData, error: deptError },
+        { data: sessionData },
+        { data: participantRows },
       ] = await Promise.all([
         supabase.from('approval_docs').select('*').eq('id', id).single(),
         supabase
@@ -121,6 +140,8 @@ export default function EditApprovalPage({
           .select('id, login_id, user_name, dept_id, role_name')
           .order('user_name'),
         supabase.from('departments').select('id, dept_name').order('id'),
+        supabase.auth.getUser(),
+        supabase.from('approval_participants').select('user_id, role, line_no').eq('approval_doc_id', id).order('line_no'),
       ])
 
       if (docError || !doc) {
@@ -149,6 +170,17 @@ export default function EditApprovalPage({
 
       const typedDoc = doc as ApprovalDoc
       const typedLines = lines as ApprovalLine[]
+      const currentUserId = sessionData.user?.id
+      const currentUser = (usersData as AppUser[] | null)?.find((u) => u.id === currentUserId)
+      const isAdmin = String(currentUser?.role_name || '').toLowerCase() === 'admin'
+      const isWriter = typedDoc.writer_id === currentUserId
+      const isLineApprover = typedLines.some((line) => line.approver_id === currentUserId)
+      const isParticipant = (participantRows || []).some((row: any) => row.user_id === currentUserId)
+      if (!isAdmin && !isWriter && !isLineApprover && !isParticipant) {
+        setErrorMessage('문서 수정 권한이 없습니다.')
+        setIsLoading(false)
+        return
+      }
 
       setDocId(typedDoc.id)
       setDocNo(typedDoc.doc_no)
@@ -158,18 +190,29 @@ export default function EditApprovalPage({
       setWriterId(typedDoc.writer_id)
       setDocStatus(typedDoc.status)
 
-      const firstLine = typedLines.find((line) => line.line_no === 1)
-      const secondLine = typedLines.find((line) => line.line_no === 2)
-
-      if (firstLine) {
-        setLine1Id(firstLine.id)
-        setReviewerId(firstLine.approver_id)
+      const initialAssignees: Record<string, string[]> = {
+        reviewer: [],
+        pre_cooperator: [],
+        final_approver: [],
+        post_cooperator: [],
+        reference: [],
       }
-
-      if (secondLine) {
-        setLine2Id(secondLine.id)
-        setApproverId(secondLine.approver_id)
+      for (const participant of participantRows || []) {
+        const role = normalizeApprovalRole((participant as { role: string }).role)
+        if (!role) continue
+        initialAssignees[role].push((participant as { user_id: string }).user_id)
       }
+      if (initialAssignees.final_approver.length === 0) {
+        for (const line of typedLines) {
+          const role = normalizeApprovalRole(line.approver_role)
+          if (!role) continue
+          initialAssignees[role].push(line.approver_id)
+        }
+      }
+      for (const role of APPROVAL_ROLES) {
+        if ((initialAssignees[role] ?? []).length === 0) initialAssignees[role] = ['']
+      }
+      setRoleAssignees(initialAssignees)
 
       setUsers((usersData as AppUser[]) ?? [])
       setDepartments((deptData as Department[]) ?? [])
@@ -185,6 +228,25 @@ export default function EditApprovalPage({
   )
 
   const selectedWriter = users.find((u) => u.id === writerId)
+  const selectableUsers = users.filter((user) => user.id !== writerId)
+  const filteredUsersByRole = useMemo(
+    () =>
+      APPROVAL_ROLES.reduce<Record<string, AppUser[]>>((acc, role) => {
+        const keyword = (roleSearches[role] ?? '').trim().toLowerCase()
+        acc[role] = selectableUsers.filter((user) => {
+          if (!keyword) return true
+          const deptName = deptMap.get(user.dept_id ?? -1) ?? ''
+          return (
+            user.user_name.toLowerCase().includes(keyword) ||
+            user.login_id.toLowerCase().includes(keyword) ||
+            user.role_name.toLowerCase().includes(keyword) ||
+            String(deptName).toLowerCase().includes(keyword)
+          )
+        })
+        return acc
+      }, {}),
+    [selectableUsers, roleSearches, deptMap]
+  )
 
   // draft / rejected 만 수정 가능
   const canEdit = ['draft', 'rejected'].includes(docStatus)
@@ -220,28 +282,13 @@ export default function EditApprovalPage({
       return
     }
 
-    if (!reviewerId) {
-      setErrorMessage('1차 결재자를 선택하십시오.')
-      return
-    }
-
-    if (!approverId) {
+    if (!roleAssignees.final_approver.some((id) => id.trim())) {
       setErrorMessage('최종 결재자를 선택하십시오.')
       return
     }
 
-    if (reviewerId === approverId) {
-      setErrorMessage('1차 결재자와 최종 결재자는 서로 달라야 합니다.')
-      return
-    }
-
-    if (!selectedWriter?.dept_id) {
+    if (selectedWriter?.dept_id === null || selectedWriter?.dept_id === undefined) {
       setErrorMessage('선택한 작성자에 부서 정보가 없습니다.')
-      return
-    }
-
-    if (!line1Id || !line2Id) {
-      setErrorMessage('결재선 정보가 올바르지 않습니다.')
       return
     }
 
@@ -265,30 +312,45 @@ export default function EditApprovalPage({
       return
     }
 
-    const { error: line1Error } = await supabase
-      .from('approval_lines')
-      .update({
-        approver_id: reviewerId,
-      })
-      .eq('id', line1Id)
+    const participants = normalizeParticipants(
+      APPROVAL_ROLES.flatMap((role) =>
+        (roleAssignees[role] ?? []).map((userId) => ({ role, userId }))
+      )
+    )
+    const lines = buildApprovalLines(docId, participants)
+    const participantRows = buildApprovalParticipantsRows(docId, participants)
 
-    if (line1Error) {
+    const { error: deleteLinesError } = await supabase.from('approval_lines').delete().eq('approval_doc_id', docId)
+    if (deleteLinesError) {
       setIsSaving(false)
-      setErrorMessage(getApprovalEditErrorMessage(line1Error))
+      setErrorMessage(getApprovalEditErrorMessage(deleteLinesError))
       return
     }
+    if (lines.length > 0) {
+      const { error: insertLinesError } = await supabase.from('approval_lines').insert(lines)
+      if (insertLinesError) {
+        setIsSaving(false)
+        setErrorMessage(getApprovalEditErrorMessage(insertLinesError))
+        return
+      }
+    }
 
-    const { error: line2Error } = await supabase
-      .from('approval_lines')
-      .update({
-        approver_id: approverId,
-      })
-      .eq('id', line2Id)
-
-    if (line2Error) {
+    const { error: deleteParticipantsError } = await supabase
+      .from('approval_participants')
+      .delete()
+      .eq('approval_doc_id', docId)
+    if (deleteParticipantsError) {
       setIsSaving(false)
-      setErrorMessage(getApprovalEditErrorMessage(line2Error))
+      setErrorMessage(getApprovalEditErrorMessage(deleteParticipantsError))
       return
+    }
+    if (participantRows.length > 0) {
+      const { error: participantError } = await supabase.from('approval_participants').insert(participantRows)
+      if (participantError) {
+        setIsSaving(false)
+        setErrorMessage(getApprovalEditErrorMessage(participantError))
+        return
+      }
     }
 
     setIsSaving(false)
@@ -337,35 +399,30 @@ export default function EditApprovalPage({
             <label className="mb-2 block text-sm font-medium text-gray-700">
               문서유형
             </label>
-            <select
+            <SearchableCombobox
               value={docType}
-              onChange={(e) => setDocType(e.target.value)}
+              onChange={setDocType}
               disabled={!canEdit}
-              className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black disabled:bg-gray-100"
-            >
-              <option value="purchase_request">구매품의</option>
-              <option value="draft_doc">일반기안</option>
-              <option value="leave_request">휴가신청</option>
-            </select>
+              options={docTypeOptions}
+              placeholder="문서유형"
+            />
           </div>
 
           <div>
             <label className="mb-2 block text-sm font-medium text-gray-700">
               작성자
             </label>
-            <select
+            <SearchableCombobox
               value={writerId}
-              onChange={(e) => setWriterId(e.target.value)}
+              onChange={setWriterId}
               disabled={!canEdit}
-              className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black disabled:bg-gray-100"
-            >
-              <option value="">작성자 선택</option>
-              {users.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.user_name} / {deptMap.get(user.dept_id ?? -1) ?? '-'} / {user.role_name}
-                </option>
-              ))}
-            </select>
+              options={users.map((user) => ({
+                value: user.id,
+                label: `${user.user_name} / ${deptMap.get(user.dept_id ?? -1) ?? '-'} / ${user.role_name}`,
+                keywords: [user.user_name, user.login_id, user.role_name, String(deptMap.get(user.dept_id ?? -1) ?? '')],
+              }))}
+              placeholder="작성자 선택"
+            />
           </div>
 
           <div className="md:col-span-2">
@@ -395,43 +452,78 @@ export default function EditApprovalPage({
             />
           </div>
 
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">
-              1차 결재자
-            </label>
-            <select
-              value={reviewerId}
-              onChange={(e) => setReviewerId(e.target.value)}
-              disabled={!canEdit}
-              className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black disabled:bg-gray-100"
-            >
-              <option value="">1차 결재자 선택</option>
-              {users.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.user_name} / {deptMap.get(user.dept_id ?? -1) ?? '-'} / {user.role_name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700">
-              최종 결재자
-            </label>
-            <select
-              value={approverId}
-              onChange={(e) => setApproverId(e.target.value)}
-              disabled={!canEdit}
-              className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black disabled:bg-gray-100"
-            >
-              <option value="">최종 결재자 선택</option>
-              {users.map((user) => (
-                <option key={user.id} value={user.id}>
-                  {user.user_name} / {deptMap.get(user.dept_id ?? -1) ?? '-'} / {user.role_name}
-                </option>
-              ))}
-            </select>
-          </div>
+          {APPROVAL_ROLES.map((role) => (
+            <div key={role}>
+              <label className="mb-2 block text-sm font-medium text-gray-700">
+                {getApprovalRoleLabel(role)}
+                {role === 'final_approver' ? ' (필수)' : ''}
+              </label>
+              <div className="space-y-2">
+                <input
+                  value={roleSearches[role] ?? ''}
+                  onChange={(e) =>
+                    setRoleSearches((prev) => ({
+                      ...prev,
+                      [role]: e.target.value,
+                    }))
+                  }
+                  placeholder={`${getApprovalRoleLabel(role)} 검색 (이름/ID/부서)`}
+                  disabled={!canEdit}
+                  className="w-full rounded border border-gray-200 px-3 py-1.5 text-xs text-gray-700 outline-none focus:border-blue-500 disabled:bg-gray-100"
+                />
+                {(roleAssignees[role] ?? ['']).map((assignee, idx) => (
+                  <div className="flex items-center gap-2" key={`${role}-${idx}`}>
+                    <SearchableCombobox
+                      value={assignee}
+                      onChange={(nextValue) =>
+                        setRoleAssignees((prev) => {
+                          const next = [...(prev[role] ?? [''])]
+                          next[idx] = nextValue
+                          return { ...prev, [role]: next }
+                        })
+                      }
+                      disabled={!canEdit}
+                      options={(filteredUsersByRole[role] ?? []).map((user) => ({
+                        value: user.id,
+                        label: `${user.user_name} / ${deptMap.get(user.dept_id ?? -1) ?? '-'} / ${user.role_name}`,
+                        keywords: [user.user_name, user.login_id, user.role_name, String(deptMap.get(user.dept_id ?? -1) ?? '')],
+                      }))}
+                      placeholder={role === 'final_approver' ? '필수 선택' : '선택 안 함'}
+                    />
+                    {idx > 0 && (
+                      <button
+                        type="button"
+                        disabled={!canEdit}
+                        onClick={() =>
+                          setRoleAssignees((prev) => {
+                            const next = [...(prev[role] ?? [''])]
+                            next.splice(idx, 1)
+                            return { ...prev, [role]: next.length > 0 ? next : [''] }
+                          })
+                        }
+                        className="px-2 py-1 rounded border border-red-200 text-red-600 text-xs font-black"
+                      >
+                        삭제
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  disabled={!canEdit}
+                  onClick={() =>
+                    setRoleAssignees((prev) => ({
+                      ...prev,
+                      [role]: [...(prev[role] ?? ['']), ''],
+                    }))
+                  }
+                  className="px-2 py-1 rounded border border-dashed border-blue-300 text-blue-700 text-xs font-black"
+                >
+                  + {getApprovalRoleLabel(role)} 추가
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
 
         {errorMessage && (

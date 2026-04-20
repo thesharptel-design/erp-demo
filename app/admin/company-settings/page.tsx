@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import Image from 'next/image';
 
 export default function CompanySettingsPage() {
   const [loading, setLoading] = useState(true);
@@ -116,7 +117,7 @@ export default function CompanySettingsPage() {
                 <p className="text-[11px] font-black text-gray-500 mb-4 uppercase">Company Logo</p>
                 <div className="relative w-full aspect-video bg-gray-50 border-2 border-dashed border-gray-200 rounded-3xl flex items-center justify-center overflow-hidden group">
                   {formData.logo_url ? (
-                    <img src={formData.logo_url} className="max-h-24 object-contain" alt="Logo" />
+                    <Image src={formData.logo_url} className="max-h-24 object-contain w-auto" alt="Logo" width={192} height={96} unoptimized />
                   ) : (
                     <div className="text-center">
                       <span className="text-3xl">🖼️</span>
@@ -135,7 +136,7 @@ export default function CompanySettingsPage() {
                 <p className="text-[11px] font-black text-gray-500 mb-4 uppercase">Official Stamp</p>
                 <div className="relative w-32 h-32 bg-gray-50 border-2 border-dashed border-gray-200 rounded-full flex items-center justify-center overflow-hidden group">
                   {formData.stamp_url ? (
-                    <img src={formData.stamp_url} className="w-20 h-20 object-contain" alt="Stamp" />
+                    <Image src={formData.stamp_url} className="w-20 h-20 object-contain" alt="Stamp" width={80} height={80} unoptimized />
                   ) : (
                     <div className="text-center">
                       <span className="text-2xl">💮</span>

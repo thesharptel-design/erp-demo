@@ -3,17 +3,25 @@
 import { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import * as XLSX from 'xlsx';
+import SearchableCombobox from '@/components/SearchableCombobox';
 
 const VALID_DEPARTMENTS = ['영업', '자재', '생산', '구매', 'QC', '경영지원', '관리'];
 const VALID_RANKS = ['사원', '대리', '과장', '차장', '부장', '이사', '대표'];
 
+// 🌟 로그인 페이지와 동일하게 튼튼한 배열 비교 로직으로 수정됨
 const getDefaultPerms = (dept: string) => ({
-  can_manage_master: dept === '관리' || dept === '경영지원',
-  can_po_create: dept === '영업' || dept === '구매',
-  can_material_manage: dept === '자재',
-  can_production_manage: dept === '생산',
-  can_qc_manage: dept === 'QC',
-  can_admin_manage: dept === '관리' || dept === '경영지원',
+  can_manage_master: ['관리', '경영지원', '관리팀', '경영지원팀'].includes(dept),
+  can_sales_manage: ['영업', '구매', '영업팀', '구매팀'].includes(dept),
+  can_material_manage: ['자재', '자재팀'].includes(dept),
+  can_production_manage: ['생산', '생산팀'].includes(dept),
+  can_qc_manage: ['QC', 'QC팀', '품질관리부'].includes(dept),
+  can_admin_manage: ['관리', '경영지원', '관리팀', '경영지원팀'].includes(dept),
+  // legacy fallback columns
+  can_po_create: ['영업', '구매', '영업팀', '구매팀'].includes(dept),
+  can_quote_create: ['영업', '영업팀'].includes(dept),
+  can_receive_stock: ['자재', '자재팀'].includes(dept),
+  can_prod_complete: ['생산', '생산팀'].includes(dept),
+  can_approve: ['QC', 'QC팀', '품질관리부'].includes(dept),
   can_manage_permissions: false
 });
 
@@ -27,8 +35,19 @@ export default function UserApprovalsPage() {
   });
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const departmentOptions = VALID_DEPARTMENTS.map((d) => ({ value: d, label: d }));
+  const rankOptions = VALID_RANKS.map((r) => ({ value: r, label: r }));
 
   useEffect(() => { fetchPendingUsers(); }, []);
+
+  const getAuthHeaders = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    const token = session?.access_token ?? '';
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    };
+  };
 
   const fetchPendingUsers = async () => {
     setLoading(true);
@@ -48,7 +67,6 @@ export default function UserApprovalsPage() {
     else setSelectedIds(prev => prev.filter(userId => userId !== id));
   };
 
-  // ✅ 일괄 승인 함수
   const handleBulkApprove = async () => {
     if (selectedIds.length === 0) return alert('승인할 직원을 선택해주세요.');
     if (!confirm(`선택한 ${selectedIds.length}명의 직원을 일괄 승인하시겠습니까?`)) return;
@@ -73,7 +91,6 @@ export default function UserApprovalsPage() {
     fetchPendingUsers();
   };
 
-  // 🗑️ 일괄 삭제 함수 (새로 추가됨!)
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return alert('삭제할 직원을 선택해주세요.');
     if (!confirm(`⚠️ 정말로 선택한 ${selectedIds.length}명의 가입을 거절하고 완전히 삭제하시겠습니까?\n(이 작업은 되돌릴 수 없습니다)`)) return;
@@ -110,7 +127,7 @@ export default function UserApprovalsPage() {
     
     const res = await fetch('/api/admin/create-user', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: await getAuthHeaders(),
       body: JSON.stringify({ ...newUser, role_name: 'pending', ...autoPerms })
     });
     
@@ -194,7 +211,7 @@ export default function UserApprovalsPage() {
 
         const res = await fetch('/api/admin/create-user', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: await getAuthHeaders(),
           body: JSON.stringify(payload)
         });
         if (res.ok) successCount++;
@@ -221,9 +238,9 @@ export default function UserApprovalsPage() {
         <div className="flex justify-between items-center mb-4">
           <h2 className="text-base font-black flex items-center gap-2"><span className="w-1.5 h-5 bg-blue-600 rounded-full"></span>관리자 직접 직원 등록</h2>
           <div className="flex gap-2">
-            <button onClick={handleDownloadTemplate} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-xs font-black hover:bg-gray-200 flex items-center gap-1">📥 템플릿 다운로드</button>
+            <button disabled={loading} onClick={handleDownloadTemplate} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-xs font-black hover:bg-gray-200 flex items-center gap-1 disabled:opacity-50">📥 템플릿 다운로드</button>
             <input type="file" accept=".xlsx, .xls, .csv" className="hidden" ref={fileInputRef} onChange={handleExcelUpload} />
-            <button onClick={() => fileInputRef.current?.click()} className="px-4 py-2 bg-green-600 text-white rounded-lg text-xs font-black hover:bg-green-700 flex items-center gap-1">📗 엑셀 일괄 등록</button>
+            <button disabled={loading} onClick={() => fileInputRef.current?.click()} className="px-4 py-2 bg-green-600 text-white rounded-lg text-xs font-black hover:bg-green-700 flex items-center gap-1 disabled:opacity-50">📗 엑셀 일괄 등록</button>
           </div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-4 font-bold text-xs">
@@ -233,35 +250,40 @@ export default function UserApprovalsPage() {
            <div className="col-span-2 lg:col-span-1 space-y-1"><label className="text-[9px] font-black text-gray-400">연락처</label><input type="text" placeholder="010-0000-0000" className="w-full p-2.5 border-2 rounded-lg" value={newUser.phone} onChange={e => setNewUser({...newUser, phone: e.target.value})} /></div>
            <div className="col-span-2 lg:col-span-1 space-y-1">
              <label className="text-[9px] font-black text-gray-400">부서</label>
-             <select className="w-full p-2.5 border-2 rounded-lg bg-white" value={newUser.department} onChange={e => setNewUser({...newUser, department: e.target.value})}>
-               <option value="">선택</option>{VALID_DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
-             </select>
+             <SearchableCombobox
+               value={newUser.department}
+               onChange={(v) => setNewUser({ ...newUser, department: v })}
+               options={departmentOptions}
+               placeholder="선택"
+             />
            </div>
            <div className="col-span-2 lg:col-span-1 space-y-1">
              <label className="text-[9px] font-black text-gray-400">직급</label>
-             <select className="w-full p-2.5 border-2 rounded-lg bg-white" value={newUser.job_rank} onChange={e => setNewUser({...newUser, job_rank: e.target.value})}>
-               <option value="">선택</option>{VALID_RANKS.map(r => <option key={r} value={r}>{r}</option>)}
-             </select>
+             <SearchableCombobox
+               value={newUser.job_rank}
+               onChange={(v) => setNewUser({ ...newUser, job_rank: v })}
+               options={rankOptions}
+               placeholder="선택"
+             />
            </div>
         </div>
-        <button onClick={handleCreateUser} className="w-full bg-black text-white p-3 rounded-xl font-black text-sm hover:bg-gray-800">직원 등록 및 승인대기목록 추가</button>
+        <button disabled={loading} onClick={handleCreateUser} className="w-full bg-black text-white p-3 rounded-xl font-black text-sm hover:bg-gray-800 disabled:opacity-50">직원 등록 및 승인대기목록 추가</button>
       </section>
 
       <section className="bg-white border-2 border-gray-200 rounded-2xl shadow-lg overflow-hidden flex-grow flex flex-col">
         <div className="p-4 border-b-2 bg-orange-50 flex justify-between items-center">
           <h2 className="text-sm font-black text-orange-800">🚨 가입 승인 대기 목록 ({pendingUsers.length}명)</h2>
           
-          {/* 🌟 휴지통 버튼과 승인 버튼 나란히 배치 */}
           <div className="flex gap-2">
-            <button 
+            <button disabled={loading}
               onClick={handleBulkDelete} 
-              className="px-4 py-2 bg-white border-2 border-red-200 text-red-500 rounded-lg text-xs font-black shadow-sm hover:bg-red-50 active:scale-95 transition-all"
+              className="px-4 py-2 bg-white border-2 border-red-200 text-red-500 rounded-lg text-xs font-black shadow-sm hover:bg-red-50 active:scale-95 transition-all disabled:opacity-50"
             >
               🗑️ 일괄 삭제
             </button>
-            <button 
+            <button disabled={loading}
               onClick={handleBulkApprove} 
-              className="px-5 py-2 bg-orange-600 text-white rounded-lg text-xs font-black shadow-md hover:bg-orange-700 active:scale-95 transition-all"
+              className="px-5 py-2 bg-orange-600 text-white rounded-lg text-xs font-black shadow-md hover:bg-orange-700 active:scale-95 transition-all disabled:opacity-50"
             >
               ✅ 일괄 승인
             </button>

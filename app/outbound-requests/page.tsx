@@ -2,21 +2,14 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import { createClient } from "@supabase/supabase-js"
+import { createClient } from '@supabase/supabase-js'
+import type { Database } from '@/lib/database.types'
+import { getOutboundRequestRowPresentation } from '@/lib/approval-status'
+import type { ApprovalDocLike, ApprovalLineLike } from '@/lib/approval-status'
 
-type OutboundRequestRow = {
-  id: number
-  req_no: string | null
-  req_date: string
-  requester_id: string
-  customer_id: number | null
-  purpose: string | null
-  remarks: string | null
-  status: 'draft' | 'submitted' | 'approved' | 'rejected' | 'completed' | 'cancelled'
-  approval_doc_id: number | null
-  outbound_completed: boolean
-  created_at: string
-  approval_doc?: any
+type OutboundRequestRow = Database['public']['Tables']['outbound_requests']['Row'] & {
+  approval_doc?: (ApprovalDocLike & { approval_lines?: ApprovalLineLike[] }) | null
+  warehouses?: { name: string | null } | null
 }
 
 type AppUserRow = {
@@ -28,38 +21,6 @@ type AppUserRow = {
 type CustomerRow = {
   id: number
   customer_name: string
-}
-
-// 🌟 초정밀 상태 및 디자인 반환 헬퍼 함수
-function getDetailedStatus(doc: any, lines: any[], reqStatus: string) {
-  if (!doc) {
-    if (reqStatus === 'draft') return { label: '작성중', style: 'bg-gray-100 text-gray-600 font-bold border border-gray-200' };
-    if (reqStatus === 'cancelled') return { label: '취소 완료', style: 'bg-gray-200 text-gray-500 font-bold line-through border border-gray-300' };
-    return { label: reqStatus, style: 'bg-gray-100 text-gray-700' };
-  }
-
-  if (doc.remarks === '취소 요청 중') return { label: '취소 요청', style: 'bg-red-100 text-red-700 font-black animate-pulse border border-red-200' };
-  if (doc.remarks?.includes('취소완료') || doc.remarks?.includes('취소승인')) return { label: '취소 진행중', style: 'bg-orange-100 text-orange-700 font-bold border border-orange-200' };
-  if (doc.status === 'rejected' && doc.remarks?.includes('재고환원')) return { label: '취소 완료', style: 'bg-gray-200 text-gray-500 font-bold line-through border border-gray-300' };
-  if (doc.status === 'rejected') return { label: '반려됨', style: 'bg-red-50 text-red-600 font-bold border border-red-100' };
-
-  if (doc.status === 'in_review' || doc.status === 'submitted') {
-    const approvedLines = lines?.filter((l: any) => l.status === 'approved') || [];
-    if (approvedLines.length > 0) {
-      const lastApproved = approvedLines[approvedLines.length - 1];
-      const roleLabel = lastApproved.approver_role === 'review' ? '검토자' : '결재자';
-      return { label: `${roleLabel} 승인`, style: 'bg-blue-100 text-blue-700 font-bold border border-blue-200 shadow-sm' };
-    }
-    return { label: '결재 진행중', style: 'bg-yellow-100 text-yellow-700 font-bold border border-yellow-200' };
-  }
-
-  if (reqStatus === 'completed') return { label: '출고 완료', style: 'bg-purple-100 text-purple-700 font-black border border-purple-200 shadow-sm' };
-  if (reqStatus === 'cancelled') return { label: '취소 완료', style: 'bg-gray-200 text-gray-500 font-bold line-through border border-gray-300' };
-  if (doc.status === 'approved') return { label: '최종 승인', style: 'bg-green-100 text-green-700 font-black border border-green-200 shadow-sm' };
-  if (doc.status === 'draft') return { label: '임시저장', style: 'bg-gray-100 text-gray-600 font-bold border border-gray-200' };
-  if (doc.status === 'submitted') return { label: '상신 (대기)', style: 'bg-blue-50 text-blue-600 font-bold border border-blue-100' };
-
-  return { label: reqStatus, style: 'bg-gray-100 text-gray-700' };
 }
 
 export default function OutboundRequestsPage() {
@@ -98,15 +59,15 @@ export default function OutboundRequestsPage() {
           .eq('id', user.id)
           .single();
           
-        const userIsAdmin = profile?.role_name === 'admin';
+        const userIsAdmin = String(profile?.role_name || '').toLowerCase() === 'admin';
         setIsAdmin(userIsAdmin);
 
         let myDocIds: number[] = [];
         if (!userIsAdmin) {
           const { data: lines } = await supabase
-            .from('approval_lines')
+            .from('approval_participants')
             .select('approval_doc_id')
-            .eq('approver_id', user.id);
+            .eq('user_id', user.id);
           
           myDocIds = lines?.map(line => line.approval_doc_id).filter(id => id !== null) as number[] || [];
         }
@@ -134,7 +95,8 @@ export default function OutboundRequestsPage() {
                 status, 
                 line_no
               )
-            )
+            ),
+            warehouses:warehouse_id(name)
           `)
           .order('id', { ascending: false });
 
@@ -162,13 +124,14 @@ export default function OutboundRequestsPage() {
           .select('id, customer_name')
           .order('customer_name');
 
-        setRequests((requestData as any[]) ?? []);
+        setRequests(((requestData ?? []) as unknown) as OutboundRequestRow[]);
         setUsers((usersData as AppUserRow[]) ?? []);
         setCustomers((customersData as CustomerRow[]) ?? []);
 
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error('outbound requests load error:', error);
-        setErrorMessage(`출고요청서 데이터를 불러오지 못했습니다: ${error.message}`);
+        const msg = error instanceof Error ? error.message : String(error);
+        setErrorMessage(`출고요청서 데이터를 불러오지 못했습니다: ${msg}`);
       } finally {
         setIsLoading(false);
       }
@@ -218,6 +181,7 @@ export default function OutboundRequestsPage() {
                 <th className="px-5 py-4 font-bold">상태 (결재진행)</th>
                 <th className="px-5 py-4 font-bold">요청일</th>
                 <th className="px-5 py-4 font-bold">요청자</th>
+                <th className="px-5 py-4 font-bold">창고</th>
                 <th className="px-5 py-4 font-bold">거래처</th>
                 <th className="px-5 py-4 font-bold max-w-[200px]">출고목적</th>
                 <th className="px-5 py-4 font-bold">비고 (반려/취소사유)</th>
@@ -226,21 +190,25 @@ export default function OutboundRequestsPage() {
             <tbody className="divide-y divide-gray-100">
               {isLoading ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-16 text-center font-bold text-gray-400">
+                  <td colSpan={8} className="px-5 py-16 text-center font-bold text-gray-400">
                     출고요청서 데이터를 불러오는 중입니다...
                   </td>
                 </tr>
               ) : requests.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-16 text-center font-bold text-gray-400">
+                  <td colSpan={8} className="px-5 py-16 text-center font-bold text-gray-400">
                     권한이 있는 출고요청서 데이터가 없습니다.
                   </td>
                 </tr>
               ) : (
                 requests.map((request) => {
                   // 🌟 결재선 데이터를 안전하게 매핑합니다
-                  const lines = request.approval_doc?.approval_lines?.sort((a: any, b: any) => a.line_no - b.line_no) || [];
-                  const statusInfo = getDetailedStatus(request.approval_doc, lines, request.status);
+                  const lines = request.approval_doc?.approval_lines ?? [];
+                  const statusInfo = getOutboundRequestRowPresentation({
+                    approvalDoc: request.approval_doc,
+                    lines,
+                    reqStatus: request.status,
+                  });
 
                   return (
                     <tr key={request.id} className="hover:bg-gray-50 transition-colors">
@@ -253,14 +221,13 @@ export default function OutboundRequestsPage() {
                         </Link>
                       </td>
                       <td className="px-5 py-4">
-                        <span className={`inline-flex rounded-full px-3 py-1 text-[11px] tracking-tight uppercase ${statusInfo.style}`}>
-                          {statusInfo.label}
-                        </span>
+                        <span className={statusInfo.className}>{statusInfo.label}</span>
                       </td>
                       <td className="px-5 py-4 font-bold text-gray-600">{request.req_date}</td>
                       <td className="px-5 py-4 font-bold text-gray-900">
                         {requesterMap.get(request.requester_id) ?? '-'}
                       </td>
+                      <td className="px-5 py-4 font-bold text-gray-700">{request.warehouses?.name ?? '-'}</td>
                       <td className="px-5 py-4 font-bold text-blue-800">
                         {request.customer_id
                           ? customerMap.get(request.customer_id) ?? '-'

@@ -3,9 +3,55 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
+import SearchableCombobox from '@/components/SearchableCombobox';
+
+type WarehouseRow = { id: number; name: string };
+type GroupedInventoryRow = {
+  item_code: string;
+  item_name: string;
+  item_spec: string | null;
+  unit: string | null;
+  warehouse_id: number;
+  warehouse_name: string;
+  is_lot: boolean;
+  is_exp: boolean;
+  is_sn: boolean;
+  total_qty: number;
+  details: InventoryDetailRow[];
+};
+type InventoryDetailRow = {
+  id: number;
+  warehouse_id: number;
+  current_qty: number;
+  available_qty: number | null;
+  lot_no: string | null;
+  exp_date: string | null;
+  serial_no: string | null;
+  items:
+    | {
+        item_code: string;
+        item_name: string;
+        item_spec: string | null;
+        unit: string | null;
+        is_lot_managed: boolean;
+        is_exp_managed: boolean;
+        is_sn_managed: boolean;
+      }
+    | {
+        item_code: string;
+        item_name: string;
+        item_spec: string | null;
+        unit: string | null;
+        is_lot_managed: boolean;
+        is_exp_managed: boolean;
+        is_sn_managed: boolean;
+      }[];
+};
 
 export default function InventoryPage() {
-  const [groupedInventory, setGroupedInventory] = useState<any[]>([]);
+  const [groupedInventory, setGroupedInventory] = useState<GroupedInventoryRow[]>([]);
+  const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
+  const [warehouseFilter, setWarehouseFilter] = useState<string>('all');
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [isLoading, setIsLoading] = useState(true);
   
@@ -19,6 +65,7 @@ export default function InventoryPage() {
         .from('inventory')
         .select(`
           id,
+          warehouse_id,
           current_qty,
           available_qty,
           lot_no,
@@ -36,6 +83,12 @@ export default function InventoryPage() {
         `)
         .gt('current_qty', 0) // 잔량이 있는 것만 조회
         .order('exp_date', { ascending: true });
+      const { data: warehouseData } = await supabase
+        .from('warehouses')
+        .select('id, name')
+        .eq('is_active', true)
+        .order('sort_order');
+      setWarehouses(warehouseData || []);
 
       if (error) {
         console.error(error.message);
@@ -43,20 +96,26 @@ export default function InventoryPage() {
         return;
       }
 
-      const groups: Record<string, any> = {};
+      const groups: Record<string, GroupedInventoryRow> = {};
+      const warehouseMap = new Map((warehouseData as WarehouseRow[] | null)?.map((wh) => [wh.id, wh.name]) ?? []);
       
-      data?.forEach((row: any) => {
-        const code = row.items.item_code;
+      (data as unknown as InventoryDetailRow[] | null)?.forEach((row) => {
+        if (warehouseFilter !== 'all' && String(row.warehouse_id) !== warehouseFilter) return;
+        const rowItem = Array.isArray(row.items) ? row.items[0] : row.items;
+        if (!rowItem) return;
+        const code = `${rowItem.item_code}::${row.warehouse_id}`;
         
         if (!groups[code]) {
           groups[code] = {
             item_code: code,
-            item_name: row.items.item_name,
-            item_spec: row.items.item_spec,
-            unit: row.items.unit,
-            is_lot: row.items.is_lot_managed,
-            is_exp: row.items.is_exp_managed,
-            is_sn: row.items.is_sn_managed,
+            item_name: rowItem.item_name,
+            item_spec: rowItem.item_spec,
+            unit: rowItem.unit,
+            warehouse_id: row.warehouse_id,
+            warehouse_name: warehouseMap.get(row.warehouse_id) ?? `창고#${row.warehouse_id}`,
+            is_lot: rowItem.is_lot_managed,
+            is_exp: rowItem.is_exp_managed,
+            is_sn: rowItem.is_sn_managed,
             total_qty: 0,
             details: []
           };
@@ -71,7 +130,7 @@ export default function InventoryPage() {
     }
 
     fetchInventory();
-  }, []);
+  }, [warehouseFilter]);
 
   const toggleRow = (code: string, isTrackable: boolean) => {
     // 추적 관리 대상이 아니면 아예 열리지 않도록 차단
@@ -105,7 +164,7 @@ export default function InventoryPage() {
           <Link href="/inbound/new" className="px-4 py-2 border-2 border-blue-200 text-blue-700 bg-blue-50 rounded-xl text-sm font-black hover:bg-blue-100 transition-colors shadow-sm">
             + 입고 등록
           </Link>
-          <Link href="/outbound/new" className="px-4 py-2 border-2 border-red-200 text-red-700 bg-red-50 rounded-xl text-sm font-black hover:bg-red-100 transition-colors shadow-sm">
+          <Link href="/outbound-requests/new" className="px-4 py-2 border-2 border-red-200 text-red-700 bg-red-50 rounded-xl text-sm font-black hover:bg-red-100 transition-colors shadow-sm">
             - 수동 출고
           </Link>
         </div>
@@ -113,13 +172,25 @@ export default function InventoryPage() {
 
       {/* 🌟 검색 바 추가 */}
       <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm">
-        <input 
-          type="text" 
-          placeholder="품목명 또는 품목 코드로 검색..." 
-          className="w-full sm:w-1/2 md:w-1/3 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-blue-500 font-bold text-sm transition-colors"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
+        <div className="flex flex-wrap gap-2">
+          <input 
+            type="text" 
+            placeholder="품목명 또는 품목 코드로 검색..." 
+            className="w-full sm:w-1/2 md:w-1/3 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-blue-500 font-bold text-sm transition-colors"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+          <SearchableCombobox
+            className="w-56"
+            value={warehouseFilter}
+            onChange={setWarehouseFilter}
+            options={[
+              { value: 'all', label: '전체 창고' },
+              ...warehouses.map((wh) => ({ value: String(wh.id), label: wh.name, keywords: [wh.name] })),
+            ]}
+            placeholder="창고 선택"
+          />
+        </div>
       </div>
 
       {/* 🌟 모바일 가로 스크롤(overflow-x-auto) 및 whitespace-nowrap 적용 */}
@@ -129,6 +200,7 @@ export default function InventoryPage() {
             <tr>
               <th className="w-12 px-6 py-4"></th>
               <th className="px-6 py-4 font-black text-gray-500 uppercase tracking-wider">품목코드</th>
+              <th className="px-6 py-4 font-black text-gray-500 uppercase tracking-wider">창고</th>
               <th className="px-6 py-4 font-black text-gray-500 uppercase tracking-wider">품목명 / 관리옵션</th>
               <th className="px-6 py-4 font-black text-gray-500 uppercase tracking-wider">규격</th>
               <th className="px-6 py-4 text-right font-black text-gray-800 uppercase tracking-wider">총 재고수량</th>
@@ -137,13 +209,13 @@ export default function InventoryPage() {
           <tbody className="divide-y divide-gray-100">
             {isLoading ? (
               <tr>
-                <td colSpan={5} className="px-6 py-16 text-center text-gray-400 font-bold">
+                <td colSpan={6} className="px-6 py-16 text-center text-gray-400 font-bold">
                   재고 데이터를 불러오는 중입니다...
                 </td>
               </tr>
             ) : filteredGroups.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-6 py-16 text-center text-gray-400 font-bold">
+                <td colSpan={6} className="px-6 py-16 text-center text-gray-400 font-bold">
                   조건에 맞는 재고 데이터가 없습니다.
                 </td>
               </tr>
@@ -163,7 +235,10 @@ export default function InventoryPage() {
                         {isTrackable ? (expandedRows[group.item_code] ? '▼' : '▶') : '-'}
                       </td>
                       <td className="px-6 py-4 font-bold text-gray-600">
-                        {group.item_code}
+                        {String(group.item_code).split('::')[0]}
+                      </td>
+                      <td className="px-6 py-4 font-bold text-gray-700">
+                        {group.warehouse_name}
                       </td>
                       <td className="px-6 py-4 font-black text-gray-900 text-base">
                         <div className="flex items-center gap-2">
@@ -185,7 +260,7 @@ export default function InventoryPage() {
 
                     {isTrackable && expandedRows[group.item_code] && (
                       <tr className="bg-gray-50/50">
-                        <td colSpan={5} className="p-0 border-b border-gray-200">
+                        <td colSpan={6} className="p-0 border-b border-gray-200">
                           <div className="px-14 py-4 animate-in fade-in slide-in-from-top-2 duration-200 overflow-x-auto">
                             <table className="min-w-full text-xs bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden whitespace-nowrap">
                               <thead className="bg-gray-100/80 text-gray-500 font-bold">
@@ -197,7 +272,7 @@ export default function InventoryPage() {
                                 </tr>
                               </thead>
                               <tbody className="divide-y divide-gray-100">
-                                {group.details.map((detail: any, idx: number) => (
+                                {group.details.map((detail: InventoryDetailRow, idx: number) => (
                                   <tr key={detail.id || idx} className="hover:bg-gray-50">
                                     <td className="px-4 py-3 font-bold text-gray-700">
                                       {detail.lot_no ? (

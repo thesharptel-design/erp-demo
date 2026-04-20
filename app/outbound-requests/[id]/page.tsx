@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect, use } from 'react';
+import { useState, useEffect, use, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import ApprovalActionButtons from '@/components/ApprovalActionButtons'; 
+import { getApprovalRoleLabel } from '@/lib/approval-roles';
 
 // --- UI용 Helper 함수들 ---
 // 🌟 목록 페이지와 완전히 동일한 초정밀 상태 배지 함수
@@ -24,7 +25,7 @@ function getDetailedStatus(doc: any, lines: any[], reqStatus: string) {
     const approvedLines = lines?.filter((l: any) => l.status === 'approved') || [];
     if (approvedLines.length > 0) {
       const lastApproved = approvedLines[approvedLines.length - 1];
-      const roleLabel = lastApproved.approver_role === 'review' ? '검토자' : '결재자';
+      const roleLabel = getApprovalRoleLabel(lastApproved.approver_role);
       return { label: `${roleLabel} 승인`, style: 'bg-blue-100 text-blue-700 font-bold border border-blue-200 shadow-sm' };
     }
     return { label: '결재 진행중', style: 'bg-yellow-100 text-yellow-700 font-bold border border-yellow-200' };
@@ -51,9 +52,7 @@ function getActionLabel(actionType: string) {
 
 function getRoleName(role: string) {
   if (role === 'drafter') return '기안자';
-  if (role === 'review' || role === 'reviewer') return '검토자';
-  if (role === 'approve' || role === 'approver') return '결재자';
-  return role || '미상'; 
+  return getApprovalRoleLabel(role) || role || '미상'; 
 }
 
 function getDetailLineStatus(role: string, status: string) {
@@ -86,6 +85,7 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
   const [approvalLines, setApprovalLines] = useState<any[]>([]);
   const [approvalHistories, setApprovalHistories] = useState<any[]>([]);
   const [approvalDoc, setApprovalDoc] = useState<any>(null);
+  const [coaFiles, setCoaFiles] = useState<any[]>([]);
   
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
 
@@ -93,11 +93,7 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
   const [departments, setDepartments] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchDetailData();
-  }, [targetId]);
-
-  const fetchDetailData = async () => {
+  const fetchDetailData = useCallback(async () => {
     try {
       setLoading(true);
 
@@ -122,6 +118,7 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
       if (header) {
         setRequestData(header);
         let currentLines: any[] = [];
+        let currentParticipants: any[] = [];
 
         if (header.approval_doc_id) {
           const { data: doc } = await supabase
@@ -137,6 +134,11 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
             .order('line_no', { ascending: true });
           currentLines = lines || [];
           setApprovalLines(currentLines);
+          const { data: participantRows } = await supabase
+            .from('approval_participants')
+            .select('user_id, role')
+            .eq('approval_doc_id', header.approval_doc_id);
+          currentParticipants = participantRows || [];
 
           const { data: histories } = await supabase
             .from('approval_histories')
@@ -148,8 +150,9 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
 
         const isRequester = header.requester_id === user.id;
         const isApprover = currentLines.some(line => line.approver_id === user.id);
+        const isParticipant = currentParticipants.some((p) => p.user_id === user.id);
 
-        if (!isAdmin && !isRequester && !isApprover) {
+        if (!isAdmin && !isRequester && !isApprover && !isParticipant) {
           setHasPermission(false);
           setLoading(false);
           return;
@@ -163,13 +166,29 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
           .eq('outbound_request_id', header.id)
           .order('line_no', { ascending: true });
         setRequestItems(items || []);
+        const itemIds = (items || []).map((item: any) => item.item_id).filter((id: unknown) => !!id);
+        if (itemIds.length > 0) {
+          const { data: coaRows } = await supabase
+            .from('coa_files')
+            .select('id, item_id, version_no, file_name, storage_path, is_active, created_at')
+            .in('item_id', itemIds)
+            .eq('is_active', true)
+            .order('created_at', { ascending: false });
+          setCoaFiles(coaRows || []);
+        } else {
+          setCoaFiles([]);
+        }
       }
     } catch (error) {
       console.error(error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [targetId]);
+
+  useEffect(() => {
+    fetchDetailData();
+  }, [fetchDetailData]);
 
   if (loading) return <div className="p-10 text-center text-gray-500 font-bold">데이터를 불러오는 중입니다...</div>;
   
@@ -184,10 +203,10 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
             최고관리자이거나, 본인이 기안/결재하는 문서만<br/>확인할 수 있습니다.
           </p>
           <button 
-            onClick={() => router.push('/outbound-requests')} 
+            onClick={() => router.push('/approvals')} 
             className="w-full px-6 py-3.5 bg-black text-white text-sm font-bold rounded-xl hover:bg-gray-800 transition-colors shadow-sm"
           >
-            목록으로 돌아가기
+            통합 결재문서함으로
           </button>
         </div>
       </div>
@@ -212,8 +231,8 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
       
       <div className="flex items-start justify-between gap-4">
         <div>
-          <Link href="/outbound-requests" className="text-sm text-gray-500 hover:text-gray-700 font-bold">
-            ← 출고요청 목록으로
+          <Link href="/approvals" className="text-sm text-gray-500 hover:text-gray-700 font-bold">
+            ← 통합 결재문서함으로
           </Link>
           <h1 className="mt-2 text-3xl font-black tracking-tight">출고요청서 상세</h1>
           <p className="mt-1 text-gray-600 font-medium">문서 내용과 출고 품목, 결재 흐름을 확인합니다.</p>
@@ -270,6 +289,27 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
 
           <div className="rounded-2xl bg-white p-6 shadow-sm border border-gray-100">
             <h2 className="mb-4 text-xl font-black text-gray-900">출고 요청 품목</h2>
+            {coaFiles.length > 0 && (
+              <div className="mb-4 flex flex-wrap gap-2">
+                {coaFiles.map((file) => (
+                  <button
+                    key={file.id}
+                    type="button"
+                    onClick={async () => {
+                      const { data, error } = await supabase.storage.from('coa-files').createSignedUrl(file.storage_path, 60);
+                      if (error || !data?.signedUrl) {
+                        alert('CoA 다운로드 링크 생성 실패');
+                        return;
+                      }
+                      window.open(data.signedUrl, '_blank', 'noopener,noreferrer');
+                    }}
+                    className="px-3 py-1.5 rounded-lg border border-blue-200 bg-blue-50 text-blue-700 text-xs font-black"
+                  >
+                    CoA v{file.version_no} - {file.file_name}
+                  </button>
+                ))}
+              </div>
+            )}
             {/* 🌟 모바일 가로 스크롤 적용 */}
             <div className="overflow-x-auto rounded-xl border border-gray-200">
               <table className="min-w-full text-sm whitespace-nowrap">

@@ -4,6 +4,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
+import SearchableCombobox from '@/components/SearchableCombobox'
 
 type Item = {
   id: number
@@ -54,18 +56,6 @@ function getProductionOrderErrorMessage(error: SupabaseErrorLike) {
   }
 
   return '생산지시 저장 중 오류가 발생했습니다. 다시 시도해 주세요.'
-}
-
-function makeProdNo() {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = String(now.getMonth() + 1).padStart(2, '0')
-  const d = String(now.getDate()).padStart(2, '0')
-  const hh = String(now.getHours()).padStart(2, '0')
-  const mm = String(now.getMinutes()).padStart(2, '0')
-  const ss = String(now.getSeconds()).padStart(2, '0')
-
-  return `PR-${y}${m}${d}-${hh}${mm}${ss}`
 }
 
 export default function NewProductionOrderPage() {
@@ -130,6 +120,21 @@ export default function NewProductionOrderPage() {
   }, [])
 
   const filteredBoms = boms.filter((bom) => bom.parent_item_id === itemId)
+  const finishedItemOptions = items.map((item) => ({
+    value: String(item.id),
+    label: `${item.item_code} / ${item.item_name}`,
+    keywords: [item.item_code, item.item_name],
+  }))
+  const bomOptions = filteredBoms.map((bom) => ({
+    value: String(bom.id),
+    label: `${bom.bom_code} / 버전 ${bom.version_no}`,
+    keywords: [bom.bom_code, bom.version_no],
+  }))
+  const userOptions = users.map((user) => ({
+    value: user.id,
+    label: `${user.user_name} / ${user.login_id}`,
+    keywords: [user.user_name, user.login_id],
+  }))
 
   function handleFinishedItemChange(value: string) {
     const nextItemId = value ? Number(value) : ''
@@ -165,7 +170,11 @@ export default function NewProductionOrderPage() {
 
     setIsSaving(true)
 
-    const prodNo = makeProdNo()
+    const prodNo = await generateNextSerialDocNo(supabase, {
+      table: 'production_orders',
+      column: 'prod_no',
+      code: 'PR',
+    })
 
     const { data, error } = await supabase
       .from('production_orders')
@@ -237,34 +246,22 @@ export default function NewProductionOrderPage() {
 
             <div className="erp-field">
               <label className="erp-label">완제품</label>
-              <select
-                value={itemId}
-                onChange={(e) => handleFinishedItemChange(e.target.value)}
-                className="erp-select"
-              >
-                <option value="">완제품 선택</option>
-                {items.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.item_code} / {item.item_name}
-                  </option>
-                ))}
-              </select>
+              <SearchableCombobox
+                value={itemId ? String(itemId) : ''}
+                onChange={handleFinishedItemChange}
+                options={finishedItemOptions}
+                placeholder="완제품 선택"
+              />
             </div>
 
             <div className="erp-field">
               <label className="erp-label">BOM</label>
-              <select
-                value={bomId}
-                onChange={(e) => setBomId(e.target.value ? Number(e.target.value) : '')}
-                className="erp-select"
-              >
-                <option value="">BOM 선택</option>
-                {filteredBoms.map((bom) => (
-                  <option key={bom.id} value={bom.id}>
-                    {bom.bom_code} / 버전 {bom.version_no}
-                  </option>
-                ))}
-              </select>
+              <SearchableCombobox
+                value={bomId ? String(bomId) : ''}
+                onChange={(v) => setBomId(v ? Number(v) : '')}
+                options={bomOptions}
+                placeholder="BOM 선택"
+              />
             </div>
 
             <div className="erp-field">
@@ -280,18 +277,12 @@ export default function NewProductionOrderPage() {
 
             <div className="erp-field">
               <label className="erp-label">작성자</label>
-              <select
+              <SearchableCombobox
                 value={userId}
-                onChange={(e) => setUserId(e.target.value)}
-                className="erp-select"
-              >
-                <option value="">작성자 선택</option>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.user_name} / {user.login_id}
-                  </option>
-                ))}
-              </select>
+                onChange={setUserId}
+                options={userOptions}
+                placeholder="작성자 선택"
+              />
             </div>
 
             <div className="erp-field">

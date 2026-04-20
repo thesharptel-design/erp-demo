@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState, use } from 'react';
+import Image from 'next/image';
+import { useCallback, useEffect, useState, use } from 'react';
 import { supabase } from '@/lib/supabase';
 
 export default function QuotePrintPage({ params }: { params: Promise<{ id: string }> }) {
@@ -10,11 +11,7 @@ export default function QuotePrintPage({ params }: { params: Promise<{ id: strin
   const [myInfo, setMyInfo] = useState<any>({});
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchData();
-  }, [id]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       const { data: qData } = await supabase.from('quotes').select('*, customers(*)').eq('id', id).maybeSingle();
@@ -29,7 +26,11 @@ export default function QuotePrintPage({ params }: { params: Promise<{ id: strin
       const { data: mData } = await supabase.from('my_company_settings').select('*').eq('id', 1).maybeSingle();
       if (mData) setMyInfo(mData);
     } catch (e) { console.error(e); } finally { setLoading(false); }
-  };
+  }, [id]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   if (loading || !data) return <div className="p-20 text-center font-bold text-slate-400">📄 문서를 구성 중입니다...</div>;
 
@@ -60,7 +61,7 @@ export default function QuotePrintPage({ params }: { params: Promise<{ id: strin
           </div>
           <div className="text-right">
             {myInfo.logo_url ? (
-              <img src={myInfo.logo_url} className="h-12 ml-auto object-contain mb-2" alt="Logo" />
+              <Image src={myInfo.logo_url} className="h-12 ml-auto object-contain mb-2 w-auto" alt="Logo" width={120} height={48} unoptimized />
             ) : (
               <span className="text-2xl font-black italic text-slate-200 tracking-tighter">{myInfo.company_name}</span>
             )}
@@ -91,7 +92,7 @@ export default function QuotePrintPage({ params }: { params: Promise<{ id: strin
                 <span className="z-10">{myInfo.ceo_name}</span>
                 {/* 🌟 인감 위치: 김용태 성함 기준 더 오른쪽으로 조정 (left-75px -> 95px) */}
                 {myInfo.stamp_url && (
-                  <img src={myInfo.stamp_url} className="w-14 h-14 absolute left-[95px] top-[-18px] opacity-90 rotate-12 z-0" alt="Stamp" />
+                  <Image src={myInfo.stamp_url} className="w-14 h-14 absolute left-[95px] top-[-18px] opacity-90 rotate-12 z-0" alt="Stamp" width={56} height={56} unoptimized />
                 )}
               </div>
               <div className="flex"><span className="w-20 text-slate-300 font-medium">주소</span><span className="text-slate-600 font-medium max-w-[200px]">{myInfo.address}</span></div>

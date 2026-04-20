@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { generateNextDroDocNo } from '@/lib/approval-doc-no'
+import { hasManagePermission } from '@/lib/permissions'
 
 type SubmitRequestBody = {
   outbound_request_id: number
@@ -48,13 +50,19 @@ export async function POST(request: NextRequest) {
 
     const { data: currentAppUser, error: currentAppUserError } = await adminClient
       .from('app_users')
-      .select('id, role_name, can_approve, is_active')
+      .select('id, role_name, can_material_manage, can_manage_permissions, can_receive_stock, is_active')
       .eq('email', currentUser.email)
       .single()
 
     if (currentAppUserError || !currentAppUser || !currentAppUser.is_active) {
       return NextResponse.json(
         { error: '현재 사용자 정보를 확인할 수 없습니다.' },
+        { status: 403 }
+      )
+    }
+    if (!hasManagePermission(currentAppUser, 'can_material_manage')) {
+      return NextResponse.json(
+        { error: '출고요청 상신 권한이 없습니다.' },
         { status: 403 }
       )
     }
@@ -147,7 +155,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (!requesterUser.dept_id) {
+    if (requesterUser.dept_id === null || requesterUser.dept_id === undefined) {
       return NextResponse.json(
         { error: '요청자 부서 정보가 없어 결재문서를 생성할 수 없습니다.' },
         { status: 400 }
@@ -181,8 +189,8 @@ export async function POST(request: NextRequest) {
       }>).map((item) => [item.id, item])
     )
 
-    const docNo = `AP-OUT-${outboundRequest.req_no}`
-    const title = `[출고요청] ${outboundRequest.req_no}`
+    const docNo = await generateNextDroDocNo(adminClient)
+    const title = `[출고요청] ${docNo}`
     const now = new Date().toISOString()
     const draftedAt = now
     const submittedAt = now
@@ -195,7 +203,7 @@ export async function POST(request: NextRequest) {
       .join('\n')
 
     const content = [
-      `출고요청번호: ${outboundRequest.req_no}`,
+      `출고요청번호: ${docNo}`,
       `요청일: ${outboundRequest.req_date}`,
       `요청자: ${requesterUser.user_name ?? '-'}${requesterUser.login_id ? ` / ${requesterUser.login_id}` : ''}`,
       `거래처: ${customerName || '-'}`,
@@ -238,6 +246,7 @@ export async function POST(request: NextRequest) {
       .update({
         status: 'submitted',
         approval_doc_id: approvalDoc.id,
+        req_no: docNo,
       })
       .eq('id', outboundRequest.id)
 

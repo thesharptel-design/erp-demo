@@ -1,498 +1,288 @@
-import Link from 'next/link'
-import { supabase } from '@/lib/supabase'
+'use client';
 
-type ItemRow = {
-  id: number
-  item_code: string
-  item_name: string
-  safety_stock_qty: number
-}
+import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabase';
+import { getDocDetailHref } from '@/lib/approval-status';
+import type { ApprovalDocLike } from '@/lib/approval-status';
 
-type InventoryRow = {
-  item_id: number
-  current_qty: number
-  available_qty?: number | null
-  quarantine_qty?: number | null
-}
-
+// --- 타입 정의 ---
+type ItemRow = { id: number; item_code: string; item_name: string; safety_stock_qty: number; };
+type InventoryRow = { item_id: number; current_qty: number; available_qty?: number | null; quarantine_qty?: number | null; };
 type ApprovalDocRow = {
-  id: number
-  doc_no: string
-  title: string
-  status: string
-  drafted_at: string
-}
+  id: number;
+  doc_no: string;
+  title: string;
+  status: string;
+  drafted_at: string;
+  doc_type: string | null;
+  outbound_requests: { id: number }[] | { id: number } | null;
+};
+type ProductionOrderRow = { id: number; prod_no: string; status: string; prod_date: string; inbound_completed?: boolean; items: { item_name: string } | null; };
+type PurchaseOrderRow = { id: number; po_no: string; status: string; po_date: string; remarks: string | null; customers: { customer_name: string } | null; };
+type InventoryTransactionRow = { id: number; trans_type: string; trans_date: string; };
+type QcRequestRow = { id: number; qc_type: 'raw_material' | 'sample' | 'final_product'; qc_status: 'requested' | 'received' | 'testing' | 'pass' | 'fail' | 'hold'; result_status: 'pending' | 'pass' | 'fail'; request_date: string; };
+type WarehouseRow = { id: number; is_active: boolean; };
+type CoaFileRow = { id: number; is_active: boolean; };
+type LoginAuditRow = { success: boolean; login_at: string; };
 
-type ProductionOrderRow = {
-  id: number
-  prod_no: string
-  status: string
-  prod_date: string
-  inbound_completed?: boolean
-  items: {
-    item_name: string
-  } | null
-}
-
-type PurchaseOrderRow = {
-  id: number
-  po_no: string
-  status: string
-  po_date: string
-  remarks: string | null
-  customers: {
-    customer_name: string
-  } | null
-}
-
-type InventoryTransactionRow = {
-  id: number
-  trans_type: string
-  trans_date: string
-}
-
-type QcRequestRow = {
-  id: number
-  qc_type: 'raw_material' | 'sample' | 'final_product'
-  qc_status: 'requested' | 'received' | 'testing' | 'pass' | 'fail' | 'hold'
-  result_status: 'pending' | 'pass' | 'fail'
-  request_date: string
-}
-
-async function getDashboardData() {
-  const [
-    { data: itemsData, error: itemsError },
-    { data: inventoryData, error: inventoryError },
-    { data: approvalsData, error: approvalsError },
-    { data: productionOrdersData, error: productionOrdersError },
-    { data: purchaseOrdersData, error: purchaseOrdersError },
-    { data: inventoryTransactionsData, error: inventoryTransactionsError },
-    { data: qcRequestsData, error: qcRequestsError },
-  ] = await Promise.all([
-    supabase
-      .from('items')
-      .select('id, item_code, item_name, safety_stock_qty')
-      .eq('is_active', true),
-    supabase
-      .from('inventory')
-      .select('item_id, current_qty, available_qty, quarantine_qty'),
-    supabase
-      .from('approval_docs')
-      .select('id, doc_no, title, status, drafted_at')
-      .order('id', { ascending: false }),
-    supabase
-      .from('production_orders')
-      .select(`
-        id,
-        prod_no,
-        status,
-        prod_date,
-        inbound_completed,
-        items:item_id (
-          item_name
-        )
-      `)
-      .order('id', { ascending: false }),
-    supabase
-      .from('purchase_orders')
-      .select(`
-        id,
-        po_no,
-        status,
-        po_date,
-        remarks,
-        customers:customer_id (
-          customer_name
-        )
-      `)
-      .order('id', { ascending: false }),
-    supabase
-      .from('inventory_transactions')
-      .select('id, trans_type, trans_date')
-      .order('id', { ascending: false }),
-    supabase
-      .from('qc_requests')
-      .select('id, qc_type, qc_status, result_status, request_date')
-      .order('id', { ascending: false }),
-  ])
-
-  if (itemsError) console.error('items error:', itemsError.message)
-  if (inventoryError) console.error('inventory error:', inventoryError.message)
-  if (approvalsError) console.error('approval_docs error:', approvalsError.message)
-  if (productionOrdersError) console.error('production_orders error:', productionOrdersError.message)
-  if (purchaseOrdersError) console.error('purchase_orders error:', purchaseOrdersError.message)
-  if (inventoryTransactionsError) console.error('inventory_transactions error:', inventoryTransactionsError.message)
-  if (qcRequestsError) console.error('qc_requests error:', qcRequestsError.message)
-
-  return {
-    items: (itemsData as ItemRow[]) ?? [],
-    inventory: (inventoryData as InventoryRow[]) ?? [],
-    approvals: (approvalsData as ApprovalDocRow[]) ?? [],
-    productionOrders: (productionOrdersData as unknown as ProductionOrderRow[]) ?? [],
-    purchaseOrders: (purchaseOrdersData as unknown as PurchaseOrderRow[]) ?? [],
-    inventoryTransactions: (inventoryTransactionsData as InventoryTransactionRow[]) ?? [],
-    qcRequests: (qcRequestsData as QcRequestRow[]) ?? [],
+// --- 뱃지(상태) 스타일 헬퍼 ---
+const getBadgeStyle = (type: 'gray' | 'blue' | 'green' | 'red' | 'orange') => {
+  const base = "px-2.5 py-1 text-[10px] font-black rounded-md uppercase tracking-wider";
+  switch(type) {
+    case 'gray': return `${base} bg-gray-100 text-gray-500`;
+    case 'blue': return `${base} bg-blue-100 text-blue-600`;
+    case 'green': return `${base} bg-green-100 text-green-600`;
+    case 'red': return `${base} bg-red-100 text-red-600`;
+    case 'orange': return `${base} bg-orange-100 text-orange-600`;
+    default: return `${base} bg-gray-100 text-gray-500`;
   }
-}
+};
 
-function getApprovalStatusLabel(status: string) {
+const getApprovalBadge = (status: string) => {
   switch (status) {
-    case 'draft':
-      return '임시저장'
-    case 'submitted':
-      return '상신'
-    case 'in_review':
-      return '결재중'
-    case 'approved':
-      return '승인'
-    case 'rejected':
-      return '반려'
-    default:
-      return status
+    case 'draft': return <span className={getBadgeStyle('gray')}>임시저장</span>;
+    case 'submitted': return <span className={getBadgeStyle('orange')}>상신</span>;
+    case 'in_review': return <span className={getBadgeStyle('blue')}>결재중</span>;
+    case 'approved': return <span className={getBadgeStyle('green')}>승인</span>;
+    case 'rejected': return <span className={getBadgeStyle('red')}>반려</span>;
+    default: return <span className={getBadgeStyle('gray')}>{status}</span>;
   }
-}
+};
 
-function getApprovalStatusStyle(status: string) {
+const getProductionBadge = (status: string) => {
   switch (status) {
-    case 'draft':
-      return 'erp-badge erp-badge-draft'
-    case 'submitted':
-      return 'erp-badge erp-badge-progress'
-    case 'in_review':
-      return 'erp-badge erp-badge-review'
-    case 'approved':
-      return 'erp-badge erp-badge-done'
-    case 'rejected':
-      return 'erp-badge erp-badge-danger'
-    default:
-      return 'erp-badge erp-badge-draft'
+    case 'planned': return <span className={getBadgeStyle('gray')}>생산예정</span>;
+    case 'in_progress': return <span className={getBadgeStyle('blue')}>생산중</span>;
+    case 'completed': return <span className={getBadgeStyle('green')}>생산완료</span>;
+    default: return <span className={getBadgeStyle('gray')}>{status}</span>;
   }
-}
+};
 
-function getProductionStatusLabel(status: string) {
+const getPurchaseBadge = (status: string) => {
   switch (status) {
-    case 'planned':
-      return '생산예정'
-    case 'in_progress':
-      return '생산중'
-    case 'completed':
-      return '생산완료'
-    default:
-      return status
+    case 'draft': return <span className={getBadgeStyle('gray')}>임시저장</span>;
+    case 'ordered': return <span className={getBadgeStyle('blue')}>발주완료</span>;
+    case 'received': return <span className={getBadgeStyle('green')}>입고완료</span>;
+    case 'cancelled': return <span className={getBadgeStyle('red')}>취소</span>;
+    default: return <span className={getBadgeStyle('gray')}>{status}</span>;
   }
-}
+};
 
-function getProductionStatusStyle(status: string) {
-  switch (status) {
-    case 'planned':
-      return 'erp-badge erp-badge-draft'
-    case 'in_progress':
-      return 'erp-badge erp-badge-progress'
-    case 'completed':
-      return 'erp-badge erp-badge-done'
-    default:
-      return 'erp-badge erp-badge-draft'
-  }
-}
+export default function DashboardPage() {
+  const [data, setData] = useState({
+    items: [] as ItemRow[],
+    inventory: [] as InventoryRow[],
+    approvals: [] as ApprovalDocRow[],
+    productionOrders: [] as ProductionOrderRow[],
+    purchaseOrders: [] as PurchaseOrderRow[],
+    inventoryTransactions: [] as InventoryTransactionRow[],
+    qcRequests: [] as QcRequestRow[],
+    warehouses: [] as WarehouseRow[],
+    coaFiles: [] as CoaFileRow[],
+    loginAudits: [] as LoginAuditRow[],
+  });
+  const [loading, setLoading] = useState(true);
 
-function getPurchaseStatusLabel(status: string) {
-  switch (status) {
-    case 'draft':
-      return '임시저장'
-    case 'ordered':
-      return '발주완료'
-    case 'received':
-      return '입고완료'
-    case 'cancelled':
-      return '취소'
-    default:
-      return status
-  }
-}
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const [
+          { data: itemsData }, { data: inventoryData }, { data: approvalsData },
+          { data: productionOrdersData }, { data: purchaseOrdersData },
+          { data: inventoryTransactionsData }, { data: qcRequestsData }, { data: warehouseData },
+          { data: coaFileData }, { data: loginAuditData },
+        ] = await Promise.all([
+          supabase.from('items').select('id, item_code, item_name, safety_stock_qty').eq('is_active', true),
+          supabase.from('inventory').select('item_id, current_qty, available_qty, quarantine_qty'),
+          supabase.from('approval_docs').select('id, doc_no, title, status, drafted_at, doc_type, outbound_requests(id)').order('id', { ascending: false }).limit(5),
+          supabase.from('production_orders').select(`id, prod_no, status, prod_date, inbound_completed, items:item_id(item_name)`).order('id', { ascending: false }).limit(5),
+          supabase.from('purchase_orders').select(`id, po_no, status, po_date, remarks, customers:customer_id(customer_name)`).order('id', { ascending: false }).limit(5),
+          supabase.from('inventory_transactions').select('id, trans_type, trans_date').order('id', { ascending: false }),
+          supabase.from('qc_requests').select('id, qc_type, qc_status, result_status, request_date').order('id', { ascending: false }),
+          supabase.from('warehouses').select('id, is_active'),
+          supabase.from('coa_files').select('id, is_active'),
+          supabase.from('login_audit_logs').select('success, login_at').order('login_at', { ascending: false }).limit(100),
+        ]);
 
-function getPurchaseStatusStyle(status: string) {
-  switch (status) {
-    case 'draft':
-      return 'erp-badge erp-badge-draft'
-    case 'ordered':
-      return 'erp-badge erp-badge-progress'
-    case 'received':
-      return 'erp-badge erp-badge-done'
-    case 'cancelled':
-      return 'erp-badge erp-badge-danger'
-    default:
-      return 'erp-badge erp-badge-draft'
-  }
-}
+        setData({
+          items: (itemsData as ItemRow[]) || [],
+          inventory: (inventoryData as InventoryRow[]) || [],
+          approvals: (approvalsData as ApprovalDocRow[]) || [],
+          productionOrders: (productionOrdersData as unknown as ProductionOrderRow[]) || [],
+          purchaseOrders: (purchaseOrdersData as unknown as PurchaseOrderRow[]) || [],
+          inventoryTransactions: (inventoryTransactionsData as InventoryTransactionRow[]) || [],
+          qcRequests: (qcRequestsData as QcRequestRow[]) || [],
+          warehouses: (warehouseData as WarehouseRow[]) || [],
+          coaFiles: (coaFileData as CoaFileRow[]) || [],
+          loginAudits: (loginAuditData as LoginAuditRow[]) || [],
+        });
+      } catch (error) {
+        console.error('Dashboard load error:', error);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadData();
+  }, []);
 
-export default async function DashboardPage() {
-  const {
-    items,
-    inventory,
-    approvals,
-    productionOrders,
-    purchaseOrders,
-    inventoryTransactions,
-    qcRequests,
-  } = await getDashboardData()
+  if (loading) return <div className="flex min-h-screen items-center justify-center bg-gray-50"><div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>;
 
-  const inventoryMap = new Map(
-    inventory.map((row) => [
-      row.item_id,
-      {
-        currentQty: Number(row.current_qty ?? 0),
-        availableQty: Number(row.available_qty ?? 0),
-        quarantineQty: Number(row.quarantine_qty ?? 0),
-      },
-    ])
-  )
+  // --- 데이터 집계 로직 ---
+  const inventoryMap = new Map(data.inventory.map((row) => [row.item_id, { availableQty: Number(row.available_qty ?? 0) }]));
+  
+  const shortageCount = data.items.filter((item) => (inventoryMap.get(item.id)?.availableQty ?? 0) < Number(item.safety_stock_qty ?? 0)).length;
+  const quarantineCount = data.inventory.filter((row) => Number(row.quarantine_qty ?? 0) > 0).length;
+  const pendingApprovalCount = data.approvals.filter((doc) => ['submitted', 'in_review'].includes(doc.status)).length;
+  const pendingOutboundRequestCount = data.approvals.filter((doc) => doc.doc_type === 'outbound_request' && ['submitted', 'in_review'].includes(doc.status)).length;
+  const pendingQcCount = data.qcRequests.filter((qc) => ['requested', 'received', 'testing', 'hold'].includes(qc.qc_status)).length;
+  const pendingProdInboundCount = data.productionOrders.filter((order) => order.status === 'completed' && !order.inbound_completed).length;
+  const activeWarehouseCount = data.warehouses.filter((wh) => wh.is_active).length;
+  const activeCoaCount = data.coaFiles.filter((file) => file.is_active).length;
 
-  const shortageCount = items.filter((item) => {
-    const inventoryRow = inventoryMap.get(item.id)
-    const availableQty = inventoryRow?.availableQty ?? 0
-    return availableQty < Number(item.safety_stock_qty ?? 0)
-  }).length
-
-  const quarantineItemCount = inventory.filter(
-    (row) => Number(row.quarantine_qty ?? 0) > 0
-  ).length
-
-  const pendingApprovalCount = approvals.filter((doc) =>
-    ['submitted', 'in_review'].includes(doc.status)
-  ).length
-
-  const pendingQcCount = qcRequests.filter((qc) =>
-    ['requested', 'received', 'testing', 'hold'].includes(qc.qc_status)
-  ).length
-
-  const pendingInboundProductionCount = productionOrders.filter(
-    (order) => order.status === 'completed' && !order.inbound_completed
-  ).length
-
-  const today = new Date().toISOString().slice(0, 10)
-
-  const todayInboundCount = inventoryTransactions.filter((tx) => {
-    const txDate = tx.trans_date.slice(0, 10)
-    return txDate === today && ['IN', 'PROD_IN', 'QC_RELEASE'].includes(tx.trans_type)
-  }).length
-
-  const recentApprovals = approvals.slice(0, 5)
-  const recentProductionOrders = productionOrders.slice(0, 5)
-  const recentPurchaseOrders = purchaseOrders.slice(0, 5)
+  // 한국 시간(KST) 기준으로 오늘 날짜 구하기
+  const today = new Date(new Date().getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const todayInboundCount = data.inventoryTransactions.filter((tx) => tx.trans_date.slice(0, 10) === today && ['IN', 'PROD_IN', 'QC_RELEASE'].includes(tx.trans_type)).length;
+  const todayLoginFailCount = data.loginAudits.filter((log) => !log.success && log.login_at.slice(0, 10) === today).length;
 
   return (
-    <div className="erp-page">
-      <div className="erp-page-header">
-        <div>
-          <h1 className="erp-page-title">대시보드</h1>
-          <p className="erp-page-desc">
-            바이오형 업무 흐름 기준으로 구매, 생산, 품질, 재고 현황을 한눈에 확인합니다.
-          </p>
-        </div>
+    <div className="p-6 max-w-[1600px] mx-auto font-sans bg-gray-50 min-h-screen space-y-6">
+      
+      {/* 🌟 헤더 영역 */}
+      <header className="mb-8">
+        <h1 className="text-4xl font-black uppercase tracking-tighter text-gray-900 italic">
+          BIO<span className="text-blue-600">-ERP</span> DASHBOARD
+        </h1>
+        <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mt-1">
+          Integrated Management System Overview
+        </p>
+      </header>
+
+      {/* 🌟 요약 통계 카드 (브루탈리즘 스타일 적용) */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-8 gap-4">
+        {[
+          { title: '부족 품목', count: shortageCount, desc: '안전재고 미만', color: 'text-red-600', bg: 'bg-red-50' },
+          { title: '격리 재고', count: quarantineCount, desc: 'QC 해제 대기', color: 'text-orange-600', bg: 'bg-orange-50' },
+          { title: '미결재 문서', count: pendingApprovalCount, desc: '상신/결재중', color: 'text-blue-600', bg: 'bg-blue-50' },
+          { title: '출고요청 대기', count: pendingOutboundRequestCount, desc: '출고요청 결재중', color: 'text-indigo-600', bg: 'bg-indigo-50' },
+          { title: 'QC 대기', count: pendingQcCount, desc: '시험/보류 중', color: 'text-purple-600', bg: 'bg-purple-50' },
+          { title: '생산완료 미입고', count: pendingProdInboundCount, desc: '입고 대기 상태', color: 'text-pink-600', bg: 'bg-pink-50' },
+          { title: '활성 창고', count: activeWarehouseCount, desc: '창고 플랫폼 운영수', color: 'text-cyan-700', bg: 'bg-cyan-50' },
+          { title: '활성 CoA', count: activeCoaCount, desc: '다운로드 가능 문서', color: 'text-emerald-700', bg: 'bg-emerald-50' },
+          { title: '금일 입고/반영', count: todayInboundCount, desc: '오늘 반영된 수량', color: 'text-green-600', bg: 'bg-green-50' },
+          { title: '금일 로그인 실패', count: todayLoginFailCount, desc: '감사 모니터링', color: 'text-rose-700', bg: 'bg-rose-50' },
+        ].map((stat, i) => (
+          <div key={i} className={`p-5 rounded-2xl border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] bg-white flex flex-col justify-between hover:-translate-y-1 transition-transform`}>
+            <p className="text-[11px] font-black text-gray-500 uppercase">{stat.title}</p>
+            <p className={`mt-2 text-4xl font-black tracking-tighter ${stat.color}`}>{stat.count}</p>
+            <p className="mt-3 text-[10px] font-bold text-gray-400 bg-gray-50 px-2 py-1 rounded-md inline-block self-start">{stat.desc}</p>
+          </div>
+        ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-        <div className="erp-card p-5">
-          <p className="text-sm font-medium text-gray-500">사용가능 부족 품목</p>
-          <p className="mt-3 text-3xl font-bold tracking-tight text-gray-900">
-            {shortageCount}
-          </p>
-          <p className="mt-2 text-sm text-gray-500">안전재고 미만 기준</p>
+      {/* 🌟 최근 현황 리스트 */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
+        
+        {/* 최근 발주 */}
+        <div className="bg-white border-2 border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col">
+          <div className="flex justify-between items-end mb-4 border-b-2 border-gray-100 pb-3">
+            <h2 className="text-sm font-black flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500"></span>최근 발주 현황</h2>
+            <Link href="/purchase-orders" className="text-[10px] font-bold text-gray-400 hover:text-blue-600 underline">전체보기 →</Link>
+          </div>
+          <div className="space-y-2 flex-1">
+            {data.purchaseOrders.length === 0 ? <p className="text-xs text-gray-400 font-bold py-4 text-center">데이터가 없습니다.</p> : 
+              data.purchaseOrders.map((po) => (
+                <Link key={po.id} href={`/purchase-orders/${po.id}`} className="flex justify-between items-center p-3 rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all">
+                  <div className="min-w-0 flex-1 pr-2">
+                    <p className="text-xs font-black text-gray-900 truncate">{po.po_no}</p>
+                    <p className="text-[10px] font-bold text-gray-400 mt-0.5 truncate">{po.customers?.customer_name ?? '알 수 없음'} | {po.po_date}</p>
+                  </div>
+                  <div>{getPurchaseBadge(po.status)}</div>
+                </Link>
+              ))
+            }
+          </div>
         </div>
 
-        <div className="erp-card p-5">
-          <p className="text-sm font-medium text-gray-500">격리재고 보유 품목</p>
-          <p className="mt-3 text-3xl font-bold tracking-tight text-gray-900">
-            {quarantineItemCount}
-          </p>
-          <p className="mt-2 text-sm text-gray-500">QC 해제 대기 품목 수</p>
+        {/* 최근 생산지시 */}
+        <div className="bg-white border-2 border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col">
+          <div className="flex justify-between items-end mb-4 border-b-2 border-gray-100 pb-3">
+            <h2 className="text-sm font-black flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500"></span>최근 생산 지시</h2>
+            <Link href="/production-orders" className="text-[10px] font-bold text-gray-400 hover:text-blue-600 underline">전체보기 →</Link>
+          </div>
+          <div className="space-y-2 flex-1">
+            {data.productionOrders.length === 0 ? <p className="text-xs text-gray-400 font-bold py-4 text-center">데이터가 없습니다.</p> : 
+              data.productionOrders.map((order) => (
+                <Link key={order.id} href={`/production-orders/${order.id}`} className="flex justify-between items-center p-3 rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all">
+                  <div className="min-w-0 flex-1 pr-2">
+                    <p className="text-xs font-black text-gray-900 truncate">{order.prod_no}</p>
+                    <p className="text-[10px] font-bold text-gray-400 mt-0.5 truncate">{order.items?.item_name ?? '-'} | {order.prod_date}</p>
+                  </div>
+                  <div>{getProductionBadge(order.status)}</div>
+                </Link>
+              ))
+            }
+          </div>
         </div>
 
-        <div className="erp-card p-5">
-          <p className="text-sm font-medium text-gray-500">미결재 문서</p>
-          <p className="mt-3 text-3xl font-bold tracking-tight text-gray-900">
-            {pendingApprovalCount}
-          </p>
-          <p className="mt-2 text-sm text-gray-500">상신 / 결재중 문서 수</p>
+        {/* 최근 결재문서 */}
+        <div className="bg-white border-2 border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col">
+          <div className="flex justify-between items-end mb-4 border-b-2 border-gray-100 pb-3">
+            <h2 className="text-sm font-black flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-orange-500"></span>최근 결재 문서</h2>
+            <Link href="/approvals" className="text-[10px] font-bold text-gray-400 hover:text-blue-600 underline">전체보기 →</Link>
+          </div>
+          <div className="space-y-2 flex-1">
+            {data.approvals.length === 0 ? <p className="text-xs text-gray-400 font-bold py-4 text-center">데이터가 없습니다.</p> : 
+              data.approvals.map((doc) => (
+                <Link key={doc.id} href={getDocDetailHref(doc as unknown as ApprovalDocLike & { id: number })} className="flex justify-between items-center p-3 rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all">
+                  <div className="min-w-0 flex-1 pr-2">
+                    <p className="text-[10px] font-bold text-gray-400 truncate">{doc.doc_no}</p>
+                    <p className="text-xs font-black text-gray-900 mt-0.5 truncate">{doc.title}</p>
+                  </div>
+                  <div>{getApprovalBadge(doc.status)}</div>
+                </Link>
+              ))
+            }
+          </div>
         </div>
 
-        <div className="erp-card p-5">
-          <p className="text-sm font-medium text-gray-500">QC 진행 대기</p>
-          <p className="mt-3 text-3xl font-bold tracking-tight text-gray-900">
-            {pendingQcCount}
-          </p>
-          <p className="mt-2 text-sm text-gray-500">의뢰 / 접수 / 시험 / 보류</p>
-        </div>
-
-        <div className="erp-card p-5">
-          <p className="text-sm font-medium text-gray-500">미입고 생산완료</p>
-          <p className="mt-3 text-3xl font-bold tracking-tight text-gray-900">
-            {pendingInboundProductionCount}
-          </p>
-          <p className="mt-2 text-sm text-gray-500">완제품 QC 또는 입고 대기</p>
-        </div>
-
-        <div className="erp-card p-5">
-          <p className="text-sm font-medium text-gray-500">금일 재고 반영</p>
-          <p className="mt-3 text-3xl font-bold tracking-tight text-gray-900">
-            {todayInboundCount}
-          </p>
-          <p className="mt-2 text-sm text-gray-500">입고 / 생산입고 / QC해제 기준</p>
-        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <div className="erp-card">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-gray-900">최근 발주</h2>
-            <Link href="/purchase-orders" className="text-sm text-blue-600 hover:underline">
-              전체보기
-            </Link>
-          </div>
-
-          <div className="space-y-3">
-            {recentPurchaseOrders.length === 0 ? (
-              <p className="text-sm text-gray-400">최근 발주 데이터가 없습니다.</p>
-            ) : (
-              recentPurchaseOrders.map((po) => (
-                <Link
-                  key={po.id}
-                  href={`/purchase-orders/${po.id}`}
-                  className="block rounded-xl border border-gray-200 px-4 py-4 transition hover:bg-gray-50"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-gray-900">{po.po_no}</p>
-                      <p className="mt-1 text-sm text-gray-500">
-                        {po.customers?.customer_name ?? '-'} / {po.po_date}
-                      </p>
-                    </div>
-                    <span className={getPurchaseStatusStyle(po.status)}>
-                      {getPurchaseStatusLabel(po.status)}
-                    </span>
-                  </div>
-                </Link>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="erp-card">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-gray-900">최근 생산지시</h2>
-            <Link href="/production-orders" className="text-sm text-blue-600 hover:underline">
-              전체보기
-            </Link>
-          </div>
-
-          <div className="space-y-3">
-            {recentProductionOrders.length === 0 ? (
-              <p className="text-sm text-gray-400">최근 생산지시 데이터가 없습니다.</p>
-            ) : (
-              recentProductionOrders.map((order) => (
-                <Link
-                  key={order.id}
-                  href={`/production-orders/${order.id}`}
-                  className="block rounded-xl border border-gray-200 px-4 py-4 transition hover:bg-gray-50"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-gray-900">{order.prod_no}</p>
-                      <p className="mt-1 text-sm text-gray-500">
-                        {order.items?.item_name ?? '-'} / {order.prod_date}
-                      </p>
-                    </div>
-                    <span className={getProductionStatusStyle(order.status)}>
-                      {getProductionStatusLabel(order.status)}
-                    </span>
-                  </div>
-                </Link>
-              ))
-            )}
-          </div>
-        </div>
-
-        <div className="erp-card">
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold text-gray-900">최근 결재문서</h2>
-            <Link href="/approvals" className="text-sm text-blue-600 hover:underline">
-              전체보기
-            </Link>
-          </div>
-
-          <div className="space-y-3">
-            {recentApprovals.length === 0 ? (
-              <p className="text-sm text-gray-400">최근 결재문서가 없습니다.</p>
-            ) : (
-              recentApprovals.map((doc) => (
-                <Link
-                  key={doc.id}
-                  href={`/approvals/${doc.id}`}
-                  className="block rounded-xl border border-gray-200 px-4 py-4 transition hover:bg-gray-50"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-gray-900">{doc.doc_no}</p>
-                      <p className="mt-1 truncate text-sm text-gray-500">{doc.title}</p>
-                    </div>
-                    <span className={getApprovalStatusStyle(doc.status)}>
-                      {getApprovalStatusLabel(doc.status)}
-                    </span>
-                  </div>
-                </Link>
-              ))
-            )}
-          </div>
-        </div>
-      </div>
-
-      <div className="erp-card">
+      {/* 🌟 빠른 이동 (현재 사이드바 구조 완벽 동기화) */}
+      <div className="bg-white border-2 border-black rounded-2xl p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] mt-8">
         <div className="mb-4">
-          <h2 className="text-lg font-semibold text-gray-900">빠른 이동</h2>
-          <p className="mt-1 text-sm text-gray-500">
-            현재 메뉴 구조에 맞는 주요 기능으로 바로 이동합니다.
-          </p>
+          <h2 className="text-base font-black flex items-center gap-2">🚀 QUICK LINKS <span className="text-[10px] font-bold text-gray-400 ml-2 bg-gray-100 px-2 py-1 rounded">빠른 메뉴 이동</span></h2>
         </div>
-
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
-          <Link href="/quotes" className="erp-btn-secondary w-full">
-            영업관리 / 견적서관리
-          </Link>
-          <Link href="/purchase-orders" className="erp-btn-secondary w-full">
-            구매관리 / 발주서관리
-          </Link>
-          <Link href="/production-orders" className="erp-btn-secondary w-full">
-            생산관리 / 생산지시관리
-          </Link>
-          <Link href="/boms" className="erp-btn-secondary w-full">
-            생산관리 / BOM관리
-          </Link>
-          <Link href="/qc" className="erp-btn-secondary w-full">
-            품질관리 / QC관리
-          </Link>
-          <Link href="/inventory" className="erp-btn-secondary w-full">
-            재고관리 / 재고현황
-          </Link>
-          <Link href="/inventory-transactions" className="erp-btn-secondary w-full">
-            재고관리 / 입출고현황
-          </Link>
-          <Link href="/inventory-adjustments" className="erp-btn-secondary w-full">
-            재고관리 / 재고조정
-          </Link>
-          <Link href="/customers" className="erp-btn-secondary w-full">
-            기준정보 / 거래처관리
-          </Link>
-          <Link href="/items" className="erp-btn-secondary w-full">
-            기준정보 / 품목관리
-          </Link>
-          <Link href="/admin/user-permissions" className="erp-btn-secondary w-full">
-            기준정보 / 사용자권한관리
-          </Link>
-          <Link href="/approvals" className="erp-btn-secondary w-full">
-            기안/결재
-          </Link>
+        
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+          {[
+            { name: '견적서 관리', path: '/quotes', icon: '📝' },
+            { name: '수주/발주 관리', path: '/purchase-orders', icon: '🛒' },
+            { name: '생산지시/BOM', path: '/production-orders', icon: '⚙️' },
+            { name: 'QC 대기/내역', path: '/qc', icon: '🔬' },
+            { name: '재고/입출고 현황', path: '/inventory', icon: '📦' },
+            { name: '출고 지시 처리', path: '/outbound-instructions', icon: '📋' },
+            { name: '자재 입/출고 등록', path: '/inbound/new', icon: '📥' },
+            { name: '거래처 마스터', path: '/customers', icon: '🏢' },
+            { name: '품목 마스터', path: '/items', icon: '🏷️' },
+            { name: '사용자 권한 관리', path: '/admin/user-permissions', icon: '🔑' },
+            { name: '로그인 감사 모니터', path: '/admin/login-audit', icon: '🛡️' },
+            { name: '창고 관리', path: '/admin/warehouses', icon: '🏭' },
+            { name: 'CoA 파일 관리', path: '/admin/coa-files', icon: '📎' },
+            { name: '결재 문서함', path: '/approvals', icon: '✅' },
+          ].map((link, idx) => (
+            <Link 
+              key={idx} 
+              href={link.path} 
+              className="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-gray-100 hover:border-blue-600 hover:bg-blue-50 transition-all group"
+            >
+              <span className="text-2xl mb-2 group-hover:scale-110 transition-transform">{link.icon}</span>
+              <span className="text-[11px] font-black text-gray-600 group-hover:text-blue-700 text-center">{link.name}</span>
+            </Link>
+          ))}
         </div>
       </div>
+      
     </div>
-  )
+  );
 }

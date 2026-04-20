@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, use } from 'react';
+import { useCallback, useEffect, useState, use } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -12,11 +12,7 @@ export default function SalesOrderDetailPage({ params }: { params: Promise<{ id:
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchData();
-  }, [id]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
       // 1. 수주 마스터 정보 가져오기 (Relationship 에러 방지를 위해 간단하게 호출)
@@ -46,7 +42,11 @@ export default function SalesOrderDetailPage({ params }: { params: Promise<{ id:
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, router]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   if (loading || !data) return <div className="p-20 text-center font-bold text-gray-400 animate-pulse">수주 데이터를 불러오는 중입니다...</div>;
 
@@ -63,16 +63,14 @@ export default function SalesOrderDetailPage({ params }: { params: Promise<{ id:
             </p>
           </div>
         </div>
-// ... (중략) 버튼 부분만 아래와 같이 수정하세요
-<div className="flex gap-3">
-  <button 
-    onClick={() => router.push(`/outbound/new?so_id=${id}`)} // 🌟 주소창에 수주 ID를 담아서 이동
-    className="px-10 py-4 bg-gray-900 text-white rounded-[1.5rem] font-black shadow-xl hover:bg-black transition-all active:scale-95"
-  >
-    📦 출고 등록 (Outbound)
-  </button>
-  {/* ... (수정하기 버튼 등 기존 코드) */}
-</div>
+        <div className="flex gap-3">
+          <button
+            onClick={() => router.push(`/outbound-requests/new?so_id=${id}`)}
+            className="px-10 py-4 bg-gray-900 text-white rounded-[1.5rem] font-black shadow-xl hover:bg-black transition-all active:scale-95"
+          >
+            📦 출고 등록 (Outbound)
+          </button>
+        </div>
       </div>
 
       {/* 중간: 요약 정보 카드 */}

@@ -120,7 +120,7 @@ export default async function PurchaseOrdersPage() {
         <ProtectedCreateButton
           href="/purchase-orders/new"
           label="발주서 등록"
-          permissionKey="can_po_create"
+          permissionKey="can_sales_manage"
         />
       </div>
 

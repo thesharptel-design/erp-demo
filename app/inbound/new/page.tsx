@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import SearchableCombobox from '@/components/SearchableCombobox';
 
 export default function NewInboundPage() {
   const router = useRouter();
@@ -11,6 +12,7 @@ export default function NewInboundPage() {
   // 기초 데이터 상태
   const [items, setItems] = useState<any[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+  const [warehouses, setWarehouses] = useState<any[]>([]);
   const [userData, setUserData] = useState<any>(null);
 
   // 폼 입력 데이터 상태
@@ -19,6 +21,7 @@ export default function NewInboundPage() {
   
   const [inboundDate, setInboundDate] = useState(new Date().toISOString().split('T')[0]); 
   const [customerId, setCustomerId] = useState('');
+  const [warehouseId, setWarehouseId] = useState('');
   const [remarks, setRemarks] = useState('');
 
   const [qty, setQty] = useState(1);
@@ -27,6 +30,23 @@ export default function NewInboundPage() {
   const [serialNo, setSerialNo] = useState('');
   
   const [isSaving, setIsSaving] = useState(false);
+  const itemOptions = useMemo(
+    () =>
+      items.map((item) => ({
+        value: String(item.id),
+        label: `[${item.item_code}] ${item.item_name}`,
+        keywords: [item.item_code, item.item_name],
+      })),
+    [items]
+  );
+  const customerOptions = useMemo(
+    () => customers.map((c) => ({ value: String(c.id), label: c.customer_name, keywords: [c.customer_name] })),
+    [customers]
+  );
+  const warehouseOptions = useMemo(
+    () => warehouses.map((wh) => ({ value: String(wh.id), label: wh.name, keywords: [wh.name] })),
+    [warehouses]
+  );
 
   // 1. 초기 데이터 로드
   useEffect(() => {
@@ -52,6 +72,14 @@ export default function NewInboundPage() {
         .select('id, customer_name')
         .eq('is_active', true);
       setCustomers(customersData || []);
+
+      const { data: warehouseData } = await supabase
+        .from('warehouses')
+        .select('id, name')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true });
+      setWarehouses(warehouseData || []);
+      if (warehouseData?.[0]?.id) setWarehouseId(String(warehouseData[0].id));
     };
     fetchData();
   }, []);
@@ -77,12 +105,17 @@ export default function NewInboundPage() {
     e.preventDefault();
     if (!selectedItemId) return alert('품목을 선택해주세요.');
     if (!customerId) return alert('거래처를 선택해주세요.');
+    if (!warehouseId) return alert('입고 창고를 선택해주세요.');
     if (!userData?.id) return alert('사용자 인증 정보가 없습니다. 다시 로그인해주세요.');
     
     setIsSaving(true);
     try {
       // [A] 기존 재고(inventory) 검색
-      let query = supabase.from('inventory').select('*').eq('item_id', selectedItemId);
+      let query = supabase
+        .from('inventory')
+        .select('*')
+        .eq('item_id', selectedItemId)
+        .eq('warehouse_id', Number(warehouseId));
       
       if (selectedItem?.is_lot_managed && lotNo) query = query.eq('lot_no', lotNo);
       else query = query.is('lot_no', null);
@@ -97,6 +130,9 @@ export default function NewInboundPage() {
       if (fetchError) throw fetchError;
 
 // [B] 재고 데이터 갱신 (UPSERT)
+      const itemIdNum = Number(selectedItemId)
+      let inventoryIdForTx: number | null = null
+
       if (existingStock) {
         
         // 🚨 [핵심 방어 로직 추가] S/N 관리 품목인데 이미 창고에 수량이 있다면 절대 차단!
@@ -117,22 +153,27 @@ export default function NewInboundPage() {
           .eq('id', existingStock.id);
         
         if (updateError) throw updateError;
+        inventoryIdForTx = Number(existingStock.id)
       } else {
         // 기존 재고가 없으면 신규 생성
         // ... (이하 기존 else 구문 동일)
-           const { error: insertError } = await supabase
+           const { data: insertedRow, error: insertError } = await supabase
           .from('inventory')
           .insert({
-            item_id: selectedItemId,
+            item_id: itemIdNum,
             lot_no: (selectedItem?.is_lot_managed && lotNo) ? lotNo : null,
             exp_date: (selectedItem?.is_exp_managed && expDate) ? expDate : null,
             serial_no: (selectedItem?.is_sn_managed && serialNo) ? serialNo : null,
             current_qty: qty,
             available_qty: qty,
-            quarantine_qty: 0
-          });
+            quarantine_qty: 0,
+            warehouse_id: Number(warehouseId),
+          })
+          .select('id')
+          .single();
           
         if (insertError) throw insertError;
+        inventoryIdForTx = insertedRow?.id ?? null
       }
 
       // [C] 수불부(inventory_transactions) 상세 이력 기록
@@ -140,7 +181,7 @@ export default function NewInboundPage() {
       const { error: transError } = await supabase
         .from('inventory_transactions')
         .insert({
-          item_id: selectedItemId,
+          item_id: itemIdNum,
           trans_type: 'IN', // 👈 transaction_type 대신 스키마에 맞춰 trans_type 사용 및 제약조건에 맞춰 'IN' 입력
           qty: qty,
           lot_no: (selectedItem?.is_lot_managed && lotNo) ? lotNo : null,
@@ -148,9 +189,12 @@ export default function NewInboundPage() {
           serial_no: (selectedItem?.is_sn_managed && serialNo) ? serialNo : null,
           customer_id: parseInt(customerId),
           remarks: remarks || null,
-          transaction_date: inboundDate,
+          trans_date: inboundDate,
           actor_id: userData.id,
-          created_by: userData.id // 👈 스키마의 created_by 외래키 제약조건 대비
+          created_by: userData.id, // 👈 스키마의 created_by 외래키 제약조건 대비
+          warehouse_id: Number(warehouseId),
+          inventory_id: inventoryIdForTx,
+          ref_table: 'inbound_new',
         });
 
       if (transError) throw transError;
@@ -195,17 +239,12 @@ export default function NewInboundPage() {
             </div>
             <div>
               <label className="block text-xs font-black mb-2 text-gray-500 uppercase">거래처 (매입처) <span className="text-red-500">*</span></label>
-              <select 
+              <SearchableCombobox
                 value={customerId}
-                onChange={(e) => setCustomerId(e.target.value)}
-                className="w-full border-2 border-gray-100 bg-gray-50 rounded-xl p-3 outline-none focus:border-blue-500 font-bold text-gray-700 transition-all"
-                required
-              >
-                <option value="">거래처를 선택하세요</option>
-                {customers.map(c => (
-                  <option key={c.id} value={c.id}>{c.customer_name}</option>
-                ))}
-              </select>
+                onChange={setCustomerId}
+                options={customerOptions}
+                placeholder="거래처를 선택하세요"
+              />
             </div>
             <div>
               <label className="block text-xs font-black mb-2 text-gray-500 uppercase">담당자</label>
@@ -214,6 +253,15 @@ export default function NewInboundPage() {
                 value={userData?.user_name || '사용자 로딩 중...'}
                 disabled
                 className="w-full border-2 border-gray-100 bg-gray-100 rounded-xl p-3 font-black text-gray-500 cursor-not-allowed"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-black mb-2 text-gray-500 uppercase">입고 창고 <span className="text-red-500">*</span></label>
+              <SearchableCombobox
+                value={warehouseId}
+                onChange={setWarehouseId}
+                options={warehouseOptions}
+                placeholder="창고 선택"
               />
             </div>
             <div className="lg:col-span-4">
@@ -238,17 +286,13 @@ export default function NewInboundPage() {
 
           <div className="mb-6">
             <label className="block text-xs font-black mb-2 text-gray-500 uppercase">입고 품목 선택 <span className="text-red-500">*</span></label>
-            <select 
+            <SearchableCombobox
               value={selectedItemId}
-              onChange={(e) => handleItemChange(e.target.value)}
-              className="w-full border-2 border-gray-200 rounded-xl p-4 outline-none focus:border-black font-bold text-lg transition-all shadow-sm"
-              required
-            >
-              <option value="">품목을 선택하세요</option>
-              {items.map(item => (
-                <option key={item.id} value={item.id}>{`[${item.item_code}] ${item.item_name}`}</option>
-              ))}
-            </select>
+              onChange={handleItemChange}
+              options={itemOptions}
+              placeholder="품목을 검색/선택하세요 (예: 벨)"
+              className="text-lg"
+            />
           </div>
 
           <div className={`grid grid-cols-1 md:grid-cols-2 gap-6 p-6 rounded-2xl border-2 transition-all duration-300 ${selectedItem ? 'border-blue-100 bg-blue-50/30' : 'border-gray-100 bg-gray-50 opacity-50 pointer-events-none'}`}>

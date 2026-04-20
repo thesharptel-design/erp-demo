@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import SearchableCombobox from '@/components/SearchableCombobox'
 
 type ItemRow = {
   id: number
@@ -15,9 +16,18 @@ type ItemRow = {
 type InventoryRow = {
   id: number
   item_id: number
+  warehouse_id: number
   current_qty: number
   available_qty: number
   quarantine_qty: number
+  lot_no: string | null
+  exp_date: string | null
+  serial_no: string | null
+}
+
+type WarehouseRow = {
+  id: number
+  name: string
 }
 
 type AdjustmentType =
@@ -50,24 +60,10 @@ function getItemTypeLabel(itemType: string) {
   }
 }
 
-function getAdjustmentTypeLabel(type: AdjustmentType) {
-  switch (type) {
-    case 'available_increase':
-      return '사용가능재고 증가'
-    case 'available_decrease':
-      return '사용가능재고 감소'
-    case 'quarantine_increase':
-      return '격리재고 증가'
-    case 'quarantine_decrease':
-      return '격리재고 감소'
-    default:
-      return type
-  }
-}
-
 export default function InventoryAdjustmentsPage() {
   const [items, setItems] = useState<ItemRow[]>([])
   const [inventoryRows, setInventoryRows] = useState<InventoryRow[]>([])
+  const [warehouses, setWarehouses] = useState<WarehouseRow[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
@@ -75,6 +71,7 @@ export default function InventoryAdjustmentsPage() {
 
   const [searchKeyword, setSearchKeyword] = useState('')
   const [selectedItemId, setSelectedItemId] = useState<number | ''>('')
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | ''>('')
   const [adjustmentType, setAdjustmentType] =
     useState<AdjustmentType>('available_increase')
   const [adjustQty, setAdjustQty] = useState('0')
@@ -88,6 +85,7 @@ export default function InventoryAdjustmentsPage() {
       const [
         { data: itemsData, error: itemsError },
         { data: inventoryData, error: inventoryError },
+        { data: warehouseData, error: warehouseError },
       ] = await Promise.all([
         supabase
           .from('items')
@@ -96,14 +94,20 @@ export default function InventoryAdjustmentsPage() {
           .order('item_name'),
         supabase
           .from('inventory')
-          .select('id, item_id, current_qty, available_qty, quarantine_qty')
+          .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty, lot_no, exp_date, serial_no')
           .order('item_id'),
+        supabase
+          .from('warehouses')
+          .select('id, name')
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true }),
       ])
 
-      if (itemsError || inventoryError) {
+      if (itemsError || inventoryError || warehouseError) {
         console.error('inventory adjustment load error:', {
           itemsError,
           inventoryError,
+          warehouseError,
         })
         setErrorMessage('재고조정 데이터를 불러오지 못했습니다.')
         setIsLoading(false)
@@ -112,16 +116,21 @@ export default function InventoryAdjustmentsPage() {
 
       setItems((itemsData as ItemRow[]) ?? [])
       setInventoryRows((inventoryData as InventoryRow[]) ?? [])
+      const nextWarehouses = (warehouseData as WarehouseRow[]) ?? []
+      setWarehouses(nextWarehouses)
+      if (!selectedWarehouseId && nextWarehouses[0]?.id) {
+        setSelectedWarehouseId(nextWarehouses[0].id)
+      }
       setIsLoading(false)
     }
 
     loadData()
-  }, [])
+  }, [selectedWarehouseId])
 
   const inventoryMap = useMemo(() => {
     return new Map(
       inventoryRows.map((row) => [
-        row.item_id,
+        `${row.item_id}:${row.warehouse_id}`,
         {
           id: row.id,
           current_qty: Number(row.current_qty ?? 0),
@@ -147,7 +156,10 @@ export default function InventoryAdjustmentsPage() {
 
   const previewRows: AdjustmentPreviewRow[] = useMemo(() => {
     return filteredItems.map((item) => {
-      const inventory = inventoryMap.get(item.id)
+      const inventory =
+        selectedWarehouseId
+          ? inventoryMap.get(`${item.id}:${selectedWarehouseId}`)
+          : undefined
 
       return {
         item_id: item.id,
@@ -160,14 +172,17 @@ export default function InventoryAdjustmentsPage() {
         quarantine_qty: inventory?.quarantine_qty ?? 0,
       }
     })
-  }, [filteredItems, inventoryMap])
+  }, [filteredItems, inventoryMap, selectedWarehouseId])
 
   const selectedItem = useMemo(() => {
     if (!selectedItemId) return null
     const item = items.find((row) => row.id === selectedItemId)
     if (!item) return null
 
-    const inventory = inventoryMap.get(item.id)
+    const inventory =
+      selectedWarehouseId
+        ? inventoryMap.get(`${item.id}:${selectedWarehouseId}`)
+        : undefined
 
     return {
       ...item,
@@ -175,7 +190,29 @@ export default function InventoryAdjustmentsPage() {
       available_qty: inventory?.available_qty ?? 0,
       quarantine_qty: inventory?.quarantine_qty ?? 0,
     }
-  }, [selectedItemId, items, inventoryMap])
+  }, [selectedItemId, items, inventoryMap, selectedWarehouseId])
+  const warehouseOptions = useMemo(
+    () => warehouses.map((wh) => ({ value: String(wh.id), label: wh.name, keywords: [wh.name] })),
+    [warehouses]
+  )
+  const itemOptions = useMemo(
+    () =>
+      items.map((item) => ({
+        value: String(item.id),
+        label: `${item.item_code} / ${item.item_name}`,
+        keywords: [item.item_code, item.item_name],
+      })),
+    [items]
+  )
+  const adjustmentTypeOptions = useMemo(
+    () => [
+      { value: 'available_increase', label: '사용가능재고 증가' },
+      { value: 'available_decrease', label: '사용가능재고 감소' },
+      { value: 'quarantine_increase', label: '격리재고 증가' },
+      { value: 'quarantine_decrease', label: '격리재고 감소' },
+    ],
+    []
+  )
 
   async function handleSaveAdjustment() {
     setErrorMessage('')
@@ -183,6 +220,10 @@ export default function InventoryAdjustmentsPage() {
 
     if (!selectedItemId) {
       setErrorMessage('조정할 품목을 선택하십시오.')
+      return
+    }
+    if (!selectedWarehouseId) {
+      setErrorMessage('조정 대상 창고를 선택하십시오.')
       return
     }
 
@@ -213,6 +254,7 @@ export default function InventoryAdjustmentsPage() {
         },
         body: JSON.stringify({
           item_id: selectedItemId,
+          warehouse_id: selectedWarehouseId,
           adjustment_type: adjustmentType,
           qty,
           remarks: remarks.trim(),
@@ -233,7 +275,7 @@ export default function InventoryAdjustmentsPage() {
 
       const { data: inventoryData, error: inventoryError } = await supabase
         .from('inventory')
-        .select('id, item_id, current_qty, available_qty, quarantine_qty')
+        .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty, lot_no, exp_date, serial_no')
         .order('item_id')
 
       if (!inventoryError) {
@@ -274,35 +316,33 @@ export default function InventoryAdjustmentsPage() {
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
           <div className="erp-field">
+            <label className="erp-label">창고 선택</label>
+            <SearchableCombobox
+              value={selectedWarehouseId ? String(selectedWarehouseId) : ''}
+              onChange={(v) => setSelectedWarehouseId(v ? Number(v) : '')}
+              options={warehouseOptions}
+              placeholder="창고 선택"
+            />
+          </div>
+
+          <div className="erp-field">
             <label className="erp-label">품목 선택</label>
-            <select
-              value={selectedItemId}
-              onChange={(e) =>
-                setSelectedItemId(e.target.value ? Number(e.target.value) : '')
-              }
-              className="erp-select"
-            >
-              <option value="">품목 선택</option>
-              {items.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.item_code} / {item.item_name}
-                </option>
-              ))}
-            </select>
+            <SearchableCombobox
+              value={selectedItemId ? String(selectedItemId) : ''}
+              onChange={(v) => setSelectedItemId(v ? Number(v) : '')}
+              options={itemOptions}
+              placeholder="품목 선택"
+            />
           </div>
 
           <div className="erp-field">
             <label className="erp-label">조정 유형</label>
-            <select
+            <SearchableCombobox
               value={adjustmentType}
-              onChange={(e) => setAdjustmentType(e.target.value as AdjustmentType)}
-              className="erp-select"
-            >
-              <option value="available_increase">사용가능재고 증가</option>
-              <option value="available_decrease">사용가능재고 감소</option>
-              <option value="quarantine_increase">격리재고 증가</option>
-              <option value="quarantine_decrease">격리재고 감소</option>
-            </select>
+              onChange={(v) => setAdjustmentType(v as AdjustmentType)}
+              options={adjustmentTypeOptions}
+              placeholder="조정 유형"
+            />
           </div>
 
           <div className="erp-field">
