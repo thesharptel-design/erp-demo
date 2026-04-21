@@ -16,16 +16,45 @@ import type { ApprovalDocLike } from '@/lib/approval-status';
 
 type ApprovalsDocRow = ApprovalDocLike & {
   id: number;
+  writer_id: string | null;
   doc_no: string | null;
   title: string | null;
   drafted_at: string | null;
+  recent_reject_comment?: string | null;
+  my_line_no?: number | null;
   app_users?: { user_name?: string } | { user_name?: string }[] | null;
   departments?: { dept_name?: string } | { dept_name?: string }[] | null;
 };
 
+function getLineStepBadge(input: {
+  doc: ApprovalsDocRow;
+  currentUserId: string | null;
+  myLineNo: number | null;
+}) {
+  const { doc, currentUserId, myLineNo } = input;
+  const base = 'inline-flex items-center rounded-full border px-2.5 py-1 text-[11px] font-black';
+  if (doc.status === 'draft') return { label: '임시저장', className: `${base} border-gray-200 bg-gray-100 text-gray-500` };
+  if (doc.status === 'approved') return { label: '완료', className: `${base} border-green-200 bg-green-100 text-green-700` };
+  if (doc.status === 'rejected') return { label: '반려', className: `${base} border-red-200 bg-red-50 text-red-600` };
+
+  const currentLineNo = doc.current_line_no ?? null;
+  const isWriter = currentUserId != null && String(doc.writer_id ?? '') === currentUserId;
+  if (myLineNo != null && currentLineNo != null) {
+    if (myLineNo === currentLineNo) return { label: '내 차례', className: `${base} border-blue-200 bg-blue-100 text-blue-700` };
+    if (myLineNo < currentLineNo) return { label: `${myLineNo}번 승인`, className: `${base} border-emerald-200 bg-emerald-100 text-emerald-700` };
+    return { label: `${myLineNo}번 대기`, className: `${base} border-indigo-200 bg-indigo-100 text-indigo-700` };
+  }
+  if (isWriter && currentLineNo != null) {
+    return { label: `${currentLineNo}번 진행`, className: `${base} border-amber-200 bg-amber-100 text-amber-700` };
+  }
+  if (currentLineNo != null) return { label: `${currentLineNo}번 진행`, className: `${base} border-gray-200 bg-gray-100 text-gray-600` };
+  return { label: '-', className: `${base} border-gray-200 bg-gray-100 text-gray-500` };
+}
+
 export default function ApprovalsPage() {
   const [docs, setDocs] = useState<ApprovalsDocRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
 
   const [filterDocNo, setFilterDocNo] = useState('');
   const [filterDocType, setFilterDocType] = useState('');
@@ -45,6 +74,7 @@ export default function ApprovalsPage() {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) return;
+      setCurrentUserId(user.id);
 
       const { data: profile } = await supabase
         .from('app_users')
@@ -73,8 +103,62 @@ export default function ApprovalsPage() {
       }
 
       const { data } = await query;
+      const loadedDocs = ((data as ApprovalsDocRow[]) || []).filter((doc) => doc.id != null);
+      const docIds = loadedDocs.map((doc) => doc.id);
 
-      setDocs((data as ApprovalsDocRow[]) || []);
+      if (docIds.length === 0) {
+        setDocs(loadedDocs);
+        return;
+      }
+
+      const [{ data: rejectedRows }, { data: rejectedHistoryRows }, { data: myParticipantRows }] = await Promise.all([
+        supabase
+          .from('approval_lines')
+          .select('approval_doc_id, opinion, acted_at')
+          .in('approval_doc_id', docIds)
+          .eq('status', 'rejected')
+          .not('opinion', 'is', null)
+          .order('acted_at', { ascending: false }),
+        supabase
+          .from('approval_histories')
+          .select('approval_doc_id, action_comment, action_at')
+          .in('approval_doc_id', docIds)
+          .eq('action_type', 'reject')
+          .not('action_comment', 'is', null)
+          .order('action_at', { ascending: false }),
+        supabase
+          .from('approval_participants')
+          .select('approval_doc_id, line_no')
+          .eq('user_id', user.id)
+          .in('approval_doc_id', docIds),
+      ]);
+
+      const rejectCommentMap = new Map<number, string>();
+      for (const row of (rejectedHistoryRows ?? []) as { approval_doc_id: number; action_comment: string | null }[]) {
+        if (!row.approval_doc_id || !row.action_comment) continue;
+        if (rejectCommentMap.has(row.approval_doc_id)) continue;
+        rejectCommentMap.set(row.approval_doc_id, row.action_comment);
+      }
+      for (const row of (rejectedRows ?? []) as { approval_doc_id: number; opinion: string | null }[]) {
+        if (!row.approval_doc_id || !row.opinion) continue;
+        if (rejectCommentMap.has(row.approval_doc_id)) continue;
+        rejectCommentMap.set(row.approval_doc_id, row.opinion);
+      }
+
+      const myLineMap = new Map<number, number>();
+      for (const row of (myParticipantRows ?? []) as { approval_doc_id: number; line_no: number | null }[]) {
+        if (!row.approval_doc_id || row.line_no == null) continue;
+        const prev = myLineMap.get(row.approval_doc_id);
+        if (prev == null || row.line_no < prev) myLineMap.set(row.approval_doc_id, row.line_no);
+      }
+
+      setDocs(
+        loadedDocs.map((doc) => ({
+          ...doc,
+          recent_reject_comment: rejectCommentMap.get(doc.id) ?? null,
+          my_line_no: myLineMap.get(doc.id) ?? null,
+        }))
+      );
     } catch (e: unknown) {
       console.error(e instanceof Error ? e.message : e);
     } finally {
@@ -112,6 +196,21 @@ export default function ApprovalsPage() {
     setFilterDraftDate('');
   };
 
+  const openDraftPopup = () => {
+    const popup = window.open(
+      '/approvals/new',
+      'approvalDraftPopup',
+      'popup=yes,width=1280,height=920,scrollbars=yes,resizable=yes'
+    );
+
+    // 팝업 차단 시 동일 탭으로 진입해 업무 중단을 방지합니다.
+    if (!popup) {
+      window.location.href = '/approvals/new';
+      return;
+    }
+    popup.focus();
+  };
+
   return (
     <div className="space-y-6 max-w-[1600px] mx-auto p-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between mb-8">
@@ -123,12 +222,13 @@ export default function ApprovalsPage() {
         </div>
 
         <div className="flex gap-3">
-          <Link
-            href="/approvals/new"
+          <button
+            type="button"
+            onClick={openDraftPopup}
             className="inline-flex h-12 items-center justify-center rounded-xl bg-white border-2 border-black px-5 text-sm font-black text-black hover:bg-gray-50 transition-all shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none"
           >
             일반 기안 작성
-          </Link>
+          </button>
           <Link
             href="/outbound-requests/new"
             className="inline-flex h-12 items-center justify-center rounded-xl bg-blue-600 border-2 border-black px-5 text-sm font-black text-white hover:bg-blue-700 transition-all shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none"
@@ -254,6 +354,11 @@ export default function ApprovalsPage() {
             ) : (
               filteredDocs.map((doc) => {
                 const pres = getApprovalDocDetailedStatusPresentation(doc);
+                const stepBadge = getLineStepBadge({
+                  doc,
+                  currentUserId,
+                  myLineNo: doc.my_line_no ?? null,
+                });
                 return (
                   <tr key={doc.id} className="hover:bg-gray-50 transition-colors group">
                     <td className="px-5 py-4 font-black">
@@ -262,7 +367,19 @@ export default function ApprovalsPage() {
                       </Link>
                     </td>
                     <td className="px-5 py-4 text-xs font-bold text-gray-400">{getDocTypeLabel(doc.doc_type)}</td>
-                    <td className="px-5 py-4 font-black text-gray-800">{doc.title}</td>
+                    <td className="px-5 py-4 font-black text-gray-800">
+                      <div className="space-y-1">
+                        <p>{doc.title}</p>
+                        {doc.recent_reject_comment && (
+                          <p
+                            className="max-w-[30rem] truncate text-xs font-bold text-red-600"
+                            title={doc.recent_reject_comment}
+                          >
+                            반려 코멘트: {doc.recent_reject_comment}
+                          </p>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-5 py-4 font-bold text-gray-600">
                       <div className="flex flex-col">
                         <span>{getWriterName(doc.app_users)}</span>
@@ -274,7 +391,12 @@ export default function ApprovalsPage() {
                     <td className="px-5 py-4 text-center">
                       <span className={pres.className}>{pres.label}</span>
                     </td>
-                    <td className="px-5 py-4 text-center font-black text-gray-400">{doc.current_line_no || '-'}</td>
+                    <td className="px-5 py-4 text-center">
+                      <div className="flex flex-col items-center gap-1">
+                        <span className={stepBadge.className}>{stepBadge.label}</span>
+                        <span className="text-[10px] font-bold text-gray-400">현재 {doc.current_line_no || '-'}번</span>
+                      </div>
+                    </td>
                     <td className="px-5 py-4 text-xs text-gray-400 font-bold">{doc.drafted_at?.slice(0, 10)}</td>
                   </tr>
                 );

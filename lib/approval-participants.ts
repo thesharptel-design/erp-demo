@@ -1,5 +1,5 @@
 import type { ApprovalRole } from '@/lib/approval-roles'
-import { normalizeApprovalRole, getApprovalRoleOrder, isApprovalActionRole } from '@/lib/approval-roles'
+import { normalizeApprovalRole, isApprovalActionRole } from '@/lib/approval-roles'
 
 export type ParticipantInput = {
   userId: string
@@ -16,7 +16,7 @@ export type ApprovalLineInsert = {
 
 export function normalizeParticipants(raw: Array<{ userId: string; role: string }>) {
   const dedup = new Set<string>()
-  const normalized: Array<ParticipantInput & { _inputOrder: number }> = []
+  const normalized: ParticipantInput[] = []
 
   for (let idx = 0; idx < raw.length; idx += 1) {
     const row = raw[idx]
@@ -26,15 +26,10 @@ export function normalizeParticipants(raw: Array<{ userId: string; role: string 
     const key = `${userId}-${role}`
     if (dedup.has(key)) continue
     dedup.add(key)
-    normalized.push({ userId, role, _inputOrder: idx })
+    normalized.push({ userId, role })
   }
 
-  normalized.sort((a, b) => {
-    const byRole = getApprovalRoleOrder(a.role) - getApprovalRoleOrder(b.role)
-    if (byRole !== 0) return byRole
-    return a._inputOrder - b._inputOrder
-  })
-  return normalized.map((entry) => ({ userId: entry.userId, role: entry.role }))
+  return normalized
 }
 
 export function buildApprovalLines(docId: number, participants: ParticipantInput[]): ApprovalLineInsert[] {

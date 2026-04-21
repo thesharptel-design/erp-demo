@@ -12,6 +12,22 @@ import { getAllowedWarehouseIds } from '@/lib/permissions';
 export default function NewOutboundPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const emptyRoleAssignees = useMemo(
+    () =>
+      APPROVAL_ROLES.reduce<Record<string, string[]>>((acc, role) => {
+        acc[role] = [''];
+        return acc;
+      }, {}),
+    []
+  );
+  const emptyRoleSearches = useMemo(
+    () =>
+      APPROVAL_ROLES.reduce<Record<string, string>>((acc, role) => {
+        acc[role] = '';
+        return acc;
+      }, {}),
+    []
+  );
   
   const [userProfile, setUserProfile] = useState<any>(null); 
   const [items, setItems] = useState<any[]>([]); 
@@ -24,20 +40,8 @@ export default function NewOutboundPage() {
   const [itemSearchKeyword, setItemSearchKeyword] = useState('');
   
   const [warehouseId, setWarehouseId] = useState('');
-  const [roleAssignees, setRoleAssignees] = useState<Record<string, string[]>>({
-    reviewer: [''],
-    pre_cooperator: [''],
-    final_approver: [''],
-    post_cooperator: [''],
-    reference: [''],
-  });
-  const [roleSearches, setRoleSearches] = useState<Record<string, string>>({
-    reviewer: '',
-    pre_cooperator: '',
-    final_approver: '',
-    post_cooperator: '',
-    reference: '',
-  });
+  const [roleAssignees, setRoleAssignees] = useState<Record<string, string[]>>(emptyRoleAssignees);
+  const [roleSearches, setRoleSearches] = useState<Record<string, string>>(emptyRoleSearches);
 
   const getDeptName = (id: number) => {
     const depts: any = {
@@ -129,7 +133,7 @@ export default function NewOutboundPage() {
     if (userProfile?.dept_id === null || userProfile?.dept_id === undefined) {
       return alert('작성자 부서 정보가 없어 저장할 수 없습니다.');
     }
-    if (isSubmit && !roleAssignees.final_approver.some((id) => id.trim())) return alert('최종 결재자를 지정하세요.');
+    if (isSubmit && !(roleAssignees.approver ?? []).some((id) => id.trim())) return alert('결재자를 지정하세요.');
 
     setLoading(true);
     try {
@@ -354,7 +358,7 @@ export default function NewOutboundPage() {
                           label: `${u.user_name} (${getDeptName(u.dept_id)})`,
                           keywords: [u.user_name, getDeptName(u.dept_id), u.role_name ?? ''],
                         }))}
-                        placeholder={role === 'final_approver' ? '필수 선택' : '선택 안 함'}
+                        placeholder={role === 'approver' ? '필수 선택' : '선택 안 함'}
                         className="flex-1"
                       />
                       {idx > 0 && (

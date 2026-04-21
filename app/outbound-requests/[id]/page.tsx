@@ -6,39 +6,7 @@ import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import ApprovalActionButtons from '@/components/ApprovalActionButtons'; 
 import { getApprovalRoleLabel } from '@/lib/approval-roles';
-
-// --- UI용 Helper 함수들 ---
-// 🌟 목록 페이지와 완전히 동일한 초정밀 상태 배지 함수
-function getDetailedStatus(doc: any, lines: any[], reqStatus: string) {
-  if (!doc) {
-    if (reqStatus === 'draft') return { label: '작성중', style: 'bg-gray-100 text-gray-600 font-bold border border-gray-200' };
-    if (reqStatus === 'cancelled') return { label: '취소 완료', style: 'bg-gray-200 text-gray-500 font-bold line-through border border-gray-300' };
-    return { label: reqStatus, style: 'bg-gray-100 text-gray-700' };
-  }
-
-  if (doc.remarks === '취소 요청 중') return { label: '취소 요청', style: 'bg-red-100 text-red-700 font-black animate-pulse border border-red-200' };
-  if (doc.remarks?.includes('취소완료') || doc.remarks?.includes('취소승인')) return { label: '취소 진행중', style: 'bg-orange-100 text-orange-700 font-bold border border-orange-200' };
-  if (doc.status === 'rejected' && doc.remarks?.includes('재고환원')) return { label: '취소 완료', style: 'bg-gray-200 text-gray-500 font-bold line-through border border-gray-300' };
-  if (doc.status === 'rejected') return { label: '반려됨', style: 'bg-red-50 text-red-600 font-bold border border-red-100' };
-
-  if (doc.status === 'in_review' || doc.status === 'submitted') {
-    const approvedLines = lines?.filter((l: any) => l.status === 'approved') || [];
-    if (approvedLines.length > 0) {
-      const lastApproved = approvedLines[approvedLines.length - 1];
-      const roleLabel = getApprovalRoleLabel(lastApproved.approver_role);
-      return { label: `${roleLabel} 승인`, style: 'bg-blue-100 text-blue-700 font-bold border border-blue-200 shadow-sm' };
-    }
-    return { label: '결재 진행중', style: 'bg-yellow-100 text-yellow-700 font-bold border border-yellow-200' };
-  }
-
-  if (reqStatus === 'completed') return { label: '출고 완료', style: 'bg-purple-100 text-purple-700 font-black border border-purple-200 shadow-sm' };
-  if (reqStatus === 'cancelled') return { label: '취소 완료', style: 'bg-gray-200 text-gray-500 font-bold line-through border border-gray-300' };
-  if (doc.status === 'approved') return { label: '최종 승인', style: 'bg-green-100 text-green-700 font-black border border-green-200 shadow-sm' };
-  if (doc.status === 'draft') return { label: '임시저장', style: 'bg-gray-100 text-gray-600 font-bold border border-gray-200' };
-  if (doc.status === 'submitted') return { label: '상신 (대기)', style: 'bg-blue-50 text-blue-600 font-bold border border-blue-100' };
-
-  return { label: reqStatus, style: 'bg-gray-100 text-gray-700' };
-}
+import { getOutboundRequestRowPresentation } from '@/lib/approval-status';
 
 function getActionLabel(actionType: string) {
   switch (actionType) {
@@ -83,6 +51,7 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
   const [requestData, setRequestData] = useState<any>(null);
   const [requestItems, setRequestItems] = useState<any[]>([]);
   const [approvalLines, setApprovalLines] = useState<any[]>([]);
+  const [approvalParticipants, setApprovalParticipants] = useState<any[]>([]);
   const [approvalHistories, setApprovalHistories] = useState<any[]>([]);
   const [approvalDoc, setApprovalDoc] = useState<any>(null);
   const [coaFiles, setCoaFiles] = useState<any[]>([]);
@@ -136,9 +105,11 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
           setApprovalLines(currentLines);
           const { data: participantRows } = await supabase
             .from('approval_participants')
-            .select('user_id, role')
-            .eq('approval_doc_id', header.approval_doc_id);
+            .select('user_id, role, line_no')
+            .eq('approval_doc_id', header.approval_doc_id)
+            .order('line_no', { ascending: true });
           currentParticipants = participantRows || [];
+          setApprovalParticipants(currentParticipants);
 
           const { data: histories } = await supabase
             .from('approval_histories')
@@ -224,7 +195,33 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
   const requesterDeptName = deptMap.get(requesterDeptId) || '-';
 
   // 🌟 동적으로 배지 상태를 계산합니다
-  const statusInfo = getDetailedStatus(approvalDoc, approvalLines, requestData.status);
+  const statusInfo = getOutboundRequestRowPresentation({
+    approvalDoc,
+    lines: approvalLines || [],
+    reqStatus: requestData.status,
+  });
+  const lineMapByNo = new Map((approvalLines || []).map((line) => [line.line_no, line]));
+  const displayLines =
+    approvalParticipants.length > 0
+      ? approvalParticipants.map((participant) => {
+          const matchedLine = lineMapByNo.get(participant.line_no);
+          return {
+            line_no: participant.line_no,
+            approver_id: participant.user_id,
+            approver_role: participant.role,
+            status: matchedLine?.status ?? 'waiting',
+            acted_at: matchedLine?.acted_at ?? null,
+            opinion: matchedLine?.opinion ?? null,
+          };
+        })
+      : (approvalLines || []).map((line) => ({
+          line_no: line.line_no,
+          approver_id: line.approver_id,
+          approver_role: line.approver_role,
+          status: line.status,
+          acted_at: line.acted_at ?? null,
+          opinion: line.opinion ?? null,
+        }));
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto p-8 font-sans bg-gray-50 min-h-screen">
@@ -253,7 +250,7 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
                 </p>
               </div>
               {/* 🌟 이 부분에 초정밀 배지가 적용되었습니다 */}
-              <span className={`inline-flex rounded-full px-3 py-1 text-sm tracking-tight uppercase ${statusInfo.style}`}>
+              <span className={statusInfo.className}>
                 {statusInfo.label}
               </span>
             </div>
@@ -371,9 +368,9 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
                     <td className="px-4 py-3 font-medium text-gray-400">기안 상신</td>
                   </tr>
 
-                  {approvalLines.map((line) => (
-                    <tr key={line.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3 font-bold text-gray-500">{line.line_no + 1}</td>
+                  {displayLines.map((line) => (
+                    <tr key={`${line.line_no}-${line.approver_id}-${line.approver_role}`} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 font-bold text-gray-500">{line.line_no}</td>
                       <td className="px-4 py-3 font-black text-gray-800">{userMap.get(line.approver_id) ?? '-'}</td>
                       <td className="px-4 py-3 font-bold text-gray-600">{getRoleName(line.approver_role)}</td>
                       <td className="px-4 py-3">
@@ -435,6 +432,7 @@ export default function OutboundRequestDetailPage({ params }: { params: Promise<
               <ApprovalActionButtons 
                 doc={approvalDoc}
                 lines={approvalLines || []} 
+                participants={approvalParticipants || []}
               />
             ) : (
               <div className="bg-gray-100 p-4 rounded-xl text-center text-sm font-bold text-gray-500">

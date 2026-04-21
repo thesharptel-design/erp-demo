@@ -12,6 +12,10 @@ type ApprovalDoc = {
   doc_type: string;
   title: string;
   content: string | null;
+  execution_start_date: string | null;
+  execution_end_date: string | null;
+  cooperation_dept: string | null;
+  agreement_text: string | null;
   status: string;
   current_line_no: number | null;
   drafted_at: string;
@@ -20,6 +24,30 @@ type ApprovalDoc = {
   remarks: string | null;
   writer_id: string;
   dept_id: number;
+}
+
+type ApprovalLine = {
+  id: number
+  approval_doc_id: number
+  line_no: number
+  approver_id: string
+  approver_role: string
+  status: string
+  acted_at?: string | null
+}
+
+type ApprovalParticipant = {
+  user_id: string
+  role: string
+  line_no: number
+}
+
+type AppUserProfile = {
+  id: string
+  user_name: string | null
+  dept_id: number | null
+  role_name: string | null
+  seal_image_path: string | null
 }
 
 // --- UI Helper 함수들 ---
@@ -80,6 +108,25 @@ function getDetailLineStatus(role: string, status: string) {
   return <span className="text-gray-400 font-bold">대기</span>;
 }
 
+function renderSealStamp(name: string, sealImageUrl: string | null) {
+  if (sealImageUrl) {
+    return (
+      <img
+        src={sealImageUrl}
+        alt={`${name} 도장`}
+        className="mx-auto h-12 w-12 rounded-full border border-red-200 object-cover"
+      />
+    )
+  }
+
+  const initials = name ? name.slice(0, 2) : '--'
+  return (
+    <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border-2 border-red-400 text-[11px] font-black text-red-600">
+      {initials}
+    </div>
+  )
+}
+
 // --- 데이터 로직 ---
 async function getApprovalDetail(supabase: SupabaseClient, id: string) {
   const docId = Number(id)
@@ -97,11 +144,11 @@ async function getApprovalDetail(supabase: SupabaseClient, id: string) {
     { data: participants },
   ] = await Promise.all([
     supabase.from('approval_docs').select('*').eq('id', docId).single(),
-    supabase.from('app_users').select('*'), // 🌟 role 확인을 위해 전체 필드 선택
+    supabase.from('app_users').select('id, user_name, dept_id, role_name, seal_image_path'),
     supabase.from('departments').select('id, dept_name'),
     supabase.from('approval_lines').select('*').eq('approval_doc_id', docId).order('line_no'),
     supabase.from('approval_histories').select('*').eq('approval_doc_id', docId).order('action_at'),
-    supabase.from('approval_participants').select('user_id, role').eq('approval_doc_id', docId),
+    supabase.from('approval_participants').select('user_id, role, line_no').eq('approval_doc_id', docId).order('line_no'),
   ])
 
   if (docError) return null
@@ -118,9 +165,10 @@ async function getApprovalDetail(supabase: SupabaseClient, id: string) {
 
   return {
     doc: doc as ApprovalDoc,
-    users: users ?? [],
+    users: (users as AppUserProfile[]) ?? [],
     departments: departments ?? [],
-    lines: lines ?? [],
+    lines: (lines as ApprovalLine[]) ?? [],
+    participants: (participants as ApprovalParticipant[]) ?? [],
     histories: histories ?? [],
     currentUserId,
     currentUserRole: isAdmin ? 'admin' : 'user'
@@ -144,11 +192,42 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
 
   if (!result) notFound()
 
-  const { doc, users, departments, lines, histories } = result
+  const { doc, users, departments, lines, participants, histories } = result
 
-  const userMap = new Map(users.map((u: any) => [u.id, u.user_name]))
+  const userMap = new Map(users.map((u) => [u.id, u]))
   const deptMap = new Map(departments.map((d: any) => [d.id, d.dept_name]))
   const draftedDate = new Date(doc.drafted_at).toISOString().split('T')[0]
+  const lineMapByNo = new Map(lines.map((line) => [line.line_no, line]))
+  const displayLines =
+    participants.length > 0
+      ? participants.map((participant) => {
+          const matchedLine = lineMapByNo.get(participant.line_no)
+          return {
+            line_no: participant.line_no,
+            approver_id: participant.user_id,
+            approver_role: participant.role,
+            status: matchedLine?.status ?? 'waiting',
+            acted_at: matchedLine?.acted_at ?? null,
+          }
+        })
+      : lines.map((line) => ({
+          line_no: line.line_no,
+          approver_id: line.approver_id,
+          approver_role: line.approver_role,
+          status: line.status,
+          acted_at: line.acted_at ?? null,
+        }))
+  const cooperativeLines = displayLines.filter((line) => line.approver_role === 'cooperator')
+  const signLines = displayLines.filter((line) => line.approver_role !== 'cooperator')
+  const writerProfile = userMap.get(doc.writer_id)
+  const sealUrlMap = new Map<string, string>()
+  for (const user of users) {
+    if (!user.seal_image_path) continue
+    const { data } = supabase.storage.from('user-seals').getPublicUrl(user.seal_image_path)
+    if (data?.publicUrl) {
+      sealUrlMap.set(user.id, data.publicUrl)
+    }
+  }
 
   return (
     <div className="p-8 max-w-7xl mx-auto font-sans bg-gray-50 min-h-screen">
@@ -181,7 +260,7 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
               <div className="border border-gray-100 bg-gray-50 rounded-xl p-4 flex flex-col justify-center">
                 <p className="text-xs font-bold text-gray-400 mb-1">기안자</p>
                 <p className="font-black text-gray-800 text-lg">
-                  {userMap.get(doc.writer_id) || doc.writer_id.slice(0,8)} 
+                  {writerProfile?.user_name || doc.writer_id.slice(0,8)} 
                   <span className="text-sm font-medium text-gray-500 ml-1">({deptMap.get(doc.dept_id) ?? '-'})</span>
                 </p>
               </div>
@@ -193,6 +272,22 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
               </div>
             </div>
             <div className="border border-gray-100 bg-gray-50 rounded-xl p-5">
+              <div className="mb-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-bold text-gray-500">시행일자</p>
+                  <p className="text-sm font-bold text-gray-800">
+                    {doc.execution_start_date || '-'} ~ {doc.execution_end_date || '-'}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+                  <p className="text-[11px] font-bold text-gray-500">협조부서</p>
+                  <p className="text-sm font-bold text-gray-800">{doc.cooperation_dept || '-'}</p>
+                </div>
+                <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 md:col-span-2">
+                  <p className="text-[11px] font-bold text-gray-500">합의</p>
+                  <p className="text-sm font-medium text-gray-700 whitespace-pre-wrap">{doc.agreement_text || '-'}</p>
+                </div>
+              </div>
               <p className="text-base font-black text-gray-800 mb-4 pb-3 border-b border-gray-200">제목: {doc.title}</p>
               <p className="text-sm font-medium text-gray-700 whitespace-pre-wrap leading-relaxed min-h-[150px]">
                 {doc.content ?? '내용 없음'}
@@ -217,25 +312,66 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  <tr className="bg-gray-50/30">
-                    <td className="px-4 py-3 font-bold text-gray-400">1</td>
-                    <td className="px-4 py-3 font-black">{userMap.get(doc.writer_id) || '기안자'}</td>
+                  <tr className="bg-gray-50/30 align-top">
+                    <td className="px-4 py-3 font-bold text-gray-400">0</td>
+                    <td className="px-4 py-3 font-black">
+                      <div className="space-y-2">
+                        <p>{writerProfile?.user_name || '기안자'}</p>
+                        {renderSealStamp(writerProfile?.user_name || '기안자', sealUrlMap.get(doc.writer_id) ?? null)}
+                      </div>
+                    </td>
                     <td className="px-4 py-3 font-bold text-gray-500 text-xs">기안자</td>
                     <td className="px-4 py-3">{getDetailLineStatus('drafter', 'approved')}</td>
                     <td className="px-4 py-3 text-xs text-gray-400">{new Date(doc.drafted_at).toLocaleString('ko-KR')}</td>
                   </tr>
-                  {lines.map((line: any) => (
-                    <tr key={line.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-bold text-gray-400">{line.line_no + 1}</td>
-                      <td className="px-4 py-3 font-black text-gray-800">{userMap.get(line.approver_id) ?? '-'}</td>
+                  {signLines.map((line) => {
+                    const profile = userMap.get(line.approver_id)
+                    const userName = profile?.user_name ?? '-'
+                    return (
+                    <tr key={`${line.line_no}-${line.approver_id}-${line.approver_role}`} className="hover:bg-gray-50">
+                      <td className="px-4 py-3 font-bold text-gray-400">{line.line_no}</td>
+                      <td className="px-4 py-3 font-black text-gray-800">
+                        <div className="space-y-2">
+                          <p>{userName}</p>
+                          {renderSealStamp(userName, sealUrlMap.get(line.approver_id) ?? null)}
+                        </div>
+                      </td>
                       <td className="px-4 py-3 font-bold text-gray-500 text-xs uppercase">{getRoleName(line.approver_role)}</td>
                       <td className="px-4 py-3">{getDetailLineStatus(line.approver_role, line.status)}</td>
                       <td className="px-4 py-3 text-xs text-gray-400">{line.acted_at ? new Date(line.acted_at).toLocaleString('ko-KR') : '-'}</td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
+          </div>
+
+          <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
+            <div className="flex items-center mb-5">
+              <div className="w-1.5 h-5 bg-amber-500 rounded-full mr-2"></div>
+              <h2 className="text-lg font-black text-gray-800">협조 정보</h2>
+            </div>
+            {cooperativeLines.length === 0 ? (
+              <p className="text-sm font-bold text-gray-500">등록된 협조자가 없습니다.</p>
+            ) : (
+              <div className="space-y-3">
+                {cooperativeLines.map((line) => (
+                  <div
+                    key={`cooperator-${line.line_no}-${line.approver_id}`}
+                    className="rounded-xl border border-gray-100 bg-gray-50 px-4 py-3 flex items-center justify-between"
+                  >
+                    <div>
+                      <p className="text-sm font-black text-gray-800">
+                        {userMap.get(line.approver_id)?.user_name ?? '-'}
+                      </p>
+                      <p className="text-[11px] font-bold text-gray-500">순번 {line.line_no} / 협조</p>
+                    </div>
+                    <div>{getDetailLineStatus(line.approver_role, line.status)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -245,6 +381,7 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
             <ApprovalActionButtons 
               doc={doc} 
               lines={lines} 
+              participants={participants}
             />
 
             <div className="bg-white border border-gray-200 rounded-2xl p-5 shadow-sm">
@@ -253,7 +390,7 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
                     {histories.slice(-3).reverse().map((h: any) => (
                         <div key={h.id} className="border-l-2 border-gray-100 pl-3 py-1">
                             <p className="text-xs font-black text-gray-800">{getActionLabel(h.action_type)}</p>
-                            <p className="text-[10px] font-bold text-gray-400">{userMap.get(h.actor_id)} | {new Date(h.action_at).toLocaleDateString()}</p>
+                            <p className="text-[10px] font-bold text-gray-400">{userMap.get(h.actor_id)?.user_name ?? '-'} | {new Date(h.action_at).toLocaleDateString()}</p>
                         </div>
                     ))}
                     {histories.length === 0 && <p className="text-xs text-gray-400 font-bold">처리 이력이 없습니다.</p>}

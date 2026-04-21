@@ -11,13 +11,20 @@ import { getApprovalRoleLabel, isApprovalActionRole } from '@/lib/approval-roles
 type AppUserRow = Database['public']['Tables']['app_users']['Row'];
 type SessionUser = { id: string };
 type CurrentUser = AppUserRow | SessionUser;
+type ApprovalParticipantLike = {
+  user_id: string
+  role: string
+  line_no: number
+}
 
 export default function ApprovalActionButtons({
   doc,
   lines,
+  participants = [],
 }: {
   doc: ApprovalDocLike & { id: number; writer_id?: string | null; doc_type?: string | null; status: string };
   lines: ApprovalLineLike[];
+  participants?: ApprovalParticipantLike[];
 }) {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
@@ -47,9 +54,33 @@ export default function ApprovalActionButtons({
     ('role' in currentUser && currentUser.role === 'admin');
 
   const sortedLines = [...(lines || [])].sort((a, b) => a.line_no - b.line_no);
-  const pendingLine = sortedLines.find((l) => l.status === 'pending' && isApprovalActionRole(l.approver_role));
-  const lastApprovedLine = [...sortedLines].reverse().find(l => l.status === 'approved' || l.status === 'cancelled');
-  const minLineNo = sortedLines.length ? Math.min(...sortedLines.map((l) => l.line_no)) : 1;
+  const sortedParticipants = [...participants].sort((a, b) => a.line_no - b.line_no);
+  const lineMapByNo = new Map(sortedLines.map((line) => [line.line_no, line]));
+  const orderedApprovalFlow =
+    sortedParticipants.length > 0
+      ? sortedParticipants.map((participant) => {
+          const matchedLine = lineMapByNo.get(participant.line_no);
+          return {
+            id: matchedLine?.id,
+            line_no: participant.line_no,
+            approver_id: participant.user_id,
+            approver_role: participant.role,
+            status: matchedLine?.status ?? 'waiting',
+            acted_at: (matchedLine as any)?.acted_at ?? null,
+          };
+        })
+      : sortedLines.map((line) => ({
+          id: line.id,
+          line_no: line.line_no,
+          approver_id: line.approver_id,
+          approver_role: line.approver_role,
+          status: line.status,
+          acted_at: (line as any)?.acted_at ?? null,
+        }));
+
+  const pendingLine = orderedApprovalFlow.find((l) => l.status === 'pending' && isApprovalActionRole(l.approver_role));
+  const lastApprovedLine = [...orderedApprovalFlow].reverse().find(l => l.status === 'approved' || l.status === 'cancelled');
+  const minLineNo = orderedApprovalFlow.length ? Math.min(...orderedApprovalFlow.map((l) => l.line_no)) : 1;
 
   const isCancellationProcess = isApprovalCancellationRemarkProcess(doc.remarks);
 
@@ -60,13 +91,13 @@ export default function ApprovalActionButtons({
     if (cur == null || Number(cur) === 0) {
       activeLine = undefined;
     } else {
-      activeLine = sortedLines.find((l) => l.line_no === cur);
+      activeLine = orderedApprovalFlow.find((l) => l.line_no === cur);
       if (!activeLine) activeLine = lastApprovedLine;
     }
   }
 
   const isMyTurn = activeLine && String(activeLine.approver_id).toLowerCase() === myId;
-  const isAnyLineApproved = lines?.some(l => l.status === 'approved');
+  const isAnyLineApproved = orderedApprovalFlow.some(l => l.status === 'approved');
 
   const updateDoc = async (data: Record<string, unknown>) => {
     const { error } = await supabase.from('approval_docs').update(data).eq('id', doc.id);
@@ -77,6 +108,22 @@ export default function ApprovalActionButtons({
         .update({ status: data.status })
         .eq('approval_doc_id', doc.id);
     }
+  };
+
+  const updateActiveLineStatus = async (
+    targetLine: { id?: number; line_no: number },
+    data: { status: string; acted_at?: string | null; opinion?: string | null }
+  ) => {
+    if (targetLine.id) {
+      const { error } = await supabase.from('approval_lines').update(data).eq('id', targetLine.id);
+      if (!error) return;
+    }
+    const { error: fallbackError } = await supabase
+      .from('approval_lines')
+      .update(data)
+      .eq('approval_doc_id', doc.id)
+      .eq('line_no', targetLine.line_no);
+    if (fallbackError) throw fallbackError;
   };
 
   const handleRecall = async () => {
@@ -99,7 +146,7 @@ export default function ApprovalActionButtons({
     setProcessing(true);
     try {
       // 🌟 [수정] 취소 요청 시 current_line_no를 가장 마지막 결재자로 설정하여 릴레이 시작!
-      const lastLineNo = lastApprovedLine ? lastApprovedLine.line_no : sortedLines.length;
+      const lastLineNo = lastApprovedLine ? lastApprovedLine.line_no : orderedApprovalFlow.length;
       await updateDoc({ 
           remarks: '취소 요청 중', 
           current_line_no: lastLineNo, 
@@ -122,7 +169,7 @@ export default function ApprovalActionButtons({
     try {
       // 문서 자체가 아직 승인되지 않고 '진행 중'일 때 취소하는 경우 (일반 반려와 동일하게 처리)
       if (doc.status !== 'approved' && !doc.remarks?.includes('취소완료')) {
-        await supabase.from('approval_lines').update({ status: 'rejected', acted_at: new Date().toISOString(), opinion }).eq('id', activeLine.id);
+        await updateActiveLineStatus(activeLine, { status: 'rejected', acted_at: new Date().toISOString(), opinion });
         await updateDoc({ status: 'rejected', remarks: '결재 중 취소됨' });
         alert('문서가 종료되었습니다.');
         router.push('/approvals');
@@ -134,7 +181,7 @@ export default function ApprovalActionButtons({
       const now = new Date().toISOString();
 
       // 현재 내 결재선 상태를 'cancelled'(취소됨)으로 업데이트
-      await supabase.from('approval_lines').update({ status: 'cancelled', acted_at: now, opinion }).eq('id', activeLine.id);
+      await updateActiveLineStatus(activeLine, { status: 'cancelled', acted_at: now, opinion });
 
       // 역순: 큰 line_no → … → 가장 작은 line_no 다음은 기안자 최종 환원 (검토자 없이 결재자만 있어도 동일)
       if (activeLine.line_no <= minLineNo) {
@@ -180,12 +227,12 @@ export default function ApprovalActionButtons({
     setProcessing(true);
     const now = new Date().toISOString();
     try {
-      await supabase.from('approval_lines').update({ status: type, acted_at: now, opinion }).eq('id', activeLine.id);
+      await updateActiveLineStatus(activeLine, { status: type, acted_at: now, opinion });
       
       if (type === 'rejected') {
         await updateDoc({ status: 'rejected', remarks: '결재자 반려' });
       } else {
-        const nextLine = sortedLines.find(
+        const nextLine = orderedApprovalFlow.find(
           (line) =>
             line.line_no > activeLine.line_no &&
             line.status === 'waiting' &&
@@ -195,7 +242,7 @@ export default function ApprovalActionButtons({
         if (isLast) {
           await updateDoc({ status: 'approved', completed_at: now });
         } else {
-          await supabase.from('approval_lines').update({ status: 'pending' }).eq('id', nextLine.id);
+          await updateActiveLineStatus(nextLine, { status: 'pending' });
           await updateDoc({ current_line_no: nextLine.line_no, status: 'in_review' });
         }
       }

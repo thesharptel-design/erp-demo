@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { getDocDetailHref } from '@/lib/approval-status';
+import { getApprovalDocDetailedStatusPresentation, getDocDetailHref } from '@/lib/approval-status';
 import type { ApprovalDocLike } from '@/lib/approval-status';
 
 // --- 타입 정의 ---
@@ -13,6 +13,8 @@ type ApprovalDocRow = {
   doc_no: string;
   title: string;
   status: string;
+  remarks: string | null;
+  current_line_no: number | null;
   drafted_at: string;
   doc_type: string | null;
   outbound_requests: { id: number }[] | { id: number } | null;
@@ -36,17 +38,6 @@ const getBadgeStyle = (type: 'gray' | 'blue' | 'green' | 'red' | 'orange') => {
     case 'red': return `${base} bg-red-100 text-red-600`;
     case 'orange': return `${base} bg-orange-100 text-orange-600`;
     default: return `${base} bg-gray-100 text-gray-500`;
-  }
-};
-
-const getApprovalBadge = (status: string) => {
-  switch (status) {
-    case 'draft': return <span className={getBadgeStyle('gray')}>임시저장</span>;
-    case 'submitted': return <span className={getBadgeStyle('orange')}>상신</span>;
-    case 'in_review': return <span className={getBadgeStyle('blue')}>결재중</span>;
-    case 'approved': return <span className={getBadgeStyle('green')}>승인</span>;
-    case 'rejected': return <span className={getBadgeStyle('red')}>반려</span>;
-    default: return <span className={getBadgeStyle('gray')}>{status}</span>;
   }
 };
 
@@ -93,7 +84,7 @@ export default function DashboardPage() {
           { data: coaFileData }, { data: loginAuditData },
         ] = await Promise.all([
           supabase.from('inventory').select('item_id, current_qty, available_qty, quarantine_qty'),
-          supabase.from('approval_docs').select('id, doc_no, title, status, drafted_at, doc_type, outbound_requests(id)').order('id', { ascending: false }).limit(5),
+          supabase.from('approval_docs').select('id, doc_no, title, status, remarks, current_line_no, drafted_at, doc_type, outbound_requests(id)').order('id', { ascending: false }).limit(5),
           supabase.from('production_orders').select(`id, prod_no, status, prod_date, inbound_completed, items:item_id(item_name)`).order('id', { ascending: false }).limit(5),
           supabase.from('purchase_orders').select(`id, po_no, status, po_date, remarks, customers:customer_id(customer_name)`).order('id', { ascending: false }).limit(5),
           supabase.from('inventory_transactions').select('id, trans_type, trans_date').order('id', { ascending: false }),
@@ -126,17 +117,11 @@ export default function DashboardPage() {
   if (loading) return <div className="flex min-h-screen items-center justify-center bg-gray-50"><div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>;
 
   // --- 데이터 집계 로직 ---
-  const quarantineCount = data.inventory.filter((row) => Number(row.quarantine_qty ?? 0) > 0).length;
   const pendingApprovalCount = data.approvals.filter((doc) => ['submitted', 'in_review'].includes(doc.status)).length;
-  const pendingOutboundRequestCount = data.approvals.filter((doc) => doc.doc_type === 'outbound_request' && ['submitted', 'in_review'].includes(doc.status)).length;
   const pendingQcCount = data.qcRequests.filter((qc) => ['requested', 'received', 'testing', 'hold'].includes(qc.qc_status)).length;
-  const pendingProdInboundCount = data.productionOrders.filter((order) => order.status === 'completed' && !order.inbound_completed).length;
-  const activeWarehouseCount = data.warehouses.filter((wh) => wh.is_active).length;
-  const activeCoaCount = data.coaFiles.filter((file) => file.is_active).length;
 
   // 한국 시간(KST) 기준으로 오늘 날짜 구하기
   const today = new Date(new Date().getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const todayInboundCount = data.inventoryTransactions.filter((tx) => tx.trans_date.slice(0, 10) === today && ['IN', 'PROD_IN', 'QC_RELEASE'].includes(tx.trans_type)).length;
   const todayLoginFailCount = data.loginAudits.filter((log) => !log.success && log.login_at.slice(0, 10) === today).length;
   const monthKorean = new Intl.DateTimeFormat('ko-KR', { month: 'long' }).format(new Date(`${today}T00:00:00`));
   const [currentYear, currentMonth, currentDate] = today.split('-').map(Number);
@@ -299,15 +284,20 @@ export default function DashboardPage() {
           </div>
           <div className="space-y-2 flex-1">
             {data.approvals.length === 0 ? <p className="text-xs text-gray-400 font-bold py-4 text-center">데이터가 없습니다.</p> : 
-              data.approvals.map((doc) => (
-                <Link key={doc.id} href={getDocDetailHref(doc as unknown as ApprovalDocLike & { id: number })} className="flex justify-between items-center p-3 rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all">
-                  <div className="min-w-0 flex-1 pr-2">
-                    <p className="text-[10px] font-bold text-gray-400 truncate">{doc.doc_no}</p>
-                    <p className="text-xs font-black text-gray-900 mt-0.5 truncate">{doc.title}</p>
-                  </div>
-                  <div>{getApprovalBadge(doc.status)}</div>
-                </Link>
-              ))
+              data.approvals.map((doc) => {
+                const statusPresentation = getApprovalDocDetailedStatusPresentation(doc as unknown as ApprovalDocLike)
+                return (
+                  <Link key={doc.id} href={getDocDetailHref(doc as unknown as ApprovalDocLike & { id: number })} className="flex justify-between items-center p-3 rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all">
+                    <div className="min-w-0 flex-1 pr-2">
+                      <p className="text-[10px] font-bold text-gray-400 truncate">{doc.doc_no}</p>
+                      <p className="text-xs font-black text-gray-900 mt-0.5 truncate">{doc.title}</p>
+                    </div>
+                    <div>
+                      <span className={statusPresentation.className}>{statusPresentation.label}</span>
+                    </div>
+                  </Link>
+                )
+              })
             }
           </div>
         </div>

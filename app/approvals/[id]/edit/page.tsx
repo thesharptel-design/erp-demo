@@ -2,11 +2,13 @@
 
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { APPROVAL_ROLES, getApprovalRoleLabel, normalizeApprovalRole } from '@/lib/approval-roles'
+import { normalizeApprovalRole, type ApprovalRole } from '@/lib/approval-roles'
 import { buildApprovalLines, buildApprovalParticipantsRows, normalizeParticipants } from '@/lib/approval-participants'
-import SearchableCombobox from '@/components/SearchableCombobox'
+import SearchableCombobox, { type ComboboxOption } from '@/components/SearchableCombobox'
+import ApprovalLineDnD from '@/components/approvals/ApprovalLineDnD'
+import type { ApprovalOrderItem } from '@/components/approvals/ApprovalDraftPaper'
 
 type ApprovalDoc = {
   id: number
@@ -14,6 +16,10 @@ type ApprovalDoc = {
   doc_type: string
   title: string
   content: string | null
+  execution_start_date: string | null
+  execution_end_date: string | null
+  cooperation_dept: string | null
+  agreement_text: string | null
   status: string
   current_line_no: number | null
   writer_id: string
@@ -46,6 +52,25 @@ type ApprovalLine = {
 type SupabaseErrorLike = {
   code?: string
   message: string
+}
+
+type ContentPreviewBlock =
+  | { type: 'text'; value: string }
+  | { type: 'image'; value: string }
+
+function isImageUrl(url: string): boolean {
+  return (
+    /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(url) ||
+    url.includes('/storage/v1/object/public/approval_attachments/')
+  )
+}
+
+function buildContentPreviewBlocks(raw: string): ContentPreviewBlock[] {
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => (isImageUrl(line) ? { type: 'image', value: line } : { type: 'text', value: line }))
 }
 
 function getApprovalEditErrorMessage(error: SupabaseErrorLike) {
@@ -86,34 +111,125 @@ export default function EditApprovalPage({
   const [docType, setDocType] = useState('purchase_request')
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
+  const [executionStartDate, setExecutionStartDate] = useState('')
+  const [executionEndDate, setExecutionEndDate] = useState('')
+  const [cooperationDept, setCooperationDept] = useState('')
+  const [agreementText, setAgreementText] = useState('')
   const [writerId, setWriterId] = useState('')
-  const [roleAssignees, setRoleAssignees] = useState<Record<string, string[]>>({
-    reviewer: [''],
-    pre_cooperator: [''],
-    final_approver: [''],
-    post_cooperator: [''],
-    reference: [''],
-  })
-  const [roleSearches, setRoleSearches] = useState<Record<string, string>>({
-    reviewer: '',
-    pre_cooperator: '',
-    final_approver: '',
-    post_cooperator: '',
-    reference: '',
-  })
+  const [approvalOrder, setApprovalOrder] = useState<ApprovalOrderItem[]>([
+    { id: 'initial-approver', role: 'approver', userId: '' },
+  ])
   const [docStatus, setDocStatus] = useState('draft')
 
   const [users, setUsers] = useState<AppUser[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
-  const docTypeOptions = [
+  const docTypeOptions: ComboboxOption[] = [
     { value: 'purchase_request', label: '구매품의' },
     { value: 'draft_doc', label: '일반기안' },
     { value: 'leave_request', label: '휴가신청' },
   ]
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
+  const contentTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const [isUploadingImage, setIsUploadingImage] = useState(false)
+  const [uploadErrorMessage, setUploadErrorMessage] = useState('')
+  const previewBlocks = useMemo(() => buildContentPreviewBlocks(content), [content])
+
+  function getCurrentSelection() {
+    const textarea = contentTextareaRef.current
+    if (!textarea) {
+      const fallbackPos = content.length
+      return { start: fallbackPos, end: fallbackPos }
+    }
+    return {
+      start: textarea.selectionStart ?? 0,
+      end: textarea.selectionEnd ?? 0,
+    }
+  }
+
+  function insertTextAtSelection(text: string, selection?: { start: number; end: number }) {
+    const textarea = contentTextareaRef.current
+    if (!textarea) {
+      setContent((prev) => `${prev}${text}`)
+      return
+    }
+    const start = selection?.start ?? textarea.selectionStart ?? textarea.value.length
+    const end = selection?.end ?? textarea.selectionEnd ?? start
+    const currentValue = textarea.value
+    const nextValue = `${currentValue.slice(0, start)}${text}${currentValue.slice(end)}`
+    const nextCursorPos = start + text.length
+    setContent(nextValue)
+    requestAnimationFrame(() => {
+      textarea.focus()
+      textarea.setSelectionRange(nextCursorPos, nextCursorPos)
+    })
+  }
+
+  async function uploadImageAndInsert(file: File, selection: { start: number; end: number }) {
+    try {
+      setUploadErrorMessage('')
+      setIsUploadingImage(true)
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      if (!session?.access_token) {
+        throw new Error('로그인 세션이 만료되어 이미지를 업로드할 수 없습니다.')
+      }
+
+      const formData = new FormData()
+      formData.append('file', file)
+      const response = await fetch('/api/approvals/attachments/upload', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: formData,
+      })
+      const payload = await response.json().catch(() => null)
+      if (!response.ok) {
+        throw new Error(payload?.error ?? '이미지 업로드에 실패했습니다.')
+      }
+      if (!payload?.publicUrl || typeof payload.publicUrl !== 'string') {
+        throw new Error('업로드 URL을 확인할 수 없습니다.')
+      }
+      insertTextAtSelection(`\n${payload.publicUrl}\n`, selection)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : '이미지 업로드 중 오류가 발생했습니다.'
+      setUploadErrorMessage(message)
+    } finally {
+      setIsUploadingImage(false)
+    }
+  }
+
+  function getImageFileFromList(fileList: FileList | null): File | null {
+    if (!fileList) return null
+    for (const file of Array.from(fileList)) {
+      if (file.type.startsWith('image/')) {
+        return file
+      }
+    }
+    return null
+  }
+
+  function handleContentPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (!canEdit) return
+    const imageFile = getImageFileFromList(event.clipboardData?.files ?? null)
+    if (!imageFile) return
+    event.preventDefault()
+    const selection = getCurrentSelection()
+    void uploadImageAndInsert(imageFile, selection)
+  }
+
+  function handleContentDrop(event: React.DragEvent<HTMLTextAreaElement>) {
+    if (!canEdit) return
+    const imageFile = getImageFileFromList(event.dataTransfer?.files ?? null)
+    if (!imageFile) return
+    event.preventDefault()
+    const selection = getCurrentSelection()
+    void uploadImageAndInsert(imageFile, selection)
+  }
 
   useEffect(() => {
     async function loadData() {
@@ -192,32 +308,45 @@ export default function EditApprovalPage({
       setDocType(typedDoc.doc_type)
       setTitle(typedDoc.title)
       setContent(typedDoc.content ?? '')
+      setExecutionStartDate(typedDoc.execution_start_date ?? '')
+      setExecutionEndDate(typedDoc.execution_end_date ?? '')
+      setCooperationDept(typedDoc.cooperation_dept ?? '')
+      setAgreementText(typedDoc.agreement_text ?? '')
       setWriterId(typedDoc.writer_id)
       setDocStatus(typedDoc.status)
 
-      const initialAssignees: Record<string, string[]> = {
-        reviewer: [],
-        pre_cooperator: [],
-        final_approver: [],
-        post_cooperator: [],
-        reference: [],
-      }
-      for (const participant of participantRows || []) {
-        const role = normalizeApprovalRole((participant as { role: string }).role)
-        if (!role) continue
-        initialAssignees[role].push((participant as { user_id: string }).user_id)
-      }
-      if (initialAssignees.final_approver.length === 0) {
-        for (const line of typedLines) {
+      const initialOrderFromParticipants: ApprovalOrderItem[] = (participantRows || [])
+        .map((participant, index) => {
+          const row = participant as { role: string; user_id: string }
+          const role = normalizeApprovalRole(row.role)
+          if (!role) return null
+          return {
+            id: `participant-${index}-${Date.now()}`,
+            role,
+            userId: row.user_id,
+          }
+        })
+        .filter((row): row is ApprovalOrderItem => row !== null)
+
+      const fallbackOrderFromLines: ApprovalOrderItem[] = typedLines
+        .map((line, index) => {
           const role = normalizeApprovalRole(line.approver_role)
-          if (!role) continue
-          initialAssignees[role].push(line.approver_id)
-        }
-      }
-      for (const role of APPROVAL_ROLES) {
-        if ((initialAssignees[role] ?? []).length === 0) initialAssignees[role] = ['']
-      }
-      setRoleAssignees(initialAssignees)
+          if (!role) return null
+          return {
+            id: `line-${index}-${Date.now()}`,
+            role,
+            userId: line.approver_id,
+          }
+        })
+        .filter((row): row is ApprovalOrderItem => row !== null)
+
+      setApprovalOrder(
+        initialOrderFromParticipants.length > 0
+          ? initialOrderFromParticipants
+          : fallbackOrderFromLines.length > 0
+            ? fallbackOrderFromLines
+            : [{ id: `default-${Date.now()}`, role: 'approver', userId: '' }]
+      )
 
       setUsers((usersData as AppUser[]) ?? [])
       setDepartments((deptData as Department[]) ?? [])
@@ -235,24 +364,6 @@ export default function EditApprovalPage({
   const selectedWriter = users.find((u) => u.id === writerId)
   const writerHasApprovalRight = selectedWriter?.can_approval_participate === true
   const selectableUsers = users.filter((user) => user.id !== writerId)
-  const filteredUsersByRole = useMemo(
-    () =>
-      APPROVAL_ROLES.reduce<Record<string, AppUser[]>>((acc, role) => {
-        const keyword = (roleSearches[role] ?? '').trim().toLowerCase()
-        acc[role] = selectableUsers.filter((user) => {
-          if (!keyword) return true
-          const deptName = deptMap.get(user.dept_id ?? -1) ?? ''
-          return (
-            user.user_name.toLowerCase().includes(keyword) ||
-            user.login_id.toLowerCase().includes(keyword) ||
-            user.role_name.toLowerCase().includes(keyword) ||
-            String(deptName).toLowerCase().includes(keyword)
-          )
-        })
-        return acc
-      }, {}),
-    [selectableUsers, roleSearches, deptMap]
-  )
 
   // draft / rejected 만 수정 가능
   const canEdit = ['draft', 'rejected'].includes(docStatus)
@@ -293,8 +404,13 @@ export default function EditApprovalPage({
       return
     }
 
-    if (!roleAssignees.final_approver.some((id) => id.trim())) {
-      setErrorMessage('최종 결재자를 선택하십시오.')
+    if (!approvalOrder.some((line) => line.role === 'approver' && line.userId.trim())) {
+      setErrorMessage('결재자를 선택하십시오.')
+      return
+    }
+
+    if (executionStartDate && executionEndDate && executionEndDate < executionStartDate) {
+      setErrorMessage('시행 종료일은 시작일 이후여야 합니다.')
       return
     }
 
@@ -311,6 +427,10 @@ export default function EditApprovalPage({
         doc_type: docType,
         title: title.trim(),
         content: content.trim(),
+        execution_start_date: executionStartDate || null,
+        execution_end_date: executionEndDate || null,
+        cooperation_dept: cooperationDept.trim() || null,
+        agreement_text: agreementText.trim() || null,
         writer_id: writerId,
         dept_id: selectedWriter.dept_id,
         remarks: '웹 수정 문서',
@@ -324,9 +444,7 @@ export default function EditApprovalPage({
     }
 
     const participants = normalizeParticipants(
-      APPROVAL_ROLES.flatMap((role) =>
-        (roleAssignees[role] ?? []).map((userId) => ({ role, userId }))
-      )
+      approvalOrder.map((line) => ({ role: line.role, userId: line.userId }))
     )
     const lines = buildApprovalLines(docId, participants)
     const participantRows = buildApprovalParticipantsRows(docId, participants)
@@ -444,6 +562,55 @@ export default function EditApprovalPage({
 
           <div className="md:col-span-2">
             <label className="mb-2 block text-sm font-medium text-gray-700">
+              시행일자
+            </label>
+            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+              <input
+                type="date"
+                value={executionStartDate}
+                onChange={(e) => setExecutionStartDate(e.target.value)}
+                disabled={!canEdit}
+                className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black disabled:bg-gray-100"
+              />
+              <span className="text-sm font-bold text-gray-500">~</span>
+              <input
+                type="date"
+                value={executionEndDate}
+                onChange={(e) => setExecutionEndDate(e.target.value)}
+                disabled={!canEdit}
+                className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black disabled:bg-gray-100"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-gray-700">
+              협조부서
+            </label>
+            <input
+              value={cooperationDept}
+              onChange={(e) => setCooperationDept(e.target.value)}
+              disabled={!canEdit}
+              className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black disabled:bg-gray-100"
+              placeholder="협조 부서"
+            />
+          </div>
+
+          <div>
+            <label className="mb-2 block text-sm font-medium text-gray-700">
+              합의
+            </label>
+            <input
+              value={agreementText}
+              onChange={(e) => setAgreementText(e.target.value)}
+              disabled={!canEdit}
+              className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black disabled:bg-gray-100"
+              placeholder="합의 내용"
+            />
+          </div>
+
+          <div className="md:col-span-2">
+            <label className="mb-2 block text-sm font-medium text-gray-700">
               제목
             </label>
             <input
@@ -460,88 +627,100 @@ export default function EditApprovalPage({
               내용
             </label>
             <textarea
+              ref={contentTextareaRef}
               value={content}
               onChange={(e) => setContent(e.target.value)}
+              onPaste={handleContentPaste}
+              onDrop={handleContentDrop}
+              onDragOver={(event) => {
+                if (canEdit) event.preventDefault()
+              }}
               rows={8}
               disabled={!canEdit}
               className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black disabled:bg-gray-100"
               required
             />
+            <div className="mt-1 space-y-1">
+              <p className="text-[11px] font-bold text-gray-500">
+                이미지 붙여넣기(Ctrl+V) 또는 드롭 시 자동 업로드 후 URL이 본문에 삽입됩니다.
+              </p>
+              {isUploadingImage && (
+                <p className="text-[11px] font-bold text-blue-600">이미지 업로드 중...</p>
+              )}
+              {uploadErrorMessage && (
+                <p className="text-[11px] font-bold text-red-600">{uploadErrorMessage}</p>
+              )}
+            </div>
+            {previewBlocks.length > 0 && (
+              <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                <p className="mb-2 text-[11px] font-black text-gray-600">본문 미리보기</p>
+                <div className="space-y-2">
+                  {previewBlocks.map((block, index) =>
+                    block.type === 'image' ? (
+                      <img
+                        key={`${block.value}-${index}`}
+                        src={block.value}
+                        alt={`본문 이미지 ${index + 1}`}
+                        className="max-h-64 w-full rounded border border-gray-200 object-contain bg-white"
+                      />
+                    ) : (
+                      <p
+                        key={`${block.value}-${index}`}
+                        className="whitespace-pre-wrap break-words text-sm text-gray-700"
+                      >
+                        {block.value}
+                      </p>
+                    )
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
-          {APPROVAL_ROLES.map((role) => (
-            <div key={role}>
-              <label className="mb-2 block text-sm font-medium text-gray-700">
-                {getApprovalRoleLabel(role)}
-                {role === 'final_approver' ? ' (필수)' : ''}
-              </label>
-              <div className="space-y-2">
-                <input
-                  value={roleSearches[role] ?? ''}
-                  onChange={(e) =>
-                    setRoleSearches((prev) => ({
-                      ...prev,
-                      [role]: e.target.value,
-                    }))
-                  }
-                  placeholder={`${getApprovalRoleLabel(role)} 검색 (이름/ID/부서)`}
-                  disabled={!canEdit}
-                  className="w-full rounded border border-gray-200 px-3 py-1.5 text-xs text-gray-700 outline-none focus:border-blue-500 disabled:bg-gray-100"
-                />
-                {(roleAssignees[role] ?? ['']).map((assignee, idx) => (
-                  <div className="flex items-center gap-2" key={`${role}-${idx}`}>
-                    <SearchableCombobox
-                      value={assignee}
-                      onChange={(nextValue) =>
-                        setRoleAssignees((prev) => {
-                          const next = [...(prev[role] ?? [''])]
-                          next[idx] = nextValue
-                          return { ...prev, [role]: next }
-                        })
-                      }
-                      disabled={!canEdit}
-                      options={(filteredUsersByRole[role] ?? []).map((user) => ({
-                        value: user.id,
-                        label: `${user.user_name} / ${deptMap.get(user.dept_id ?? -1) ?? '-'} / ${user.role_name}${user.can_approval_participate ? '' : ' [결재권 없음]'}`,
-                        keywords: [user.user_name, user.login_id, user.role_name, String(deptMap.get(user.dept_id ?? -1) ?? '')],
-                        disabled: !user.can_approval_participate,
-                      }))}
-                      placeholder={role === 'final_approver' ? '필수 선택' : '선택 안 함'}
-                    />
-                    {idx > 0 && (
-                      <button
-                        type="button"
-                        disabled={!canEdit}
-                        onClick={() =>
-                          setRoleAssignees((prev) => {
-                            const next = [...(prev[role] ?? [''])]
-                            next.splice(idx, 1)
-                            return { ...prev, [role]: next.length > 0 ? next : [''] }
-                          })
-                        }
-                        className="px-2 py-1 rounded border border-red-200 text-red-600 text-xs font-black"
-                      >
-                        삭제
-                      </button>
-                    )}
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  disabled={!canEdit}
-                  onClick={() =>
-                    setRoleAssignees((prev) => ({
-                      ...prev,
-                      [role]: [...(prev[role] ?? ['']), ''],
-                    }))
-                  }
-                  className="px-2 py-1 rounded border border-dashed border-blue-300 text-blue-700 text-xs font-black"
-                >
-                  + {getApprovalRoleLabel(role)} 추가
-                </button>
-              </div>
+          <div className="md:col-span-2">
+            <label className="mb-2 block text-sm font-medium text-gray-700">결재 라인</label>
+            <div className={`${canEdit ? '' : 'pointer-events-none opacity-70'}`}>
+              <ApprovalLineDnD
+                lines={approvalOrder}
+                users={selectableUsers}
+                deptMap={deptMap}
+                onLineRoleChange={(lineId, role) =>
+                  setApprovalOrder((prev) =>
+                    prev.map((line) => (line.id === lineId ? { ...line, role: role as ApprovalRole } : line))
+                  )
+                }
+                onLineAssigneeChange={(lineId, userId) =>
+                  setApprovalOrder((prev) =>
+                    prev.map((line) => (line.id === lineId ? { ...line, userId } : line))
+                  )
+                }
+                onLineAdd={() =>
+                  setApprovalOrder((prev) => [
+                    ...prev,
+                    { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, role: 'approver', userId: '' },
+                  ])
+                }
+                onLineRemove={(lineId) =>
+                  setApprovalOrder((prev) => {
+                    const next = prev.filter((line) => line.id !== lineId)
+                    if (next.length > 0) return next
+                    return [{ id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, role: 'approver', userId: '' }]
+                  })
+                }
+                onLineMove={(draggedId, targetId) =>
+                  setApprovalOrder((prev) => {
+                    const draggedIndex = prev.findIndex((line) => line.id === draggedId)
+                    const targetIndex = prev.findIndex((line) => line.id === targetId)
+                    if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) return prev
+                    const next = [...prev]
+                    const [dragged] = next.splice(draggedIndex, 1)
+                    next.splice(targetIndex, 0, dragged)
+                    return next
+                  })
+                }
+              />
             </div>
-          ))}
+          </div>
         </div>
 
         {errorMessage && (
