@@ -31,6 +31,11 @@ export default function NewInboundPage() {
   const [serialNo, setSerialNo] = useState('');
   
   const [isSaving, setIsSaving] = useState(false);
+
+  const normalizeTrackingText = (value: unknown) => {
+    const text = String(value ?? '').trim();
+    return text ? text : null;
+  };
   const itemOptions = useMemo(
     () =>
       items.map((item) => ({
@@ -122,27 +127,29 @@ export default function NewInboundPage() {
     
     setIsSaving(true);
     try {
-      // [A] 기존 재고(inventory) 검색
-      let query = supabase
+      const itemIdNum = Number(selectedItemId)
+      const selectedWarehouseId = Number(warehouseId)
+      const normalizedLotNo = selectedItem?.is_lot_managed ? normalizeTrackingText(lotNo) : null
+      const normalizedExpDate = selectedItem?.is_exp_managed ? normalizeTrackingText(expDate) : null
+      const normalizedSerialNo = selectedItem?.is_sn_managed ? normalizeTrackingText(serialNo) : null
+
+      // [A] 동일 창고 후보 재고 조회 후 추적키 정규화 매칭
+      const { data: warehouseStocks, error: fetchError } = await supabase
         .from('inventory')
         .select('*')
-        .eq('item_id', selectedItemId)
-        .eq('warehouse_id', Number(warehouseId));
-      
-      if (selectedItem?.is_lot_managed && lotNo) query = query.eq('lot_no', lotNo);
-      else query = query.is('lot_no', null);
-      
-      if (selectedItem?.is_exp_managed && expDate) query = query.eq('exp_date', expDate);
-      else query = query.is('exp_date', null);
-      
-      if (selectedItem?.is_sn_managed && serialNo) query = query.eq('serial_no', serialNo);
-      else query = query.is('serial_no', null);
-
-      const { data: existingStock, error: fetchError } = await query.maybeSingle();
+        .eq('item_id', itemIdNum)
+        .eq('warehouse_id', selectedWarehouseId);
       if (fetchError) throw fetchError;
 
-// [B] 재고 데이터 갱신 (UPSERT)
-      const itemIdNum = Number(selectedItemId)
+      const existingStock =
+        (warehouseStocks ?? []).find((row: any) => {
+          const rowLot = normalizeTrackingText(row.lot_no);
+          const rowExp = normalizeTrackingText(row.exp_date);
+          const rowSerial = normalizeTrackingText(row.serial_no);
+          return rowLot === normalizedLotNo && rowExp === normalizedExpDate && rowSerial === normalizedSerialNo;
+        }) ?? null;
+
+      // [B] 재고 데이터 갱신 (UPSERT)
       let inventoryIdForTx: number | null = null
 
       if (existingStock) {
@@ -160,6 +167,9 @@ export default function NewInboundPage() {
           .update({
             current_qty: Number(existingStock.current_qty) + Number(qty),
             available_qty: Number(existingStock.available_qty) + Number(qty),
+            lot_no: normalizedLotNo,
+            exp_date: normalizedExpDate,
+            serial_no: normalizedSerialNo,
             updated_at: new Date().toISOString()
           })
           .eq('id', existingStock.id);
@@ -173,13 +183,13 @@ export default function NewInboundPage() {
           .from('inventory')
           .insert({
             item_id: itemIdNum,
-            lot_no: (selectedItem?.is_lot_managed && lotNo) ? lotNo : null,
-            exp_date: (selectedItem?.is_exp_managed && expDate) ? expDate : null,
-            serial_no: (selectedItem?.is_sn_managed && serialNo) ? serialNo : null,
+            lot_no: normalizedLotNo,
+            exp_date: normalizedExpDate,
+            serial_no: normalizedSerialNo,
             current_qty: qty,
             available_qty: qty,
             quarantine_qty: 0,
-            warehouse_id: Number(warehouseId),
+            warehouse_id: selectedWarehouseId,
           })
           .select('id')
           .single();
@@ -211,15 +221,15 @@ export default function NewInboundPage() {
           item_id: itemIdNum,
           trans_type: 'IN', // 👈 transaction_type 대신 스키마에 맞춰 trans_type 사용 및 제약조건에 맞춰 'IN' 입력
           qty: qty,
-          lot_no: (selectedItem?.is_lot_managed && lotNo) ? lotNo : null,
-          exp_date: (selectedItem?.is_exp_managed && expDate) ? expDate : null,
-          serial_no: (selectedItem?.is_sn_managed && serialNo) ? serialNo : null,
+          lot_no: normalizedLotNo,
+          exp_date: normalizedExpDate,
+          serial_no: normalizedSerialNo,
           customer_id: parseInt(customerId),
           remarks: remarks || null,
           trans_date: transDateIso,
           actor_id: userData.id,
           created_by: userData.id, // 👈 스키마의 created_by 외래키 제약조건 대비
-          warehouse_id: Number(warehouseId),
+          warehouse_id: selectedWarehouseId,
           inventory_id: inventoryIdForTx,
           ref_table: 'inbound_new',
         });

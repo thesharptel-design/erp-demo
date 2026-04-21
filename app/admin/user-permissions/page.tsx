@@ -506,7 +506,7 @@ export default function UserPermissionsPage() {
   };
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-[1360px] flex-col bg-gray-50 p-3 font-sans text-black">
+    <div className="mx-auto flex min-h-screen max-w-[1760px] flex-col bg-gray-50 p-2.5 font-sans text-black">
       <header className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-3xl font-black italic text-blue-600">사용자 조회 및 설정</h1>
@@ -547,7 +547,7 @@ export default function UserPermissionsPage() {
 
       <section className="flex min-h-0 flex-grow flex-col overflow-hidden rounded-2xl border-2 border-gray-200 bg-white shadow-lg">
         <div className="custom-scrollbar flex-grow overflow-auto">
-          <table className="w-full min-w-[1240px] text-xs">
+          <table className="w-full min-w-[1120px] text-xs">
             <thead className="sticky top-0 z-10 border-b bg-gray-50 text-[10px] font-black uppercase text-gray-500">
               <tr>
                 <th className="w-10 px-3 py-3 text-center">

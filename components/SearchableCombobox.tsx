@@ -33,7 +33,7 @@ export default function SearchableCombobox({
   emptyText = '검색 결과가 없습니다.',
   disabled = false,
   className = '',
-  listMaxHeightClass = 'max-h-[min(18rem,50vh)] overflow-y-auto',
+  listMaxHeightClass = 'max-h-72 overflow-y-auto',
   creatable = false,
   showClearOption = true,
 }: Props) {
@@ -85,7 +85,11 @@ export default function SearchableCombobox({
             placeholder={placeholder}
             className="w-full border-b border-gray-100 px-3 py-2 text-sm outline-none"
           />
-          <ul className={`py-1 ${listMaxHeightClass}`}>
+          <ul
+            className={`py-1 overflow-y-auto overscroll-contain ${listMaxHeightClass}`}
+            style={{ WebkitOverflowScrolling: 'touch' }}
+            onWheel={(e) => e.stopPropagation()}
+          >
             {showClearOption ? (
               <li>
                 <button

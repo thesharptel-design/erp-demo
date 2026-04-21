@@ -3,6 +3,7 @@
 BEGIN;
 
 DROP POLICY IF EXISTS item_process_config_insert_super_admin ON public.item_process_config;
+DROP POLICY IF EXISTS item_process_config_insert_system_admin ON public.item_process_config;
 CREATE POLICY item_process_config_insert_system_admin
 ON public.item_process_config
 FOR INSERT
@@ -20,6 +21,7 @@ WITH CHECK (
 );
 
 DROP POLICY IF EXISTS item_process_config_update_super_admin ON public.item_process_config;
+DROP POLICY IF EXISTS item_process_config_update_system_admin ON public.item_process_config;
 CREATE POLICY item_process_config_update_system_admin
 ON public.item_process_config
 FOR UPDATE

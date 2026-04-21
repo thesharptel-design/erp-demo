@@ -24,6 +24,7 @@ type QcRequestRow = { id: number; qc_type: 'raw_material' | 'sample' | 'final_pr
 type WarehouseRow = { id: number; is_active: boolean; };
 type CoaFileRow = { id: number; is_active: boolean; };
 type LoginAuditRow = { success: boolean; login_at: string; };
+type CalendarCell = { day: number; isCurrentMonth: boolean; isToday: boolean; };
 
 // --- 뱃지(상태) 스타일 헬퍼 ---
 const getBadgeStyle = (type: 'gray' | 'blue' | 'green' | 'red' | 'orange') => {
@@ -137,6 +138,40 @@ export default function DashboardPage() {
   const today = new Date(new Date().getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
   const todayInboundCount = data.inventoryTransactions.filter((tx) => tx.trans_date.slice(0, 10) === today && ['IN', 'PROD_IN', 'QC_RELEASE'].includes(tx.trans_type)).length;
   const todayLoginFailCount = data.loginAudits.filter((log) => !log.success && log.login_at.slice(0, 10) === today).length;
+  const monthKorean = new Intl.DateTimeFormat('ko-KR', { month: 'long' }).format(new Date(`${today}T00:00:00`));
+  const [currentYear, currentMonth, currentDate] = today.split('-').map(Number);
+  const firstDayOfMonth = new Date(currentYear, currentMonth - 1, 1).getDay();
+  const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
+  const prevMonthDays = new Date(currentYear, currentMonth - 1, 0).getDate();
+  const weekdayLabels = ['일', '월', '화', '수', '목', '금', '토'];
+  const calendarCells: CalendarCell[] = [];
+
+  for (let idx = 0; idx < 42; idx += 1) {
+    if (idx < firstDayOfMonth) {
+      calendarCells.push({
+        day: prevMonthDays - firstDayOfMonth + idx + 1,
+        isCurrentMonth: false,
+        isToday: false,
+      });
+      continue;
+    }
+
+    const day = idx - firstDayOfMonth + 1;
+    if (day <= daysInMonth) {
+      calendarCells.push({
+        day,
+        isCurrentMonth: true,
+        isToday: day === currentDate,
+      });
+      continue;
+    }
+
+    calendarCells.push({
+      day: day - daysInMonth,
+      isCurrentMonth: false,
+      isToday: false,
+    });
+  }
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto font-sans bg-gray-50 min-h-screen space-y-6">
@@ -144,33 +179,72 @@ export default function DashboardPage() {
       {/* 🌟 헤더 영역 */}
       <header className="mb-8">
         <h1 className="text-4xl font-black uppercase tracking-tighter text-gray-900 italic">
-          BIO<span className="text-blue-600">-ERP</span> DASHBOARD
+          <span className="text-blue-600">DASHBOARD</span> 
         </h1>
         <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mt-1">
           Integrated Management System Overview
         </p>
       </header>
 
-      {/* 🌟 요약 통계 카드 (브루탈리즘 스타일 적용) */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-8 gap-4">
-        {[
-          { title: '격리 재고', count: quarantineCount, desc: 'QC 해제 대기', color: 'text-orange-600', bg: 'bg-orange-50' },
-          { title: '미결재 문서', count: pendingApprovalCount, desc: '상신/결재중', color: 'text-blue-600', bg: 'bg-blue-50' },
-          { title: '출고요청 대기', count: pendingOutboundRequestCount, desc: '출고요청 결재중', color: 'text-indigo-600', bg: 'bg-indigo-50' },
-          { title: 'QC 대기', count: pendingQcCount, desc: '시험/보류 중', color: 'text-purple-600', bg: 'bg-purple-50' },
-          { title: '생산완료 미입고', count: pendingProdInboundCount, desc: '입고 대기 상태', color: 'text-pink-600', bg: 'bg-pink-50' },
-          { title: '활성 창고', count: activeWarehouseCount, desc: '창고 플랫폼 운영수', color: 'text-cyan-700', bg: 'bg-cyan-50' },
-          { title: '활성 CoA', count: activeCoaCount, desc: '다운로드 가능 문서', color: 'text-emerald-700', bg: 'bg-emerald-50' },
-          { title: '금일 입고/반영', count: todayInboundCount, desc: '오늘 반영된 수량', color: 'text-green-600', bg: 'bg-green-50' },
-          { title: '금일 로그인 실패', count: todayLoginFailCount, desc: '감사 모니터링', color: 'text-rose-700', bg: 'bg-rose-50' },
-        ].map((stat, i) => (
-          <div key={i} className={`p-5 rounded-2xl border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] bg-white flex flex-col justify-between hover:-translate-y-1 transition-transform`}>
-            <p className="text-[11px] font-black text-gray-500 uppercase">{stat.title}</p>
-            <p className={`mt-2 text-4xl font-black tracking-tighter ${stat.color}`}>{stat.count}</p>
-            <p className="mt-3 text-[10px] font-bold text-gray-400 bg-gray-50 px-2 py-1 rounded-md inline-block self-start">{stat.desc}</p>
+      {/* 임시 대시보드 위젯: 달력 + 오늘 브리핑 */}
+      <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <div className="xl:col-span-2 bg-white border-2 border-black rounded-2xl p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+          <div className="flex items-end justify-between mb-4">
+            <h2 className="text-base font-black">📅 {currentYear}년 {monthKorean} 캘린더</h2>
+            <p className="text-[11px] font-bold text-gray-400">임시 위젯</p>
           </div>
-        ))}
-      </div>
+          <div className="grid grid-cols-7 gap-2 text-center mb-2">
+            {weekdayLabels.map((label) => (
+              <div key={label} className={`text-[11px] font-black ${label === '일' ? 'text-rose-500' : label === '토' ? 'text-blue-500' : 'text-gray-500'}`}>
+                {label}
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-2">
+            {calendarCells.map((cell, index) => (
+              <div
+                key={`${cell.day}-${index}`}
+                className={`h-12 rounded-xl border text-sm font-bold flex items-center justify-center transition-colors ${
+                  cell.isToday
+                    ? 'bg-blue-600 border-blue-600 text-white'
+                    : cell.isCurrentMonth
+                      ? 'bg-gray-50 border-gray-200 text-gray-800'
+                      : 'bg-white border-gray-100 text-gray-300'
+                }`}
+              >
+                {cell.day}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl p-6 border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+          <h2 className="text-base font-black">✨ 오늘 브리핑</h2>
+          <p className="mt-1 text-[11px] font-bold text-slate-300">사진 대신 넣은 임시 요약 카드</p>
+          <div className="mt-5 space-y-3">
+            <div className="flex items-center justify-between rounded-xl bg-white/10 px-3 py-2">
+              <span className="text-xs font-bold text-slate-200">결재 대기</span>
+              <span className="text-lg font-black text-amber-300">{pendingApprovalCount}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-xl bg-white/10 px-3 py-2">
+              <span className="text-xs font-bold text-slate-200">QC 이슈</span>
+              <span className="text-lg font-black text-purple-300">{pendingQcCount}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-xl bg-white/10 px-3 py-2">
+              <span className="text-xs font-bold text-slate-200">로그인 실패</span>
+              <span className={`text-lg font-black ${todayLoginFailCount > 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
+                {todayLoginFailCount}
+              </span>
+            </div>
+          </div>
+          <Link
+            href="/approvals"
+            className="mt-5 inline-flex items-center rounded-xl bg-blue-500 hover:bg-blue-400 px-3 py-2 text-xs font-black transition-colors"
+          >
+            결재함 바로가기 →
+          </Link>
+        </div>
+      </section>
 
       {/* 🌟 최근 현황 리스트 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">

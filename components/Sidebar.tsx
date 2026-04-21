@@ -102,7 +102,7 @@ export default function Sidebar() {
       title: '자재 관리',
       items: [
         { name: '입고 등록', href: '/inbound/new', perm: 'can_material_manage' }, 
-        { name: '출고 등록', href: '/outbound-requests/new', perm: 'can_material_manage'},
+        { name: '자재 이동', href: '/inventory-transfers/new', perm: 'can_manage_permissions' },
         { name: '출고 지시 현황', href: '/outbound-instructions', perm: 'can_material_manage'},
         { name: '재고 실사/조정', href: '/inventory-adjustments', perm: 'can_material_manage' },
       ]
