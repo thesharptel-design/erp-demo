@@ -26,6 +26,7 @@ type AppUser = {
   user_name: string
   dept_id: number | null
   role_name: string
+  can_approval_participate: boolean
 }
 
 type Department = {
@@ -49,6 +50,10 @@ type SupabaseErrorLike = {
 
 function getApprovalEditErrorMessage(error: SupabaseErrorLike) {
   const message = error.message.toLowerCase()
+
+  if (error.message.includes('결재권')) {
+    return '결재권이 없는 사용자는 기안/결재선에 지정할 수 없습니다.'
+  }
 
   if (error.code === '23505') {
     return '중복된 값이 있습니다. 입력 내용을 다시 확인하십시오.'
@@ -137,7 +142,7 @@ export default function EditApprovalPage({
           .order('line_no'),
         supabase
           .from('app_users')
-          .select('id, login_id, user_name, dept_id, role_name')
+          .select('id, login_id, user_name, dept_id, role_name, can_approval_participate')
           .order('user_name'),
         supabase.from('departments').select('id, dept_name').order('id'),
         supabase.auth.getUser(),
@@ -228,6 +233,7 @@ export default function EditApprovalPage({
   )
 
   const selectedWriter = users.find((u) => u.id === writerId)
+  const writerHasApprovalRight = selectedWriter?.can_approval_participate === true
   const selectableUsers = users.filter((user) => user.id !== writerId)
   const filteredUsersByRole = useMemo(
     () =>
@@ -279,6 +285,11 @@ export default function EditApprovalPage({
 
     if (!writerId) {
       setErrorMessage('작성자를 선택하십시오.')
+      return
+    }
+
+    if (!writerHasApprovalRight) {
+      setErrorMessage('작성자는 결재권이 있어야 상신/수정이 가능합니다.')
       return
     }
 
@@ -393,6 +404,11 @@ export default function EditApprovalPage({
             </span>
           )}
         </div>
+        {!writerHasApprovalRight && (
+          <div className="mb-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-700 font-bold border border-amber-200">
+            작성자에게 결재권이 없어 상신/수정을 진행할 수 없습니다. 관리자에게 결재권 부여를 요청하세요.
+          </div>
+        )}
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
@@ -418,8 +434,9 @@ export default function EditApprovalPage({
               disabled={!canEdit}
               options={users.map((user) => ({
                 value: user.id,
-                label: `${user.user_name} / ${deptMap.get(user.dept_id ?? -1) ?? '-'} / ${user.role_name}`,
+                label: `${user.user_name} / ${deptMap.get(user.dept_id ?? -1) ?? '-'} / ${user.role_name}${user.can_approval_participate ? '' : ' [결재권 없음]'}`,
                 keywords: [user.user_name, user.login_id, user.role_name, String(deptMap.get(user.dept_id ?? -1) ?? '')],
+                disabled: !user.can_approval_participate,
               }))}
               placeholder="작성자 선택"
             />
@@ -485,8 +502,9 @@ export default function EditApprovalPage({
                       disabled={!canEdit}
                       options={(filteredUsersByRole[role] ?? []).map((user) => ({
                         value: user.id,
-                        label: `${user.user_name} / ${deptMap.get(user.dept_id ?? -1) ?? '-'} / ${user.role_name}`,
+                        label: `${user.user_name} / ${deptMap.get(user.dept_id ?? -1) ?? '-'} / ${user.role_name}${user.can_approval_participate ? '' : ' [결재권 없음]'}`,
                         keywords: [user.user_name, user.login_id, user.role_name, String(deptMap.get(user.dept_id ?? -1) ?? '')],
+                        disabled: !user.can_approval_participate,
                       }))}
                       placeholder={role === 'final_approver' ? '필수 선택' : '선택 안 함'}
                     />
@@ -541,7 +559,7 @@ export default function EditApprovalPage({
         <div className="mt-6 flex gap-3">
           <button
             type="submit"
-            disabled={isSaving || !canEdit}
+            disabled={isSaving || !canEdit || !writerHasApprovalRight}
             className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
             {isSaving ? '저장 중...' : '저장'}

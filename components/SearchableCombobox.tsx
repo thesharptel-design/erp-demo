@@ -6,6 +6,7 @@ export type ComboboxOption = {
   value: string
   label: string
   keywords?: string[]
+  disabled?: boolean
 }
 
 type Props = {
@@ -122,8 +123,10 @@ export default function SearchableCombobox({
                 <li key={opt.value}>
                   <button
                     type="button"
-                    className="w-full px-3 py-2 text-left text-sm text-gray-800 hover:bg-blue-50"
+                    disabled={opt.disabled}
+                    className="w-full px-3 py-2 text-left text-sm text-gray-800 hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent"
                     onClick={() => {
+                      if (opt.disabled) return
                       onChange(opt.value)
                       setOpen(false)
                       setQuery('')

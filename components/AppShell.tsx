@@ -234,7 +234,7 @@ export default function AppShell({ children }: Props) {
           <Header onMenuClick={() => setMobileMenuOpen(true)} />
 
           <main className="flex-1">
-            <div className="mx-auto w-full max-w-7xl px-4 py-4 sm:px-6 sm:py-6">
+            <div className="mx-auto w-full max-w-7xl px-3 py-3 sm:px-6 sm:py-6">
               <CurrentUserBanner />
               {children}
             </div>

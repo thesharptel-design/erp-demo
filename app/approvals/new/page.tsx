@@ -15,6 +15,7 @@ type AppUser = {
   user_name: string
   dept_id: number | null
   role_name: string
+  can_approval_participate: boolean
 }
 
 type Department = {
@@ -28,6 +29,7 @@ type SupabaseErrorLike = {
 }
 
 function getApprovalCreateErrorMessage(error: SupabaseErrorLike) {
+  if (error.message.includes('결재권')) return '결재권이 없는 사용자는 기안/결재선에 지정할 수 없습니다.'
   if (error.code === '23505') return '문서번호가 중복되었습니다. 다시 시도해 주세요.'
   if (error.code === '23502') return '필수 입력값이 누락되었습니다. 입력 내용을 확인하십시오.'
   return '기안서 저장 중 오류가 발생했습니다. 다시 시도해 주세요.'
@@ -71,7 +73,7 @@ export default function NewApprovalPage() {
     async function loadData() {
       const { data: { user } } = await supabase.auth.getUser()
       const [{ data: usersData }, { data: deptData }] = await Promise.all([
-        supabase.from('app_users').select('id, login_id, user_name, dept_id, role_name').order('user_name'),
+        supabase.from('app_users').select('id, login_id, user_name, dept_id, role_name, can_approval_participate').order('user_name'),
         supabase.from('departments').select('id, dept_name').order('id'),
       ])
 
@@ -85,6 +87,7 @@ export default function NewApprovalPage() {
 
   const deptMap = useMemo(() => new Map(departments.map((d) => [d.id, d.dept_name])), [departments])
   const selectedWriter = users.find((u) => u.id === writerId)
+  const writerHasApprovalRight = selectedWriter?.can_approval_participate === true
   const selectableUsers = users.filter((u) => u.id !== writerId)
   const filteredUsersByRole = useMemo(
     () =>
@@ -111,6 +114,7 @@ export default function NewApprovalPage() {
 
     if (!title.trim() || !content.trim()) return setErrorMessage('제목과 내용을 모두 입력하십시오.')
     if (!writerId) return setErrorMessage('작성자 정보가 없습니다.')
+    if (!writerHasApprovalRight) return setErrorMessage('작성자는 결재권이 있어야 상신할 수 있습니다.')
     if (!roleAssignees.final_approver.some((id) => id.trim())) return setErrorMessage('최종 결재자를 선택하십시오.')
 
     // 🌟 숫자 0 버그 방지 검증 로직
@@ -198,7 +202,7 @@ export default function NewApprovalPage() {
           </div>
           <div className="flex gap-2">
             <Link href="/approvals" className="px-5 py-2.5 text-sm font-bold text-gray-600 bg-white border border-gray-300 rounded-lg">취소</Link>
-            <button type="submit" disabled={isSaving} className="px-5 py-2.5 text-sm font-bold text-white bg-blue-600 rounded-lg disabled:opacity-50">
+            <button type="submit" disabled={isSaving || !writerHasApprovalRight} className="px-5 py-2.5 text-sm font-bold text-white bg-blue-600 rounded-lg disabled:opacity-50">
               {isSaving ? '저장 중...' : '작성 후 상신'}
             </button>
           </div>
@@ -206,6 +210,11 @@ export default function NewApprovalPage() {
 
         {errorMessage && (
           <div className="mb-6 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-600 font-bold border border-red-200">{errorMessage}</div>
+        )}
+        {!writerHasApprovalRight && (
+          <div className="mb-6 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-700 font-bold border border-amber-200">
+            작성자에게 결재권이 없어 상신할 수 없습니다. 관리자에게 결재권 부여를 요청하세요.
+          </div>
         )}
 
         <div className="flex flex-col lg:flex-row gap-6">
@@ -262,8 +271,9 @@ export default function NewApprovalPage() {
                         }
                         options={(filteredUsersByRole[role] ?? []).map((u) => ({
                           value: u.id,
-                          label: `${u.user_name} / ${deptMap.get(u.dept_id ?? -1) ?? '-'}`,
+                          label: `${u.user_name} / ${deptMap.get(u.dept_id ?? -1) ?? '-'}${u.can_approval_participate ? '' : ' [결재권 없음]'}`,
                           keywords: [u.user_name, u.login_id, u.role_name, String(deptMap.get(u.dept_id ?? -1) ?? '')],
+                          disabled: !u.can_approval_participate,
                         }))}
                         placeholder={role === 'final_approver' ? '필수 선택' : '선택 안 함'}
                         className="flex-1"

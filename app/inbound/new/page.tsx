@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import SearchableCombobox from '@/components/SearchableCombobox';
+import { getAllowedWarehouseIds } from '@/lib/permissions';
 
 export default function NewInboundPage() {
   const router = useRouter();
@@ -52,13 +53,15 @@ export default function NewInboundPage() {
   useEffect(() => {
     const fetchData = async () => {
       const { data: { session } } = await supabase.auth.getSession();
+      let allowedWarehouseIds: number[] | null = [];
       if (session?.user) {
         const { data: user } = await supabase
           .from('app_users')
-          .select('user_name, id')
+          .select('user_name, id, role_name, can_manage_permissions, can_admin_manage')
           .eq('id', session.user.id)
           .single();
         setUserData({ ...user, id: session.user.id });
+        allowedWarehouseIds = await getAllowedWarehouseIds(user);
       }
 
       const { data: itemsData } = await supabase
@@ -73,11 +76,20 @@ export default function NewInboundPage() {
         .eq('is_active', true);
       setCustomers(customersData || []);
 
-      const { data: warehouseData } = await supabase
+      let warehouseQuery = supabase
         .from('warehouses')
         .select('id, name')
         .eq('is_active', true)
         .order('sort_order', { ascending: true });
+      if (allowedWarehouseIds !== null) {
+        if (allowedWarehouseIds.length === 0) {
+          setWarehouses([]);
+          setWarehouseId('');
+          return;
+        }
+        warehouseQuery = warehouseQuery.in('id', allowedWarehouseIds);
+      }
+      const { data: warehouseData } = await warehouseQuery;
       setWarehouses(warehouseData || []);
       if (warehouseData?.[0]?.id) setWarehouseId(String(warehouseData[0].id));
     };

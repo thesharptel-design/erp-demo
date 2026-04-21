@@ -1,341 +1,1013 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import SearchableCombobox from '@/components/SearchableCombobox';
+import { supabase } from '@/lib/supabase';
+
+type UserKind = 'student' | 'teacher' | 'staff';
+
+type AppUser = {
+  id: string;
+  employee_no: string | null;
+  user_name: string | null;
+  email: string | null;
+  phone: string | null;
+  role_name: string | null;
+  user_kind: UserKind;
+  department: string | null;
+  job_rank: string | null;
+  school_name: string | null;
+  training_program: string | null;
+  grade_level: string | null;
+  major: string | null;
+  teacher_subject: string | null;
+  seal_image_path: string | null;
+  can_approval_participate: boolean;
+  can_manage_master: boolean | null;
+  can_sales_manage: boolean | null;
+  can_material_manage: boolean | null;
+  can_production_manage: boolean | null;
+  can_qc_manage: boolean | null;
+  can_admin_manage: boolean | null;
+  can_manage_permissions: boolean | null;
+  is_active: boolean | null;
+};
+
+type Warehouse = {
+  id: number;
+  code: string | null;
+  name: string;
+  is_active: boolean | null;
+};
+
+type PermissionKey =
+  | 'can_manage_master'
+  | 'can_sales_manage'
+  | 'can_material_manage'
+  | 'can_production_manage'
+  | 'can_qc_manage'
+  | 'can_admin_manage'
+  | 'can_manage_permissions'
+  | 'can_approval_participate';
+
+type EditForm = {
+  id: string;
+  user_name: string;
+  email: string;
+  phone: string;
+  role_name: string;
+  user_kind: UserKind;
+  department: string;
+  job_rank: string;
+  school_name: string;
+  training_program: string;
+  grade_level: string;
+  major: string;
+  teacher_subject: string;
+  seal_image_path: string;
+  can_approval_participate: boolean;
+  warehouse_ids: number[];
+  new_password: string;
+};
+
+const PAGE_SIZE = 25;
+
+const DEPARTMENT_OPTIONS = ['영업', '자재', '생산', '구매', 'QC', '경영지원', '관리'].map((value) => ({
+  value,
+  label: value,
+}));
+const RANK_OPTIONS = ['사원', '대리', '과장', '차장', '부장', '이사', '대표'].map((value) => ({
+  value,
+  label: value,
+}));
+const USER_KIND_OPTIONS: { value: UserKind; label: string }[] = [
+  { value: 'staff', label: '직원' },
+  { value: 'teacher', label: '선생' },
+  { value: 'student', label: '학생' },
+];
+const PERMISSION_FIELDS: { key: PermissionKey; label: string }[] = [
+  { key: 'can_manage_master', label: '기준정보' },
+  { key: 'can_sales_manage', label: '영업/구매' },
+  { key: 'can_material_manage', label: '자재/재고' },
+  { key: 'can_production_manage', label: '생산/BOM' },
+  { key: 'can_qc_manage', label: '품질(QC)' },
+  { key: 'can_admin_manage', label: '경영/관리' },
+  { key: 'can_manage_permissions', label: '시스템관리' },
+  { key: 'can_approval_participate', label: '결재 참여' },
+];
+
+const EMPTY_EDIT_FORM: EditForm = {
+  id: '',
+  user_name: '',
+  email: '',
+  phone: '',
+  role_name: 'staff',
+  user_kind: 'staff',
+  department: '',
+  job_rank: '',
+  school_name: '',
+  training_program: '',
+  grade_level: '',
+  major: '',
+  teacher_subject: '',
+  seal_image_path: '',
+  can_approval_participate: true,
+  warehouse_ids: [],
+  new_password: '',
+};
+
+function parseUserKind(value: unknown): UserKind {
+  if (value === 'student' || value === 'teacher' || value === 'staff') return value;
+  return 'staff';
+}
+
+function getUserKindLabel(kind: UserKind): string {
+  if (kind === 'student') return '학생';
+  if (kind === 'teacher') return '선생';
+  return '직원';
+}
+
+function normalizeString(value: string): string | null {
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function uniqueTextOptions(values: string[]) {
+  return Array.from(new Set(values))
+    .sort((a, b) => a.localeCompare(b, 'ko'))
+    .map((value) => ({ value, label: value }));
+}
+
+function getProfileColumns(user: AppUser): { first: { label: string; value: string }; second: { label: string; value: string } } {
+  if (user.user_kind === 'student') {
+    return {
+      first: { label: '학교', value: user.school_name ?? '-' },
+      second: { label: '학년/전공', value: [user.grade_level, user.major].filter(Boolean).join(' / ') || '-' },
+    };
+  }
+  if (user.user_kind === 'teacher') {
+    return {
+      first: { label: '학교', value: user.school_name ?? '-' },
+      second: { label: '과목', value: user.teacher_subject ?? '-' },
+    };
+  }
+  return {
+    first: { label: '부서', value: user.department ?? '-' },
+    second: { label: '직급', value: user.job_rank ?? '-' },
+  };
+}
 
 export default function UserPermissionsPage() {
-  const [users, setUsers] = useState<any[]>([]);
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [userWarehouseMap, setUserWarehouseMap] = useState<Record<string, number[]>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [nameFilterUserId, setNameFilterUserId] = useState('');
+  const [kindFilter, setKindFilter] = useState('');
+  const [emailFilter, setEmailFilter] = useState('');
+  const [trainingProgramFilter, setTrainingProgramFilter] = useState('');
+  const [category1Filter, setCategory1Filter] = useState('');
+  const [category2Filter, setCategory2Filter] = useState('');
   const [loading, setLoading] = useState(true);
-
-  // 모달창 및 수정 폼 상태
-  const [editingUser, setEditingUser] = useState<any>(null);
-  const [editForm, setEditForm] = useState({
-    id: '', user_name: '', email: '', phone: '', department: '', job_rank: '', new_password: ''
-  });
+  const [savingUserId, setSavingUserId] = useState<string | null>(null);
+  const [editingUser, setEditingUser] = useState<AppUser | null>(null);
+  const [editForm, setEditForm] = useState<EditForm>(EMPTY_EDIT_FORM);
   const [isUpdating, setIsUpdating] = useState(false);
-  const departmentOptions = ['영업', '자재', '생산', '구매', 'QC', '경영지원', '관리'].map((v) => ({ value: v, label: v }));
-  const rankOptions = ['사원', '대리', '과장', '차장', '부장', '이사', '대표'].map((v) => ({ value: v, label: v }));
+  const [currentPage, setCurrentPage] = useState(1);
 
-  useEffect(() => { fetchUsers(); }, []);
+  const filteredUsers = useMemo(() => {
+    return users.filter((user) => {
+      if (nameFilterUserId && user.id !== nameFilterUserId) return false;
+      if (kindFilter && user.user_kind !== kindFilter) return false;
+      if (emailFilter && (user.email ?? '-') !== emailFilter) return false;
+      if (trainingProgramFilter && (user.training_program ?? '-') !== trainingProgramFilter) return false;
+      const profile = getProfileColumns(user);
+      if (category1Filter && profile.first.value !== category1Filter) return false;
+      if (category2Filter && profile.second.value !== category2Filter) return false;
+      return true;
+    });
+  }, [nameFilterUserId, kindFilter, emailFilter, trainingProgramFilter, category1Filter, category2Filter, users]);
 
-  const fetchUsers = async () => {
+  const selectedCountInFilter = useMemo(
+    () => filteredUsers.filter((user) => selectedIds.includes(user.id)).length,
+    [filteredUsers, selectedIds]
+  );
+
+  const totalPages = Math.max(1, Math.ceil(filteredUsers.length / PAGE_SIZE));
+  const pageUsers = useMemo(() => {
+    const start = (currentPage - 1) * PAGE_SIZE;
+    return filteredUsers.slice(start, start + PAGE_SIZE);
+  }, [currentPage, filteredUsers]);
+
+  const nameFilterOptions = useMemo(
+    () =>
+      users.map((user) => ({
+        value: user.id,
+        label: `${user.user_name ?? '(이름 없음)'} (${user.employee_no ?? '-'})`,
+        keywords: [user.email ?? '', user.phone ?? '', user.user_kind, getUserKindLabel(user.user_kind)],
+      })),
+    [users]
+  );
+  const kindFilterOptions = useMemo(
+    () => USER_KIND_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
+    []
+  );
+  const emailFilterOptions = useMemo(
+    () => uniqueTextOptions(users.map((user) => user.email ?? '-')),
+    [users]
+  );
+  const trainingProgramFilterOptions = useMemo(
+    () => uniqueTextOptions(users.map((user) => user.training_program ?? '-')),
+    [users]
+  );
+  const category1FilterOptions = useMemo(
+    () => uniqueTextOptions(users.map((user) => getProfileColumns(user).first.value)),
+    [users]
+  );
+  const category2FilterOptions = useMemo(
+    () => uniqueTextOptions(users.map((user) => getProfileColumns(user).second.value)),
+    [users]
+  );
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [nameFilterUserId, kindFilter, emailFilter, trainingProgramFilter, category1Filter, category2Filter, users.length]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    void fetchUsersAndWarehouses();
+  }, []);
+
+  const getAuthHeaders = async () => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = session?.access_token ?? '';
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    };
+  };
+
+  const fetchUsersAndWarehouses = async () => {
     setLoading(true);
-    const { data } = await supabase.from('app_users').select('*').neq('role_name', 'pending').order('department');
-    setUsers(data || []);
-    setSelectedIds([]); // 데이터 새로고침 시 체크박스 초기화
+    const [usersResult, warehousesResult, mappingsResult] = await Promise.all([
+      supabase
+        .from('app_users')
+        .select(`
+          id, employee_no, user_name, email, phone, role_name, user_kind,
+          department, job_rank, school_name, training_program, grade_level, major, teacher_subject, seal_image_path,
+          can_approval_participate, can_manage_master, can_sales_manage, can_material_manage,
+          can_production_manage, can_qc_manage, can_admin_manage, can_manage_permissions, is_active
+        `)
+        .neq('role_name', 'pending')
+        .order('user_name', { ascending: true }),
+      supabase.from('warehouses').select('id, code, name, is_active').order('sort_order', { ascending: true }),
+      supabase.from('app_user_warehouses').select('user_id, warehouse_id'),
+    ]);
+
+    if (usersResult.error) alert(`사용자 조회 실패: ${usersResult.error.message}`);
+    if (warehousesResult.error) alert(`창고 조회 실패: ${warehousesResult.error.message}`);
+    if (mappingsResult.error) alert(`창고 권한 조회 실패: ${mappingsResult.error.message}`);
+
+    const normalizedUsers = (usersResult.data ?? []).map((row) => ({
+      ...row,
+      user_kind: parseUserKind(row.user_kind),
+      can_approval_participate: row.can_approval_participate === true,
+    })) as AppUser[];
+    setUsers(normalizedUsers);
+    setWarehouses((warehousesResult.data ?? []) as Warehouse[]);
+
+    const map: Record<string, number[]> = {};
+    for (const row of mappingsResult.data ?? []) {
+      const userId = String(row.user_id ?? '');
+      const warehouseId = Number(row.warehouse_id);
+      if (!userId || !Number.isInteger(warehouseId) || warehouseId <= 0) continue;
+      if (!map[userId]) map[userId] = [];
+      map[userId].push(warehouseId);
+    }
+    setUserWarehouseMap(map);
+
+    setSelectedIds([]);
     setLoading(false);
   };
 
-  const togglePermission = async (userId: string, column: string, currentState: boolean) => {
-    const { error } = await supabase.from('app_users').update({ [column]: !currentState }).eq('id', userId);
-    if (!error) fetchUsers();
+  const postUserUpdate = async (id: string, payload: Record<string, unknown>) => {
+    const res = await fetch('/api/admin/update-user', {
+      method: 'POST',
+      headers: await getAuthHeaders(),
+      body: JSON.stringify({ id, ...payload }),
+    });
+    const result = await res.json();
+    if (!res.ok || !result.success) {
+      throw new Error(result.error ?? '사용자 업데이트 실패');
+    }
   };
 
-  // 🌟 [체크박스 로직] 전체 선택 / 해제
   const handleSelectAll = (checked: boolean) => {
-    if (checked) setSelectedIds(users.map(u => u.id));
-    else setSelectedIds([]);
+    if (!checked) {
+      setSelectedIds((prev) => prev.filter((id) => !filteredUsers.some((user) => user.id === id)));
+      return;
+    }
+    const next = Array.from(new Set([...selectedIds, ...filteredUsers.map((user) => user.id)]));
+    setSelectedIds(next);
   };
 
   const handleSelectUser = (id: string, checked: boolean) => {
-    if (checked) setSelectedIds(prev => [...prev, id]);
-    else setSelectedIds(prev => prev.filter(userId => userId !== id));
+    if (checked) setSelectedIds((prev) => [...prev, id]);
+    else setSelectedIds((prev) => prev.filter((userId) => userId !== id));
   };
 
-  // 🌟 [일괄 로직] 일괄 퇴사 처리 (is_active: false)
   const handleBulkRetire = async () => {
-    if (selectedIds.length === 0) return alert('퇴사 처리할 직원을 선택해주세요.');
-    if (!confirm(`선택한 ${selectedIds.length}명의 직원을 일괄 퇴사(비활성화) 처리하시겠습니까?`)) return;
+    if (selectedIds.length === 0) return alert('퇴사 처리할 사용자를 선택해주세요.');
+    if (!confirm(`선택한 ${selectedIds.length}명의 사용자를 비활성화하시겠습니까?`)) return;
 
     setLoading(true);
     let successCount = 0;
     for (const id of selectedIds) {
       const { error } = await supabase.from('app_users').update({ is_active: false }).eq('id', id);
-      if (!error) successCount++;
+      if (!error) successCount += 1;
     }
-    
-    alert(`✅ ${successCount}명 퇴사 처리 완료!`);
-    fetchUsers();
+    alert(`✅ ${successCount}명 퇴사 처리 완료`);
+    await fetchUsersAndWarehouses();
   };
 
-  // 🌟 [일괄 로직] 일괄 삭제 (보안 계정까지 완전 삭제)
   const handleBulkDelete = async () => {
-    if (selectedIds.length === 0) return alert('삭제할 직원을 선택해주세요.');
-    if (!confirm(`🚨 경고: 선택한 ${selectedIds.length}명의 계정을 완전히 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+    if (selectedIds.length === 0) return alert('삭제할 사용자를 선택해주세요.');
+    if (!confirm(`선택한 ${selectedIds.length}명의 계정을 완전히 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
 
     setLoading(true);
     const res = await fetch('/api/admin/delete-users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userIds: selectedIds })
+      body: JSON.stringify({ userIds: selectedIds }),
     });
 
     if (res.ok) {
-      alert('선택한 계정이 완전히 삭제되었습니다.');
-      fetchUsers();
+      alert('선택한 계정이 삭제되었습니다.');
+      await fetchUsersAndWarehouses();
     } else {
       const err = await res.json();
-      alert('삭제 실패: ' + err.error);
+      alert(`삭제 실패: ${err.error ?? '알 수 없는 오류'}`);
       setLoading(false);
     }
   };
 
-  // 개별 상태 토글 (기존)
-  const handleToggleActive = async (user: any) => {
-    const newStatus = !user.is_active;
-    const msg = newStatus ? "다시 활성화하시겠습니까?" : "퇴사 처리(로그인 차단)하시겠습니까?";
-    if (!confirm(`${user.user_name}님을 ${msg}`)) return;
+  const handleToggleActive = async (user: AppUser) => {
+    const nextActive = !Boolean(user.is_active);
+    const confirmText = nextActive ? '복직(활성화)' : '퇴사(비활성화)';
+    if (!confirm(`${user.user_name ?? '-'} 사용자를 ${confirmText} 하시겠습니까?`)) return;
 
-    const { error } = await supabase.from('app_users').update({ is_active: newStatus }).eq('id', user.id);
-    if (error) alert("상태 변경 실패: " + error.message);
-    else fetchUsers();
+    const { error } = await supabase.from('app_users').update({ is_active: nextActive }).eq('id', user.id);
+    if (error) alert(`상태 변경 실패: ${error.message}`);
+    else await fetchUsersAndWarehouses();
   };
 
-  // 개별 완전 삭제 (기존)
-  const handleDeleteUser = async (user: any) => {
-    if (!confirm(`🚨 경고: [${user.user_name}]님의 계정을 보안 시스템에서 완전히 삭제하시겠습니까?`)) return;
-
+  const handleDeleteUser = async (user: AppUser) => {
+    if (!confirm(`[${user.user_name ?? '-'}] 계정을 완전히 삭제하시겠습니까?`)) return;
     const res = await fetch('/api/admin/delete-users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userIds: [user.id] })
+      body: JSON.stringify({ userIds: [user.id] }),
     });
-
     if (res.ok) {
-      alert('계정이 완전히 삭제되었습니다.');
-      fetchUsers();
+      alert('계정이 삭제되었습니다.');
+      await fetchUsersAndWarehouses();
     } else {
       const err = await res.json();
-      alert('삭제 실패: ' + err.error);
+      alert(`삭제 실패: ${err.error ?? '알 수 없는 오류'}`);
     }
   };
 
-  const openEditModal = (user: any) => {
+  const togglePermission = async (user: AppUser, key: PermissionKey) => {
+    setSavingUserId(user.id);
+    try {
+      const nextPermissions: Record<PermissionKey, boolean> = {
+        can_manage_master: user.can_manage_master === true,
+        can_sales_manage: user.can_sales_manage === true,
+        can_material_manage: user.can_material_manage === true,
+        can_production_manage: user.can_production_manage === true,
+        can_qc_manage: user.can_qc_manage === true,
+        can_admin_manage: user.can_admin_manage === true,
+        can_manage_permissions: user.can_manage_permissions === true,
+        can_approval_participate: user.can_approval_participate === true,
+      };
+      nextPermissions[key] = !nextPermissions[key];
+      await postUserUpdate(user.id, nextPermissions);
+      await fetchUsersAndWarehouses();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '권한 수정 실패';
+      alert(message);
+    } finally {
+      setSavingUserId(null);
+    }
+  };
+
+  const toggleWarehouseForUser = async (userId: string, warehouseId: number, checked: boolean) => {
+    const current = userWarehouseMap[userId] ?? [];
+    const next = checked ? Array.from(new Set([...current, warehouseId])) : current.filter((id) => id !== warehouseId);
+    setSavingUserId(userId);
+    try {
+      await postUserUpdate(userId, { warehouse_ids: next });
+      setUserWarehouseMap((prev) => ({ ...prev, [userId]: next }));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '창고 권한 수정 실패';
+      alert(message);
+    } finally {
+      setSavingUserId(null);
+    }
+  };
+
+  const openEditModal = (user: AppUser) => {
     setEditingUser(user);
     setEditForm({
-      id: user.id, user_name: user.user_name || '', email: user.email || '', 
-      phone: user.phone || '', department: user.department || '', job_rank: user.job_rank || '', new_password: ''
+      id: user.id,
+      user_name: user.user_name ?? '',
+      email: user.email ?? '',
+      phone: user.phone ?? '',
+      role_name: user.role_name ?? 'staff',
+      user_kind: user.user_kind,
+      department: user.department ?? '',
+      job_rank: user.job_rank ?? '',
+      school_name: user.school_name ?? '',
+      training_program: user.training_program ?? '',
+      grade_level: user.grade_level ?? '',
+      major: user.major ?? '',
+      teacher_subject: user.teacher_subject ?? '',
+      seal_image_path: user.seal_image_path ?? '',
+      can_approval_participate: user.can_approval_participate,
+      warehouse_ids: userWarehouseMap[user.id] ?? [],
+      new_password: '',
     });
   };
 
   const handleUpdateUser = async () => {
-    if (!editForm.user_name || !editForm.email) return alert('이름과 이메일은 필수입니다.');
-    if (!confirm(`${editForm.user_name}님의 정보를 수정하시겠습니까?`)) return;
+    if (!editForm.user_name.trim() || !editForm.email.trim()) {
+      return alert('이름과 이메일은 필수입니다.');
+    }
+    if (!confirm(`${editForm.user_name} 사용자의 정보를 저장하시겠습니까?`)) return;
 
     setIsUpdating(true);
-    const res = await fetch('/api/admin/update-user', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(editForm)
-    });
-
-    const result = await res.json();
-    setIsUpdating(false);
-
-    if (result.success) {
-      alert('사용자 정보가 성공적으로 업데이트되었습니다.');
+    try {
+      await postUserUpdate(editForm.id, {
+        user_name: editForm.user_name.trim(),
+        email: editForm.email.trim(),
+        phone: normalizeString(editForm.phone),
+        role_name: normalizeString(editForm.role_name),
+        user_kind: editForm.user_kind,
+        department: editForm.user_kind === 'staff' ? normalizeString(editForm.department) : null,
+        job_rank: editForm.user_kind === 'staff' ? normalizeString(editForm.job_rank) : null,
+        school_name: editForm.user_kind !== 'staff' ? normalizeString(editForm.school_name) : null,
+        training_program: editForm.user_kind !== 'staff' ? normalizeString(editForm.training_program) : null,
+        grade_level: editForm.user_kind === 'student' ? normalizeString(editForm.grade_level) : null,
+        major: editForm.user_kind === 'student' ? normalizeString(editForm.major) : null,
+        teacher_subject: editForm.user_kind === 'teacher' ? normalizeString(editForm.teacher_subject) : null,
+        seal_image_path: normalizeString(editForm.seal_image_path),
+        can_approval_participate: editForm.can_approval_participate,
+        warehouse_ids: editForm.warehouse_ids,
+        new_password: normalizeString(editForm.new_password),
+      });
+      alert('사용자 정보가 저장되었습니다.');
       setEditingUser(null);
-      fetchUsers();
-    } else {
-      alert('에러 발생: ' + result.error);
+      setEditForm(EMPTY_EDIT_FORM);
+      await fetchUsersAndWarehouses();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '사용자 수정 실패';
+      alert(message);
+    } finally {
+      setIsUpdating(false);
     }
   };
 
   const handleDownloadUsersExcel = () => {
-    const rows = users.map((u) => ({
-      사번: u.employee_no ?? '-',
-      이름: u.user_name ?? '-',
-      이메일: u.email ?? '-',
-      연락처: u.phone ?? '-',
-      부서: u.department ?? '-',
-      직급: u.job_rank ?? '-',
-      역할: u.role_name ?? '-',
-      재직상태: u.is_active ? '재직' : '퇴사',
-    }));
+    const rows = users.map((user) => {
+      const profile = getProfileColumns(user);
+      return {
+        사번: user.employee_no ?? '-',
+        이름: user.user_name ?? '-',
+        이메일: user.email ?? '-',
+        연락처: user.phone ?? '-',
+        사용자유형: user.user_kind,
+        분류1: `${profile.first.label}: ${profile.first.value}`,
+        분류2: `${profile.second.label}: ${profile.second.value}`,
+        교육프로그램: user.training_program ?? '-',
+        역할: user.role_name ?? '-',
+        재직상태: user.is_active ? '재직' : '퇴사',
+      };
+    });
     const sheet = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, sheet, 'users');
-    XLSX.writeFile(wb, `ERP_사용자목록_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, 'users');
+    XLSX.writeFile(workbook, `ERP_사용자조회설정_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
   return (
-    // 🌟 전체 컨테이너 폭 축소: max-w-[1700px] -> max-w-[1500px]
-    <div className="p-6 max-w-[1500px] mx-auto font-sans bg-gray-50 h-screen flex flex-col relative text-black">
-      <header className="mb-4 flex-shrink-0 flex justify-between items-end">
+    <div className="mx-auto flex min-h-screen max-w-[1360px] flex-col bg-gray-50 p-3 font-sans text-black">
+      <header className="mb-3 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-black uppercase text-blue-600 italic">User <span className="text-black">Permissions</span></h1>
-          <p className="text-gray-500 text-[10px] font-bold mt-1">전체 직원 정보 관리 및 모듈별 접근 권한 설정 (이름을 클릭하여 정보 수정)</p>
+          <h1 className="text-3xl font-black italic text-blue-600">사용자 조회 및 설정</h1>
+          <p className="mt-1 text-[11px] font-bold text-gray-500">
+            이름 필터, 권한/창고 아코디언, 사용자 상세 수정 모달을 통한 통합 관리 화면
+          </p>
         </div>
-        
-        {/* 🌟 우측 상단 일괄 처리 버튼 영역 */}
         <div className="flex gap-2">
-          <button disabled={loading}
+          <button
+            disabled={loading}
             onClick={handleDownloadUsersExcel}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg text-xs font-black shadow-sm hover:bg-blue-700 active:scale-95 transition-all disabled:opacity-50"
+            className="rounded-lg bg-blue-600 px-4 py-2 text-xs font-black text-white transition-all hover:bg-blue-700 disabled:opacity-50"
           >
-            ⬇️ 엑셀 다운로드
+            엑셀 다운로드
           </button>
-          <button disabled={loading}
+          <button
+            disabled={loading}
             onClick={handleBulkRetire}
-            className="px-4 py-2 bg-gray-800 text-white rounded-lg text-xs font-black shadow-sm hover:bg-gray-900 active:scale-95 transition-all disabled:opacity-50"
+            className="rounded-lg bg-gray-800 px-4 py-2 text-xs font-black text-white transition-all hover:bg-gray-900 disabled:opacity-50"
           >
-            ⏸️ 일괄 퇴사
+            일괄 퇴사
           </button>
-          <button disabled={loading}
+          <button
+            disabled={loading}
             onClick={handleBulkDelete}
-            className="px-4 py-2 bg-white border-2 border-red-200 text-red-500 rounded-lg text-xs font-black shadow-sm hover:bg-red-50 active:scale-95 transition-all disabled:opacity-50"
+            className="rounded-lg border-2 border-red-200 bg-white px-4 py-2 text-xs font-black text-red-500 transition-all hover:bg-red-50 disabled:opacity-50"
           >
-            🗑️ 일괄 삭제
+            일괄 삭제
           </button>
         </div>
       </header>
 
-      <section className="bg-white border-2 border-gray-200 rounded-2xl shadow-lg flex-grow flex flex-col min-h-0 overflow-hidden">
-        <div className="overflow-x-auto overflow-y-auto custom-scrollbar flex-grow">
-          {/* 🌟 테이블 최소 너비 축소: min-w-[1400px] -> min-w-[1200px] 및 패딩(px-4 -> px-3) 다이어트 */}
-          <table className="w-full min-w-[1200px] text-xs">
-            <thead className="sticky top-0 bg-gray-50 z-10 shadow-sm border-b-2">
-              <tr className="text-gray-400 font-black text-[10px] uppercase">
-                {/* 🌟 체크박스 헤더 추가 */}
-                <th className="px-3 py-3 text-center w-10">
-                  <input type="checkbox" className="w-4 h-4 accent-blue-600 cursor-pointer" 
-                    checked={users.length > 0 && selectedIds.length === users.length} 
-                    onChange={(e) => handleSelectAll(e.target.checked)} 
-                  />
-                </th>
-                <th className="px-3 py-3 text-left">직원 정보 (이름 | ID)</th>
-                <th className="px-3 py-3 text-center border-r-2">부서/직급</th>
-                <th className="px-3 py-3 text-center">기준정보</th>
-                <th className="px-3 py-3 text-center">영업/구매</th>
-                <th className="px-3 py-3 text-center">자재/재고</th>
-                <th className="px-3 py-3 text-center">생산/BOM</th>
-                <th className="px-3 py-3 text-center">품질(QC)</th>
-                <th className="px-3 py-3 text-center">경영/관리</th>
-                <th className="px-3 py-3 text-center text-blue-600 bg-gray-100">시스템관리</th>
-                <th className="px-3 py-3 text-center bg-gray-100 border-l-2">계정 관리</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y-2">
-              {users.map(user => (
-                <tr key={user.id} className={`hover:bg-blue-50/20 ${!user.is_active && 'bg-gray-50 opacity-60'}`}>
-                  {/* 🌟 체크박스 열 추가 */}
-                  <td className="px-3 py-3 text-center">
-                    <input type="checkbox" className="w-4 h-4 accent-blue-600 cursor-pointer"
-                      checked={selectedIds.includes(user.id)}
-                      onChange={(e) => handleSelectUser(user.id, e.target.checked)}
-                    />
-                  </td>
-                  <td className="px-3 py-3">
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => openEditModal(user)} className="font-black text-sm text-blue-600 hover:underline flex items-center gap-1">
-                        {user.user_name}
-                        <span className="text-[9px] font-bold bg-gray-100 border px-1 py-0.5 rounded text-gray-400 no-underline hover:bg-gray-200">수정</span>
-                      </button>
-                      <span className="text-gray-300">|</span>
-                      <span className="text-[11px] font-bold text-gray-500 tracking-tight">{user.email}</span>
-                      {!user.is_active && <span className="ml-1 px-1.5 py-0.5 bg-red-100 text-red-600 text-[9px] font-black rounded italic">RETIRED</span>}
-                    </div>
-                  </td>
-                  <td className="px-3 py-3 text-center border-r-2"><span className="bg-gray-100 px-2 py-1 rounded font-black">{user.department}</span> <span className="text-gray-500 font-bold ml-1">{user.job_rank}</span></td>
-                  
-                  <td className="px-3 py-3 text-center"><input type="checkbox" checked={!!user.can_manage_master} onChange={() => togglePermission(user.id, 'can_manage_master', !!user.can_manage_master)} className="w-5 h-5 accent-black cursor-pointer" /></td>
-                  <td className="px-3 py-3 text-center"><input type="checkbox" checked={!!user.can_sales_manage} onChange={() => togglePermission(user.id, 'can_sales_manage', !!user.can_sales_manage)} className="w-5 h-5 accent-black cursor-pointer" /></td>
-                  <td className="px-3 py-3 text-center"><input type="checkbox" checked={!!user.can_material_manage} onChange={() => togglePermission(user.id, 'can_material_manage', !!user.can_material_manage)} className="w-5 h-5 accent-black cursor-pointer" /></td>
-                  <td className="px-3 py-3 text-center"><input type="checkbox" checked={!!user.can_production_manage} onChange={() => togglePermission(user.id, 'can_production_manage', !!user.can_production_manage)} className="w-5 h-5 accent-black cursor-pointer" /></td>
-                  <td className="px-3 py-3 text-center"><input type="checkbox" checked={!!user.can_qc_manage} onChange={() => togglePermission(user.id, 'can_qc_manage', !!user.can_qc_manage)} className="w-5 h-5 accent-black cursor-pointer" /></td>
-                  <td className="px-3 py-3 text-center"><input type="checkbox" checked={!!user.can_admin_manage} onChange={() => togglePermission(user.id, 'can_admin_manage', !!user.can_admin_manage)} className="w-5 h-5 accent-black cursor-pointer" /></td>
-                  <td className="px-3 py-3 text-center bg-gray-50"><input type="checkbox" checked={!!user.can_manage_permissions} onChange={() => togglePermission(user.id, 'can_manage_permissions', !!user.can_manage_permissions)} className="w-5 h-5 accent-blue-600 cursor-pointer" /></td>
-                  
-                  <td className="px-3 py-3 text-center bg-gray-50/50 border-l-2">
-                    <div className="flex justify-center gap-1">
-                      <button onClick={() => handleToggleActive(user)} className={`px-2 py-1.5 rounded text-[10px] font-black transition-all ${user.is_active ? 'bg-white border border-gray-300 text-gray-500 hover:border-red-500 hover:text-red-500' : 'bg-red-500 text-white'}`}>
-                        {user.is_active ? '퇴사' : '복직'}
-                      </button>
-                      <button onClick={() => handleDeleteUser(user)} className="px-2 py-1.5 bg-white border border-red-200 text-red-400 rounded text-[10px] font-black hover:bg-red-600 hover:text-white hover:border-red-600 transition-all">
-                        삭제
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <section className="mb-2 rounded-xl border border-gray-200 bg-white p-2.5">
+        <div className="text-xs font-bold text-gray-500">
+          전체 {users.length}명 / 필터 결과 {filteredUsers.length}명 / 선택 {selectedIds.length}명
         </div>
       </section>
 
-      {/* 🌟 모달창 (변경 없음) */}
-      {editingUser && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white border-2 border-black rounded-2xl shadow-[8px_8px_0px_0px_rgba(0,0,0,1)] max-w-lg w-full overflow-hidden flex flex-col">
-            <div className="p-5 border-b-2 border-gray-100 flex justify-between items-center bg-gray-50">
-              <h3 className="font-black text-lg flex items-center gap-2">
-                <span className="w-2 h-5 bg-blue-600 rounded-full"></span>
-                직원 상세 정보 수정
-              </h3>
-              <button onClick={() => setEditingUser(null)} className="text-gray-400 hover:text-black font-bold text-xl">&times;</button>
+      <section className="flex min-h-0 flex-grow flex-col overflow-hidden rounded-2xl border-2 border-gray-200 bg-white shadow-lg">
+        <div className="custom-scrollbar flex-grow overflow-auto">
+          <table className="w-full min-w-[1240px] text-xs">
+            <thead className="sticky top-0 z-10 border-b bg-gray-50 text-[10px] font-black uppercase text-gray-500">
+              <tr>
+                <th className="w-10 px-3 py-3 text-center">
+                  <input
+                    type="checkbox"
+                    checked={filteredUsers.length > 0 && selectedCountInFilter === filteredUsers.length}
+                    onChange={(e) => handleSelectAll(e.target.checked)}
+                    className="h-4 w-4 cursor-pointer accent-blue-600"
+                  />
+                </th>
+                <th className="px-2 py-2 text-left normal-case">
+                  <p className="mb-1 text-[10px] font-black text-gray-500">이름/사번</p>
+                  <SearchableCombobox
+                    value={nameFilterUserId}
+                    onChange={setNameFilterUserId}
+                    options={nameFilterOptions}
+                    placeholder="검색"
+                    className="w-[160px]"
+                  />
+                </th>
+                <th className="px-2 py-2 text-left normal-case">
+                  <p className="mb-1 text-[10px] font-black text-gray-500">유형</p>
+                  <SearchableCombobox
+                    value={kindFilter}
+                    onChange={setKindFilter}
+                    options={kindFilterOptions}
+                    placeholder="검색"
+                    className="w-[96px]"
+                  />
+                </th>
+                <th className="px-2 py-2 text-left normal-case">
+                  <p className="mb-1 text-[10px] font-black text-gray-500">이메일</p>
+                  <SearchableCombobox
+                    value={emailFilter}
+                    onChange={setEmailFilter}
+                    options={emailFilterOptions}
+                    placeholder="검색"
+                    className="w-[150px]"
+                  />
+                </th>
+                <th className="px-2 py-2 text-left normal-case">
+                  <p className="mb-1 text-[10px] font-black text-gray-500">교육프로그램</p>
+                  <SearchableCombobox
+                    value={trainingProgramFilter}
+                    onChange={setTrainingProgramFilter}
+                    options={trainingProgramFilterOptions}
+                    placeholder="검색"
+                    className="w-[120px]"
+                  />
+                </th>
+                <th className="px-2 py-2 text-left normal-case">
+                  <p className="mb-1 text-[10px] font-black text-gray-500">분류 1</p>
+                  <SearchableCombobox
+                    value={category1Filter}
+                    onChange={setCategory1Filter}
+                    options={category1FilterOptions}
+                    placeholder="검색"
+                    className="w-[120px]"
+                  />
+                </th>
+                <th className="px-2 py-2 text-left normal-case">
+                  <p className="mb-1 text-[10px] font-black text-gray-500">분류 2</p>
+                  <SearchableCombobox
+                    value={category2Filter}
+                    onChange={setCategory2Filter}
+                    options={category2FilterOptions}
+                    placeholder="검색"
+                    className="w-[120px]"
+                  />
+                </th>
+                <th className="px-3 py-3 text-left">권한 상세</th>
+                <th className="px-3 py-3 text-left">창고 권한</th>
+                <th className="px-3 py-3 text-center">계정 관리</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {pageUsers.map((user) => {
+                const profile = getProfileColumns(user);
+                const isSaving = savingUserId === user.id;
+                const assignedWarehouseIds = userWarehouseMap[user.id] ?? [];
+                const isSystemAdmin = user.role_name?.toLowerCase() === 'admin' || user.can_manage_permissions === true;
+                return (
+                  <tr key={user.id} className={`align-top hover:bg-blue-50/40 ${!user.is_active ? 'bg-gray-50 opacity-70' : ''}`}>
+                    <td className="px-3 py-3 text-center">
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.includes(user.id)}
+                        onChange={(e) => handleSelectUser(user.id, e.target.checked)}
+                        className="h-4 w-4 cursor-pointer accent-blue-600"
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <button onClick={() => openEditModal(user)} className="text-left text-sm font-black text-blue-700 hover:underline">
+                        {user.user_name ?? '(이름 없음)'}
+                      </button>
+                      <p className="mt-1 text-[11px] font-semibold text-gray-500">{user.employee_no ?? '-'}</p>
+                      {!user.is_active && (
+                        <span className="mt-1 inline-block rounded bg-red-100 px-1.5 py-0.5 text-[9px] font-black text-red-600">RETIRED</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      <span className="inline-flex rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-black text-blue-700">
+                        {getUserKindLabel(user.user_kind)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3 font-semibold text-gray-700">
+                      <p>{user.email ?? '-'}</p>
+                      <p className="mt-1 text-[11px] text-gray-500">{user.phone ?? '-'}</p>
+                    </td>
+                    <td className="px-3 py-3 font-semibold text-gray-700">{user.training_program ?? '-'}</td>
+                    <td className="px-3 py-3">
+                      <span className="mb-1 inline-block rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-black text-gray-500">
+                        {profile.first.label}
+                      </span>
+                      <p className="font-bold">{profile.first.value}</p>
+                    </td>
+                    <td className="px-3 py-3">
+                      <span className="mb-1 inline-block rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-black text-gray-500">
+                        {profile.second.label}
+                      </span>
+                      <p className="font-bold">{profile.second.value}</p>
+                      {user.training_program ? (
+                        <p className="mt-1 text-[11px] text-gray-500">교육프로그램: {user.training_program}</p>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-3">
+                      <details className="rounded-lg border border-gray-200 bg-white">
+                        <summary className="cursor-pointer px-3 py-2 text-[11px] font-black text-gray-700">
+                          권한 보기/수정
+                        </summary>
+                        <div className="space-y-2 border-t bg-gray-50 px-3 py-2">
+                          {PERMISSION_FIELDS.map((field) => {
+                            const checked =
+                              field.key === 'can_approval_participate'
+                                ? user.can_approval_participate
+                                : user[field.key] === true;
+                            return (
+                              <label key={field.key} className="flex items-center justify-between gap-2 text-[11px] font-semibold">
+                                <span>{field.label}</span>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={isSaving}
+                                  onChange={() => void togglePermission(user, field.key)}
+                                  className="h-4 w-4 cursor-pointer accent-black disabled:cursor-not-allowed"
+                                />
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </details>
+                    </td>
+                    <td className="px-3 py-3">
+                      <details className="rounded-lg border border-gray-200 bg-white">
+                        <summary className="cursor-pointer px-3 py-2 text-[11px] font-black text-gray-700">
+                          창고 선택 ({assignedWarehouseIds.length})
+                        </summary>
+                        <div className="max-h-44 space-y-2 overflow-y-auto border-t bg-gray-50 px-3 py-2">
+                          {isSystemAdmin ? (
+                            <p className="text-[11px] font-semibold text-blue-600">시스템 관리자: 모든 창고 접근 가능</p>
+                          ) : null}
+                          {warehouses.map((warehouse) => (
+                            <label key={warehouse.id} className="flex items-center justify-between gap-2 text-[11px]">
+                              <span className="font-semibold text-gray-700">
+                                {warehouse.code ? `[${warehouse.code}] ` : ''}
+                                {warehouse.name}
+                              </span>
+                              <input
+                                type="checkbox"
+                                checked={assignedWarehouseIds.includes(warehouse.id)}
+                                disabled={isSaving}
+                                onChange={(event) =>
+                                  void toggleWarehouseForUser(user.id, warehouse.id, event.target.checked)
+                                }
+                                className="h-4 w-4 cursor-pointer accent-blue-600 disabled:cursor-not-allowed"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </details>
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="flex justify-center gap-1">
+                        <button
+                          onClick={() => void handleToggleActive(user)}
+                          className={`rounded px-2 py-1 text-[10px] font-black ${
+                            user.is_active
+                              ? 'border border-gray-300 bg-white text-gray-600 hover:border-red-500 hover:text-red-500'
+                              : 'bg-red-500 text-white'
+                          }`}
+                        >
+                          {user.is_active ? '퇴사' : '복직'}
+                        </button>
+                        <button
+                          onClick={() => void handleDeleteUser(user)}
+                          className="rounded border border-red-200 bg-white px-2 py-1 text-[10px] font-black text-red-500 hover:bg-red-600 hover:text-white"
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t bg-gray-50 px-3 py-2 text-xs font-bold text-gray-600">
+          <p>
+            페이지 {currentPage} / {totalPages} (페이지당 {PAGE_SIZE}명)
+          </p>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setCurrentPage(1)}
+              disabled={currentPage <= 1}
+              className="rounded border border-gray-300 bg-white px-2 py-1 disabled:opacity-40"
+            >
+              처음
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+              disabled={currentPage <= 1}
+              className="rounded border border-gray-300 bg-white px-2 py-1 disabled:opacity-40"
+            >
+              이전
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+              disabled={currentPage >= totalPages}
+              className="rounded border border-gray-300 bg-white px-2 py-1 disabled:opacity-40"
+            >
+              다음
+            </button>
+            <button
+              type="button"
+              onClick={() => setCurrentPage(totalPages)}
+              disabled={currentPage >= totalPages}
+              className="rounded border border-gray-300 bg-white px-2 py-1 disabled:opacity-40"
+            >
+              마지막
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {editingUser ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+            <div className="flex items-center justify-between border-b bg-gray-50 px-5 py-4">
+              <h3 className="text-lg font-black">사용자 상세 정보 수정</h3>
+              <button onClick={() => setEditingUser(null)} className="text-xl font-bold text-gray-500 hover:text-black">
+                &times;
+              </button>
             </div>
 
-            <div className="p-6 space-y-4 overflow-y-auto">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2 md:col-span-1 space-y-1">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">이름</label>
-                  <input type="text" className="w-full p-3 border-2 border-gray-100 rounded-xl focus:border-black outline-none font-bold text-sm" value={editForm.user_name} onChange={e => setEditForm({...editForm, user_name: e.target.value})} />
-                </div>
-                <div className="col-span-2 md:col-span-1 space-y-1">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">연락처</label>
-                  <input type="text" className="w-full p-3 border-2 border-gray-100 rounded-xl focus:border-black outline-none font-bold text-sm" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} />
-                </div>
-                <div className="col-span-2 space-y-1">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">로그인 이메일 (변경 시 로그인 아이디도 바뀜)</label>
-                  <input type="email" className="w-full p-3 border-2 border-gray-100 rounded-xl focus:border-black outline-none font-bold text-sm bg-yellow-50" value={editForm.email} onChange={e => setEditForm({...editForm, email: e.target.value})} />
-                </div>
-                <div className="col-span-2 md:col-span-1 space-y-1">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">부서</label>
-                  <SearchableCombobox
-                    value={editForm.department}
-                    onChange={(v) => setEditForm({ ...editForm, department: v })}
-                    options={departmentOptions}
-                    placeholder="선택"
+            <div className="space-y-4 overflow-y-auto p-5">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">이름</label>
+                  <input
+                    value={editForm.user_name}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, user_name: e.target.value }))}
+                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-bold outline-none focus:border-black"
                   />
                 </div>
-                <div className="col-span-2 md:col-span-1 space-y-1">
-                  <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">직급</label>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">연락처</label>
+                  <input
+                    value={editForm.phone}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, phone: e.target.value }))}
+                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-bold outline-none focus:border-black"
+                  />
+                </div>
+                <div className="space-y-1 md:col-span-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">이메일</label>
+                  <input
+                    value={editForm.email}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, email: e.target.value }))}
+                    className="w-full rounded-xl border-2 border-gray-100 bg-yellow-50 p-3 text-sm font-bold outline-none focus:border-black"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">역할(role_name)</label>
+                  <input
+                    value={editForm.role_name}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, role_name: e.target.value }))}
+                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-bold outline-none focus:border-black"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">사용자 유형</label>
                   <SearchableCombobox
-                    value={editForm.job_rank}
-                    onChange={(v) => setEditForm({ ...editForm, job_rank: v })}
-                    options={rankOptions}
+                    value={editForm.user_kind}
+                    onChange={(value) =>
+                      setEditForm((prev) => ({ ...prev, user_kind: parseUserKind(value), department: '', job_rank: '' }))
+                    }
+                    options={USER_KIND_OPTIONS}
                     placeholder="선택"
+                    showClearOption={false}
+                  />
+                </div>
+
+                {editForm.user_kind === 'staff' ? (
+                  <>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">부서</label>
+                      <SearchableCombobox
+                        value={editForm.department}
+                        onChange={(value) => setEditForm((prev) => ({ ...prev, department: value }))}
+                        options={DEPARTMENT_OPTIONS}
+                        placeholder="선택"
+                        creatable
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">직급</label>
+                      <SearchableCombobox
+                        value={editForm.job_rank}
+                        onChange={(value) => setEditForm((prev) => ({ ...prev, job_rank: value }))}
+                        options={RANK_OPTIONS}
+                        placeholder="선택"
+                        creatable
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">학교</label>
+                      <input
+                        value={editForm.school_name}
+                        onChange={(e) => setEditForm((prev) => ({ ...prev, school_name: e.target.value }))}
+                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-bold outline-none focus:border-black"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">교육프로그램</label>
+                      <input
+                        value={editForm.training_program}
+                        onChange={(e) => setEditForm((prev) => ({ ...prev, training_program: e.target.value }))}
+                        className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-bold outline-none focus:border-black"
+                      />
+                    </div>
+                    {editForm.user_kind === 'student' ? (
+                      <>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">학년</label>
+                          <input
+                            value={editForm.grade_level}
+                            onChange={(e) => setEditForm((prev) => ({ ...prev, grade_level: e.target.value }))}
+                            className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-bold outline-none focus:border-black"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">전공</label>
+                          <input
+                            value={editForm.major}
+                            onChange={(e) => setEditForm((prev) => ({ ...prev, major: e.target.value }))}
+                            className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-bold outline-none focus:border-black"
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <div className="space-y-1 md:col-span-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">과목</label>
+                        <input
+                          value={editForm.teacher_subject}
+                          onChange={(e) => setEditForm((prev) => ({ ...prev, teacher_subject: e.target.value }))}
+                          className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-bold outline-none focus:border-black"
+                        />
+                      </div>
+                    )}
+                  </>
+                )}
+
+                <div className="space-y-1 md:col-span-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-gray-400">도장 이미지 경로</label>
+                  <input
+                    value={editForm.seal_image_path}
+                    onChange={(e) => setEditForm((prev) => ({ ...prev, seal_image_path: e.target.value }))}
+                    className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-bold outline-none focus:border-black"
+                    placeholder="user-seals/... 경로"
                   />
                 </div>
               </div>
 
-              <div className="mt-6 p-4 border-2 border-red-100 bg-red-50 rounded-xl">
-                <label className="text-[10px] font-black text-red-600 uppercase tracking-widest mb-1 block flex items-center gap-1">
-                  🚨 비밀번호 강제 재설정
+              <div className="rounded-xl border-2 border-gray-100 p-4">
+                <label className="flex items-center justify-between text-sm font-black">
+                  <span>결재 참여 가능</span>
+                  <input
+                    type="checkbox"
+                    checked={editForm.can_approval_participate}
+                    onChange={(e) =>
+                      setEditForm((prev) => ({ ...prev, can_approval_participate: e.target.checked }))
+                    }
+                    className="h-4 w-4 cursor-pointer accent-blue-600"
+                  />
                 </label>
-                <p className="text-xs text-red-400 mb-2 font-medium">비밀번호를 입력하면 기존 비밀번호가 무시되고 덮어씌워집니다. 변경하지 않으려면 비워두세요.</p>
-                <input 
-                  type="text" 
-                  placeholder="새로운 비밀번호 입력" 
-                  className="w-full p-3 border-2 border-red-200 rounded-lg focus:border-red-500 outline-none font-bold text-sm" 
-                  value={editForm.new_password} 
-                  onChange={e => setEditForm({...editForm, new_password: e.target.value})} 
+              </div>
+
+              <div className="rounded-xl border-2 border-gray-100 p-4">
+                <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-gray-400">창고 권한</p>
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                  {warehouses.map((warehouse) => (
+                    <label key={warehouse.id} className="flex items-center justify-between rounded border bg-gray-50 px-2 py-1.5 text-xs">
+                      <span className="font-semibold">
+                        {warehouse.code ? `[${warehouse.code}] ` : ''}
+                        {warehouse.name}
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={editForm.warehouse_ids.includes(warehouse.id)}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setEditForm((prev) => {
+                            const next = checked
+                              ? Array.from(new Set([...prev.warehouse_ids, warehouse.id]))
+                              : prev.warehouse_ids.filter((id) => id !== warehouse.id);
+                            return { ...prev, warehouse_ids: next };
+                          });
+                        }}
+                        className="h-4 w-4 cursor-pointer accent-blue-600"
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl border-2 border-red-100 bg-red-50 p-4">
+                <label className="mb-1 block text-[10px] font-black uppercase tracking-widest text-red-600">비밀번호 재설정</label>
+                <p className="mb-2 text-xs font-medium text-red-400">
+                  입력 시 기존 비밀번호가 덮어써집니다. 변경하지 않으려면 비워두세요.
+                </p>
+                <input
+                  value={editForm.new_password}
+                  onChange={(e) => setEditForm((prev) => ({ ...prev, new_password: e.target.value }))}
+                  className="w-full rounded-lg border-2 border-red-200 p-3 text-sm font-bold outline-none focus:border-red-500"
+                  placeholder="새 비밀번호"
                 />
               </div>
             </div>
 
-            <div className="p-5 border-t-2 border-gray-100 bg-gray-50 flex justify-end gap-2">
-              <button onClick={() => setEditingUser(null)} className="px-5 py-2.5 rounded-xl font-bold text-sm text-gray-500 hover:bg-gray-200 transition-colors">취소</button>
-              <button onClick={handleUpdateUser} disabled={isUpdating} className="px-6 py-2.5 bg-black text-white rounded-xl font-black text-sm hover:bg-blue-600 active:scale-95 transition-all shadow-md disabled:bg-gray-400">
-                {isUpdating ? '저장 중...' : '변경사항 즉시 저장'}
+            <div className="flex justify-end gap-2 border-t bg-gray-50 p-4">
+              <button onClick={() => setEditingUser(null)} className="rounded-xl px-4 py-2 text-sm font-bold text-gray-500 hover:bg-gray-200">
+                취소
+              </button>
+              <button
+                onClick={() => void handleUpdateUser()}
+                disabled={isUpdating}
+                className="rounded-xl bg-black px-5 py-2 text-sm font-black text-white hover:bg-blue-600 disabled:bg-gray-400"
+              >
+                {isUpdating ? '저장 중...' : '변경사항 저장'}
               </button>
             </div>
           </div>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

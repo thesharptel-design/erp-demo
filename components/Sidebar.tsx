@@ -118,7 +118,7 @@ export default function Sidebar() {
       title: 'ADMIN ONLY',
       items: [
         { name: '사용자 가입 설정', href: '/admin/user-approvals', perm: 'can_manage_permissions'},
-        { name: '사용자 권한 설정', href: '/admin/user-permissions', perm: 'can_manage_permissions' },
+        { name: '사용자 조회 및 설정', href: '/admin/user-permissions', perm: 'can_manage_permissions' },
         { name: '로그인 모니터', href: '/admin/login-audit', perm: 'can_manage_permissions' },
         { name: '창고 관리', href: '/admin/warehouses', perm: 'can_manage_permissions' },
         { name: 'CoA 파일 관리', href: '/admin/coa-files', perm: 'can_manage_permissions' },

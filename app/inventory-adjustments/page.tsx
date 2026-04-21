@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import SearchableCombobox from '@/components/SearchableCombobox'
+import { getAllowedWarehouseIds, getCurrentUserPermissions } from '@/lib/permissions'
 
 type ItemRow = {
   id: number
@@ -64,6 +65,7 @@ export default function InventoryAdjustmentsPage() {
   const [items, setItems] = useState<ItemRow[]>([])
   const [inventoryRows, setInventoryRows] = useState<InventoryRow[]>([])
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([])
+  const [allowedWarehouseIds, setAllowedWarehouseIds] = useState<number[] | null>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [errorMessage, setErrorMessage] = useState('')
@@ -82,6 +84,32 @@ export default function InventoryAdjustmentsPage() {
       setIsLoading(true)
       setErrorMessage('')
 
+      const currentUser = await getCurrentUserPermissions()
+      const nextAllowedWarehouseIds = await getAllowedWarehouseIds(currentUser)
+      setAllowedWarehouseIds(nextAllowedWarehouseIds)
+
+      let inventoryQuery = supabase
+        .from('inventory')
+        .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty, lot_no, exp_date, serial_no')
+        .order('item_id')
+      let warehouseQuery = supabase
+        .from('warehouses')
+        .select('id, name')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true })
+      if (nextAllowedWarehouseIds !== null) {
+        if (nextAllowedWarehouseIds.length === 0) {
+          setItems([])
+          setInventoryRows([])
+          setWarehouses([])
+          setSelectedWarehouseId('')
+          setIsLoading(false)
+          return
+        }
+        inventoryQuery = inventoryQuery.in('warehouse_id', nextAllowedWarehouseIds)
+        warehouseQuery = warehouseQuery.in('id', nextAllowedWarehouseIds)
+      }
+
       const [
         { data: itemsData, error: itemsError },
         { data: inventoryData, error: inventoryError },
@@ -92,15 +120,8 @@ export default function InventoryAdjustmentsPage() {
           .select('id, item_code, item_name, item_type, unit, is_active')
           .eq('is_active', true)
           .order('item_name'),
-        supabase
-          .from('inventory')
-          .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty, lot_no, exp_date, serial_no')
-          .order('item_id'),
-        supabase
-          .from('warehouses')
-          .select('id, name')
-          .eq('is_active', true)
-          .order('sort_order', { ascending: true }),
+        inventoryQuery,
+        warehouseQuery,
       ])
 
       if (itemsError || inventoryError || warehouseError) {
@@ -118,8 +139,14 @@ export default function InventoryAdjustmentsPage() {
       setInventoryRows((inventoryData as InventoryRow[]) ?? [])
       const nextWarehouses = (warehouseData as WarehouseRow[]) ?? []
       setWarehouses(nextWarehouses)
-      if (!selectedWarehouseId && nextWarehouses[0]?.id) {
-        setSelectedWarehouseId(nextWarehouses[0].id)
+      const nextSelectedWarehouseId =
+        nextWarehouses.length === 0
+          ? ''
+          : selectedWarehouseId && nextWarehouses.some((warehouse) => warehouse.id === selectedWarehouseId)
+            ? selectedWarehouseId
+            : nextWarehouses[0].id
+      if (nextSelectedWarehouseId !== selectedWarehouseId) {
+        setSelectedWarehouseId(nextSelectedWarehouseId)
       }
       setIsLoading(false)
     }
@@ -273,10 +300,14 @@ export default function InventoryAdjustmentsPage() {
       setAdjustQty('0')
       setRemarks('')
 
-      const { data: inventoryData, error: inventoryError } = await supabase
+      let inventoryReloadQuery = supabase
         .from('inventory')
         .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty, lot_no, exp_date, serial_no')
         .order('item_id')
+      if (allowedWarehouseIds !== null) {
+        inventoryReloadQuery = inventoryReloadQuery.in('warehouse_id', allowedWarehouseIds)
+      }
+      const { data: inventoryData, error: inventoryError } = await inventoryReloadQuery
 
       if (!inventoryError) {
         setInventoryRows((inventoryData as InventoryRow[]) ?? [])

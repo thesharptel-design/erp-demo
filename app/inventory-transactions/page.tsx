@@ -4,6 +4,7 @@ import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getProcessNameFromMetadata } from '@/lib/item-config';
 import SearchableCombobox from '@/components/SearchableCombobox';
+import { getAllowedWarehouseIds, getCurrentUserPermissions } from '@/lib/permissions';
 
 type Warehouse = {
   id: number;
@@ -43,12 +44,38 @@ export default function InventoryTransactionsPage() {
   const fetchTransactions = useCallback(async () => {
     try {
       setLoading(true);
+      const currentUser = await getCurrentUserPermissions();
+      const allowedWarehouseIds = await getAllowedWarehouseIds(currentUser);
+
+      if (allowedWarehouseIds !== null && allowedWarehouseIds.length === 0) {
+        setWarehouses([]);
+        setTransactions([]);
+        setWarehouseFilter('all');
+        setLoading(false);
+        return;
+      }
+
+      let warehouseQuery = supabase
+        .from('warehouses')
+        .select('id, name')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true });
+      if (allowedWarehouseIds !== null) {
+        warehouseQuery = warehouseQuery.in('id', allowedWarehouseIds);
+      }
+
+      const nextWarehouseFilter =
+        allowedWarehouseIds === null
+          ? warehouseFilter
+          : allowedWarehouseIds.includes(Number(warehouseFilter))
+            ? warehouseFilter
+            : String(allowedWarehouseIds[0]);
+      if (nextWarehouseFilter !== warehouseFilter) {
+        setWarehouseFilter(nextWarehouseFilter);
+      }
+
       const [warehouseRes, usersRes, txRes] = await Promise.all([
-        supabase
-          .from('warehouses')
-          .select('id, name')
-          .eq('is_active', true)
-          .order('sort_order', { ascending: true }),
+        warehouseQuery,
         supabase.from('app_users').select('id, user_name'),
         supabase
           .from('inventory_transactions')
@@ -80,7 +107,12 @@ export default function InventoryTransactionsPage() {
       const userMap = new Map((usersRes.data || []).map((u) => [u.id, u.user_name]));
 
       const mapped = ((txRes.data as any[]) || [])
-        .filter((tx) => (warehouseFilter === 'all' ? true : String(tx.warehouse_id ?? '') === warehouseFilter))
+        .filter((tx) => {
+          if (allowedWarehouseIds !== null && !allowedWarehouseIds.includes(Number(tx.warehouse_id))) return false;
+          return nextWarehouseFilter === 'all'
+            ? true
+            : String(tx.warehouse_id ?? '') === nextWarehouseFilter;
+        })
         .map((tx) => ({
           ...tx,
           items: Array.isArray(tx.items) ? tx.items[0] ?? null : tx.items ?? null,

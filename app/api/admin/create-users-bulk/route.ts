@@ -19,6 +19,15 @@ type BulkCreateRow = {
   password: string
   role_name: string
   is_active: string
+  user_kind?: string
+  training_program?: string
+  school_name?: string
+  seal_image_path?: string
+  grade_level?: string
+  major?: string
+  teacher_subject?: string
+  can_approval_participate?: string
+  warehouse_ids?: string
   can_manage_master: string
   can_sales_manage: string
   can_material_manage: string
@@ -33,15 +42,55 @@ type BulkCreateRow = {
   can_approve: string
 }
 
+const ALLOWED_USER_KINDS = ['student', 'teacher', 'staff'] as const
+type UserKind = (typeof ALLOWED_USER_KINDS)[number]
+
 function isValidRoleName(roleName: string): roleName is RoleName {
   return ['admin', 'sales', 'purchase', 'production', 'approval', 'qc', 'user'].includes(
     roleName
   )
 }
 
-function parseBoolean(value: string) {
+function parseBoolean(value: unknown) {
   const normalized = String(value ?? '').trim().toLowerCase()
   return ['true', '1', 'y', 'yes'].includes(normalized)
+}
+
+function normalizeNullableText(value: unknown) {
+  const normalized = String(value ?? '').trim()
+  return normalized ? normalized : null
+}
+
+function parseWarehouseIds(value: unknown): number[] {
+  if (Array.isArray(value)) {
+    const parsed = value
+      .map((entry) => Number(entry))
+      .filter((entry) => Number.isInteger(entry) && entry > 0)
+    return Array.from(new Set(parsed))
+  }
+
+  const raw = String(value ?? '').trim()
+  if (!raw) return []
+
+  if (raw.startsWith('[') && raw.endsWith(']')) {
+    try {
+      const parsedJson = JSON.parse(raw)
+      if (Array.isArray(parsedJson)) {
+        const parsed = parsedJson
+          .map((entry) => Number(entry))
+          .filter((entry) => Number.isInteger(entry) && entry > 0)
+        return Array.from(new Set(parsed))
+      }
+    } catch {
+      return []
+    }
+  }
+
+  const parsed = raw
+    .split(',')
+    .map((entry) => Number(entry.trim()))
+    .filter((entry) => Number.isInteger(entry) && entry > 0)
+  return Array.from(new Set(parsed))
 }
 
 function normalizeBulkPermissions(row: BulkCreateRow) {
@@ -57,6 +106,9 @@ function normalizeBulkPermissions(row: BulkCreateRow) {
     parseBoolean(row.can_admin_manage) || parseBoolean(row.can_manage_permissions)
   const canManageMaster = parseBoolean(row.can_manage_master)
   const canManagePermissions = parseBoolean(row.can_manage_permissions)
+  const canApprovalParticipate = row.can_approval_participate
+    ? parseBoolean(row.can_approval_participate)
+    : true
 
   return {
     can_manage_master: canManageMaster,
@@ -66,6 +118,7 @@ function normalizeBulkPermissions(row: BulkCreateRow) {
     can_qc_manage: canQcManage,
     can_admin_manage: canAdminManage,
     can_manage_permissions: canManagePermissions,
+    can_approval_participate: canApprovalParticipate,
     // legacy fallback columns
     can_quote_create: canSalesManage,
     can_po_create: canSalesManage,
@@ -161,6 +214,8 @@ export async function POST(request: NextRequest) {
         const email = row.email?.trim().toLowerCase()
         const password = row.password?.trim()
         const roleName = row.role_name?.trim()
+        const userKind = String(row.user_kind ?? 'staff').trim().toLowerCase()
+        const warehouseIds = parseWarehouseIds(row.warehouse_ids)
 
         if (!loginId || !userName || !email || !password || !roleName) {
           results.push({
@@ -180,6 +235,17 @@ export async function POST(request: NextRequest) {
             email,
             success: false,
             message: `역할값 오류: ${roleName}`,
+          })
+          continue
+        }
+
+        if (!ALLOWED_USER_KINDS.includes(userKind as UserKind)) {
+          results.push({
+            row_no: rowNo,
+            login_id: loginId,
+            email,
+            success: false,
+            message: `user_kind 값 오류: ${userKind}`,
           })
           continue
         }
@@ -255,6 +321,13 @@ export async function POST(request: NextRequest) {
             email,
             employee_no: employeeNo,
             is_active: parseBoolean(row.is_active),
+            user_kind: userKind,
+            training_program: normalizeNullableText(row.training_program),
+            school_name: normalizeNullableText(row.school_name),
+            seal_image_path: normalizeNullableText(row.seal_image_path),
+            grade_level: normalizeNullableText(row.grade_level),
+            major: normalizeNullableText(row.major),
+            teacher_subject: normalizeNullableText(row.teacher_subject),
             ...normalizedPermissions,
           })
 
@@ -281,6 +354,30 @@ export async function POST(request: NextRequest) {
             message: insertAppUserError.message ?? 'app_users 생성 실패',
           })
           continue
+        }
+
+        if (warehouseIds.length > 0) {
+          const warehouseRows = warehouseIds.map((warehouseId) => ({
+            user_id: newUserId,
+            warehouse_id: warehouseId,
+          }))
+          const { error: warehouseInsertError } = await adminClient
+            .from('app_user_warehouses')
+            .upsert(warehouseRows, { onConflict: 'user_id,warehouse_id' })
+
+          if (warehouseInsertError) {
+            await adminClient.from('app_users').delete().eq('id', newUserId)
+            await adminClient.auth.admin.deleteUser(newUserId)
+
+            results.push({
+              row_no: rowNo,
+              login_id: loginId,
+              email,
+              success: false,
+              message: `창고 권한 저장 실패: ${warehouseInsertError.message}`,
+            })
+            continue
+          }
         }
 
         results.push({

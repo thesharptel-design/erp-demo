@@ -5,7 +5,17 @@ export type CurrentUserPermissions = {
   login_id: string | null
   email: string | null
   user_name: string | null
+  user_kind: 'student' | 'teacher' | 'staff'
   role_name: string | null
+  department: string | null
+  job_rank: string | null
+  training_program: string | null
+  school_name: string | null
+  grade_level: string | null
+  major: string | null
+  teacher_subject: string | null
+  seal_image_path: string | null
+  can_approval_participate: boolean
   can_manage_master: boolean | null
   can_sales_manage: boolean | null
   can_material_manage: boolean | null
@@ -32,6 +42,14 @@ export type ManagePermissionKey =
 
 export function isAdminRole(roleName: string | null | undefined) {
   return String(roleName ?? '').toLowerCase() === 'admin'
+}
+
+export function isSystemAdminUser(
+  user: Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
+): boolean {
+  if (!user) return false
+  if (isAdminRole(user.role_name)) return true
+  return Boolean(user.can_manage_permissions) || Boolean(user.can_admin_manage)
 }
 
 /** System Admin 이상: 품목 마스터 등록·수정·삭제 (role admin 또는 시스템 관리 플래그). */
@@ -112,7 +130,17 @@ export async function getCurrentUserPermissions() {
       login_id,
       email,
       user_name,
+      user_kind,
       role_name,
+      department,
+      job_rank,
+      training_program,
+      school_name,
+      grade_level,
+      major,
+      teacher_subject,
+      seal_image_path,
+      can_approval_participate,
       can_manage_master,
       can_sales_manage,
       can_material_manage,
@@ -134,4 +162,28 @@ export async function getCurrentUserPermissions() {
   }
 
   return data as CurrentUserPermissions
+}
+
+export async function getAllowedWarehouseIds(
+  user?: Pick<
+    CurrentUserPermissions,
+    'id' | 'role_name' | 'can_manage_permissions' | 'can_admin_manage'
+  > | null
+): Promise<number[] | null> {
+  const currentUser = user ?? (await getCurrentUserPermissions())
+  if (!currentUser) return []
+  if (isSystemAdminUser(currentUser)) return null
+
+  const { data, error } = await supabase
+    .from('app_user_warehouses')
+    .select('warehouse_id')
+    .eq('user_id', currentUser.id)
+
+  if (error || !data) return []
+
+  const warehouseIds = data
+    .map((row) => Number(row.warehouse_id))
+    .filter((value) => Number.isInteger(value) && value > 0)
+
+  return Array.from(new Set(warehouseIds))
 }

@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { APPROVAL_ROLES, getApprovalRoleLabel } from '@/lib/approval-roles';
 import { buildApprovalLines, buildApprovalParticipantsRows, normalizeParticipants } from '@/lib/approval-participants';
 import SearchableCombobox from '@/components/SearchableCombobox';
+import { getAllowedWarehouseIds } from '@/lib/permissions';
 
 export default function NewOutboundPage() {
   const router = useRouter();
@@ -82,19 +83,30 @@ export default function NewOutboundPage() {
   useEffect(() => {
     const initData = async () => {
       const { data: { user } } = await supabase.auth.getUser();
+      let allowedWarehouseIds: number[] | null = [];
       if (user) {
         const { data: profile } = await supabase.from('app_users').select('*').eq('id', user.id).single();
         setUserProfile(profile);
+        allowedWarehouseIds = await getAllowedWarehouseIds(profile);
       }
       const { data: itemsData } = await supabase.from('items').select('*');
       setItems(itemsData || []);
       const { data: usersData } = await supabase.from('app_users').select('id, user_name, role_name, dept_id').neq('id', user?.id || '');
       setAppUsers(usersData || []);
-      const { data: warehouseData } = await supabase
+      let warehouseQuery = supabase
         .from('warehouses')
         .select('id, name, is_active, sort_order')
         .eq('is_active', true)
         .order('sort_order', { ascending: true });
+      if (allowedWarehouseIds !== null) {
+        if (allowedWarehouseIds.length === 0) {
+          setWarehouses([]);
+          setWarehouseId('');
+          return;
+        }
+        warehouseQuery = warehouseQuery.in('id', allowedWarehouseIds);
+      }
+      const { data: warehouseData } = await warehouseQuery;
       setWarehouses(warehouseData || []);
       if (warehouseData?.[0]?.id) setWarehouseId(String(warehouseData[0].id));
     };

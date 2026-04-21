@@ -14,8 +14,14 @@ export default function LoginPage() {
   
   const [passwordConfirm, setPasswordConfirm] = useState('')
   const [userName, setUserName] = useState('')
+  const [userKind, setUserKind] = useState<'staff' | 'teacher' | 'student'>('staff')
   const [department, setDepartment] = useState('')
   const [jobRank, setJobRank] = useState('')
+  const [schoolName, setSchoolName] = useState('')
+  const [trainingProgram, setTrainingProgram] = useState('')
+  const [gradeLevel, setGradeLevel] = useState('')
+  const [major, setMajor] = useState('')
+  const [teacherSubject, setTeacherSubject] = useState('')
   const [phone, setPhone] = useState('')
   const [privacyAgreed, setPrivacyAgreed] = useState(false)
   
@@ -42,6 +48,11 @@ export default function LoginPage() {
     { value: '부장', label: '부장' },
     { value: '이사', label: '이사' },
     { value: '대표', label: '대표' },
+  ]
+  const userKindOptions = [
+    { value: 'staff', label: '직원' },
+    { value: 'teacher', label: '선생' },
+    { value: 'student', label: '학생' },
   ]
 
   useEffect(() => {
@@ -86,6 +97,13 @@ export default function LoginPage() {
     if (isSignUp) {
       if (password !== passwordConfirm) return setErrorMessage('비밀번호가 일치하지 않습니다.')
       if (!isPrivacyRead || !privacyAgreed) return setErrorMessage('약관을 끝까지 읽고 동의해 주세요.')
+      if (userKind === 'staff' && (!department || !jobRank)) return setErrorMessage('직원은 부서와 직급이 필요합니다.')
+      if (userKind === 'teacher' && (!schoolName || !trainingProgram || !teacherSubject)) {
+        return setErrorMessage('선생은 학교, 교육프로그램, 과목이 필요합니다.')
+      }
+      if (userKind === 'student' && (!schoolName || !trainingProgram || !gradeLevel || !major)) {
+        return setErrorMessage('학생은 학교, 교육프로그램, 학년, 전공이 필요합니다.')
+      }
       
       setIsLoading(true)
       try {
@@ -117,8 +135,14 @@ export default function LoginPage() {
             id: data.user.id,
             email: email,
             user_name: userName,
-            department: department,
-            job_rank: jobRank,
+            user_kind: userKind,
+            department: userKind === 'staff' ? department : '',
+            job_rank: userKind === 'staff' ? jobRank : '',
+            school_name: userKind === 'staff' ? '' : schoolName,
+            training_program: userKind === 'staff' ? '' : trainingProgram,
+            teacher_subject: userKind === 'teacher' ? teacherSubject : '',
+            grade_level: userKind === 'student' ? gradeLevel : '',
+            major: userKind === 'student' ? major : '',
             phone: phone,
             privacy_consented: privacyAgreed,
             role_name: 'pending',
@@ -224,24 +248,36 @@ export default function LoginPage() {
                 <input type="password" placeholder="비밀번호 확인" required className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={passwordConfirm} onChange={e => setPasswordConfirm(e.target.value)} />
               </div>
 
-              <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest border-b pb-2 mt-6">직원 인적사항</h3>
+              <h3 className="text-[10px] font-black text-blue-500 uppercase tracking-widest border-b pb-2 mt-6">사용자 인적사항</h3>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <input type="text" placeholder="성함 (예: 홍길동)" required className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={userName} onChange={e => setUserName(e.target.value)} />
                 <input type="text" placeholder="연락처 (예: 010-1234-5678)" required className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={phone} onChange={e => setPhone(e.target.value)} />
-                
                 <SearchableCombobox
-                  value={department}
-                  onChange={setDepartment}
-                  options={departmentOptions}
-                  placeholder="부서 선택"
+                  value={userKind}
+                  onChange={(v) => setUserKind((v as 'staff' | 'teacher' | 'student') || 'staff')}
+                  options={userKindOptions}
+                  placeholder="유형 선택"
+                  showClearOption={false}
                 />
-
-                <SearchableCombobox
-                  value={jobRank}
-                  onChange={setJobRank}
-                  options={rankOptions}
-                  placeholder="직급 선택"
-                />
+                {userKind === 'staff' ? (
+                  <>
+                    <SearchableCombobox value={department} onChange={setDepartment} options={departmentOptions} placeholder="부서 선택" />
+                    <SearchableCombobox value={jobRank} onChange={setJobRank} options={rankOptions} placeholder="직급 선택" />
+                  </>
+                ) : (
+                  <>
+                    <input type="text" placeholder="학교명" className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={schoolName} onChange={e => setSchoolName(e.target.value)} />
+                    <input type="text" placeholder="교육프로그램" className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={trainingProgram} onChange={e => setTrainingProgram(e.target.value)} />
+                    {userKind === 'teacher' ? (
+                      <input type="text" placeholder="과목" className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none md:col-span-2" value={teacherSubject} onChange={e => setTeacherSubject(e.target.value)} />
+                    ) : (
+                      <>
+                        <input type="text" placeholder="학년" className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={gradeLevel} onChange={e => setGradeLevel(e.target.value)} />
+                        <input type="text" placeholder="전공" className="w-full h-14 p-4 rounded-2xl bg-gray-50 border-none font-bold focus:ring-2 focus:ring-blue-500 outline-none" value={major} onChange={e => setMajor(e.target.value)} />
+                      </>
+                    )}
+                  </>
+                )}
               </div>
 
               <div className="mt-6 space-y-3">
@@ -258,7 +294,7 @@ export default function LoginPage() {
                     className="h-32 p-4 bg-gray-50 rounded-2xl overflow-y-auto text-[11px] leading-relaxed text-gray-500 font-medium custom-scrollbar border border-gray-100"
                   >
                     [개인정보 수집 및 이용 동의]<br/><br/>
-                    1. 수집 항목: 성명, 이메일, 연락처, 부서, 직급<br/>
+                    1. 수집 항목: 성명, 이메일, 연락처, 사용자유형, 분류정보(부서/직급 또는 학교/프로그램 등)<br/>
                     2. 수집 및 이용 목적: ERP 시스템 사용자 식별, 내부 보안 관리, 업무 소통 및 근태 기록 관리<br/>
                     3. 보유 및 이용 기간: 사용자 계정 삭제 전까지 또는 퇴사 후 법적 보존 기간까지<br/>
                     4. 거부 권리: 귀하는 동의를 거부할 권리가 있으나, 동의하지 않을 경우 시스템 계정 생성이 제한될 수 있습니다.<br/><br/>

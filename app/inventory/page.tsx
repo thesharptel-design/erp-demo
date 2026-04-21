@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getProcessNameFromMetadata } from '@/lib/item-config';
+import { getAllowedWarehouseIds, getCurrentUserPermissions } from '@/lib/permissions';
 import Link from 'next/link';
 import SearchableCombobox from '@/components/SearchableCombobox';
 
@@ -64,6 +65,10 @@ export default function InventoryPage() {
 
   useEffect(() => {
     async function fetchInventory() {
+      setIsLoading(true);
+      const currentUser = await getCurrentUserPermissions();
+      const allowedWarehouseIds = await getAllowedWarehouseIds(currentUser);
+
       // 1. 재고 데이터와 품목의 관리 옵션(is_lot, is_exp, is_sn)을 함께 가져옵니다.
       const { data, error } = await supabase
         .from('inventory')
@@ -88,12 +93,33 @@ export default function InventoryPage() {
         `)
         .gt('current_qty', 0) // 잔량이 있는 것만 조회
         .order('exp_date', { ascending: true });
-      const { data: warehouseData } = await supabase
+      let warehouseQuery = supabase
         .from('warehouses')
         .select('id, name')
         .eq('is_active', true)
         .order('sort_order');
+      if (allowedWarehouseIds !== null) {
+        if (allowedWarehouseIds.length === 0) {
+          setWarehouses([]);
+          setWarehouseFilter('all');
+          setGroupedInventory([]);
+          setIsLoading(false);
+          return;
+        }
+        warehouseQuery = warehouseQuery.in('id', allowedWarehouseIds);
+      }
+      const { data: warehouseData } = await warehouseQuery;
       setWarehouses(warehouseData || []);
+
+      const nextWarehouseFilter =
+        allowedWarehouseIds === null
+          ? warehouseFilter
+          : allowedWarehouseIds.includes(Number(warehouseFilter))
+            ? warehouseFilter
+            : String(allowedWarehouseIds[0]);
+      if (nextWarehouseFilter !== warehouseFilter) {
+        setWarehouseFilter(nextWarehouseFilter);
+      }
 
       if (error) {
         console.error(error.message);
@@ -105,7 +131,8 @@ export default function InventoryPage() {
       const warehouseMap = new Map((warehouseData as WarehouseRow[] | null)?.map((wh) => [wh.id, wh.name]) ?? []);
       
       (data as unknown as InventoryDetailRow[] | null)?.forEach((row) => {
-        if (warehouseFilter !== 'all' && String(row.warehouse_id) !== warehouseFilter) return;
+        if (allowedWarehouseIds !== null && !allowedWarehouseIds.includes(Number(row.warehouse_id))) return;
+        if (nextWarehouseFilter !== 'all' && String(row.warehouse_id) !== nextWarehouseFilter) return;
         const rowItem = Array.isArray(row.items) ? row.items[0] : row.items;
         if (!rowItem) return;
         const code = `${rowItem.item_code}::${row.warehouse_id}`;

@@ -4,6 +4,9 @@ import { NextResponse } from 'next/server';
 import { generateEmployeeNoWithRetry } from '@/lib/employee-no';
 import { hasManagePermission } from '@/lib/permissions';
 
+const ALLOWED_USER_KINDS = ['student', 'teacher', 'staff'] as const;
+type UserKind = (typeof ALLOWED_USER_KINDS)[number];
+
 function normalizePermissionPayload(raw: Record<string, unknown>) {
   const asBool = (value: unknown) => value === true;
 
@@ -32,9 +35,48 @@ function normalizePermissionPayload(raw: Record<string, unknown>) {
   };
 }
 
+function parseWarehouseIds(raw: unknown): number[] {
+  if (Array.isArray(raw)) {
+    const parsed = raw
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value > 0);
+    return Array.from(new Set(parsed));
+  }
+  const text = String(raw ?? '').trim();
+  if (!text) return [];
+  const parsed = text
+    .split(',')
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isInteger(value) && value > 0);
+  return Array.from(new Set(parsed));
+}
+
+function normalizeNullableText(value: unknown): string | null {
+  const text = String(value ?? '').trim();
+  return text ? text : null;
+}
+
 export async function POST(request: NextRequest) {
   const body = await request.json();
-  const { email, password, user_name, phone, department, job_rank, role_name, ...permissions } = body;
+  const {
+    email,
+    password,
+    user_name,
+    phone,
+    department,
+    job_rank,
+    role_name,
+    user_kind,
+    training_program,
+    school_name,
+    seal_image_path,
+    grade_level,
+    major,
+    teacher_subject,
+    can_approval_participate,
+    warehouse_ids,
+    ...permissions
+  } = body;
   
   const supabaseAdmin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -64,6 +106,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: '사용자 생성 권한이 없습니다.' }, { status: 403 });
   }
 
+  const normalizedUserKind = String(user_kind ?? 'staff').trim().toLowerCase();
+  if (!ALLOWED_USER_KINDS.includes(normalizedUserKind as UserKind)) {
+    return NextResponse.json({ error: 'user_kind 값이 올바르지 않습니다.' }, { status: 400 });
+  }
+
+  const normalizedWarehouseIds = parseWarehouseIds(warehouse_ids);
   const normalizedPermissions = normalizePermissionPayload(permissions);
 
   // 1. Auth 계정 생성
@@ -93,6 +141,14 @@ export async function POST(request: NextRequest) {
             phone,
             department,
             job_rank,
+            user_kind: normalizedUserKind,
+            training_program: normalizeNullableText(training_program),
+            school_name: normalizeNullableText(school_name),
+            seal_image_path: normalizeNullableText(seal_image_path),
+            grade_level: normalizeNullableText(grade_level),
+            major: normalizeNullableText(major),
+            teacher_subject: normalizeNullableText(teacher_subject),
+            can_approval_participate: can_approval_participate === undefined ? true : can_approval_participate === true,
             employee_no: employeeNo,
             role_name: role_name || 'staff',
             is_active: true,
@@ -115,6 +171,20 @@ export async function POST(request: NextRequest) {
   }
 
   if (upsertError) return NextResponse.json({ error: "DB 저장 실패: " + upsertError.message }, { status: 400 });
+
+  if (normalizedWarehouseIds.length > 0) {
+    const warehouseRows = normalizedWarehouseIds.map((warehouseId) => ({
+      user_id: authUser.user.id,
+      warehouse_id: warehouseId,
+    }));
+    const { error: warehouseError } = await supabaseAdmin
+      .from('app_user_warehouses')
+      .upsert(warehouseRows, { onConflict: 'user_id,warehouse_id' });
+
+    if (warehouseError) {
+      return NextResponse.json({ error: '창고 권한 저장 실패: ' + warehouseError.message }, { status: 400 });
+    }
+  }
 
   return NextResponse.json({ success: true });
 }

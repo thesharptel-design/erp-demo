@@ -405,6 +405,83 @@ h2, .ui-h2 {
   color: rgb(180 83 9);
 }
 
+/* ===== Mobile readability tuning (global) ===== */
+@media (max-width: 640px) {
+  h1,
+  .ui-h1 {
+    font-size: 1.375rem;
+    line-height: 1.8rem;
+  }
+
+  h2,
+  .ui-h2 {
+    font-size: 1.05rem;
+    line-height: 1.5rem;
+  }
+
+  .erp-page {
+    gap: 1rem;
+  }
+
+  .erp-page-title {
+    font-size: 1.35rem;
+    line-height: 1.85rem;
+  }
+
+  .erp-page-desc,
+  .erp-back-link,
+  .erp-label {
+    font-size: 0.78rem;
+    line-height: 1.2rem;
+  }
+
+  .erp-card {
+    border-radius: 0.75rem;
+    padding: 0.9rem;
+  }
+
+  .erp-input,
+  .erp-select,
+  .erp-textarea {
+    border-width: 1px;
+    border-radius: 0.75rem;
+    padding: 0.7rem 0.8rem;
+    font-size: 0.82rem;
+    line-height: 1.2rem;
+    min-height: 2.5rem;
+  }
+
+  .erp-btn-primary,
+  .erp-btn-secondary,
+  .erp-btn-danger,
+  .erp-btn-disabled {
+    height: 2.5rem;
+    border-radius: 0.75rem;
+    padding: 0 0.8rem;
+    font-size: 0.8rem;
+  }
+
+  .erp-btn-row > * {
+    flex: 1 1 auto;
+    min-width: calc(50% - 0.4rem);
+  }
+
+  .custom-scrollbar {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+
+  .custom-scrollbar table {
+    font-size: 0.72rem;
+    line-height: 1.15rem;
+  }
+
+  .custom-scrollbar thead th,
+  .custom-scrollbar tbody td {
+    white-space: nowrap;
+  }
+}
+
 /*
 ---break---
 */
