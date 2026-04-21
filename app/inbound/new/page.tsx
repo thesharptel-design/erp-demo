@@ -177,7 +177,22 @@ export default function NewInboundPage() {
       }
 
       // [C] 수불부(inventory_transactions) 상세 이력 기록
-      // 🌟 스키마 구조에 완벽하게 맞춘 insert 객체! 
+      // trans_date: YYYY-MM-DD만 넣으면 자정 UTC → KST 09:00로 고정되어 보임. 폼의 입고일 + 현재 시각(로컬)으로 합성.
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(inboundDate);
+      const now = new Date();
+      const transDateIso =
+        m != null
+          ? new Date(
+              Number(m[1]),
+              Number(m[2]) - 1,
+              Number(m[3]),
+              now.getHours(),
+              now.getMinutes(),
+              now.getSeconds(),
+              now.getMilliseconds()
+            ).toISOString()
+          : now.toISOString();
+
       const { error: transError } = await supabase
         .from('inventory_transactions')
         .insert({
@@ -189,7 +204,7 @@ export default function NewInboundPage() {
           serial_no: (selectedItem?.is_sn_managed && serialNo) ? serialNo : null,
           customer_id: parseInt(customerId),
           remarks: remarks || null,
-          trans_date: inboundDate,
+          trans_date: transDateIso,
           actor_id: userData.id,
           created_by: userData.id, // 👈 스키마의 created_by 외래키 제약조건 대비
           warehouse_id: Number(warehouseId),

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { recordLoginAudit } from '@/lib/login-audit'
+import { seoulDateString } from '@/lib/seoul-date'
 
 export async function POST(request: NextRequest) {
   try {
@@ -32,14 +33,41 @@ export async function POST(request: NextRequest) {
     const ip = forwardedFor?.split(',')[0]?.trim() ?? request.headers.get('x-real-ip') ?? null
     const userAgent = request.headers.get('user-agent')
 
+    const success = Boolean(body.success)
+
     await recordLoginAudit(adminClient, {
       email,
       userId: appUser?.id ?? null,
-      success: Boolean(body.success),
+      success,
       ip,
       userAgent,
       sessionId: body.sessionId ?? null,
     })
+
+    if (success && appUser?.id) {
+      const seoul = seoulDateString()
+      const loginIso = new Date().toISOString()
+      const { data: u } = await adminClient
+        .from('app_users')
+        .select('today_stats_date, today_first_login_at')
+        .eq('id', appUser.id)
+        .maybeSingle()
+
+      const crossed = u?.today_stats_date != null && u.today_stats_date !== seoul
+      const updatePayload: Record<string, unknown> = { today_stats_date: seoul }
+
+      if (crossed) {
+        updatePayload.today_active_seconds = 0
+        updatePayload.today_first_login_at = loginIso
+      } else {
+        const cur = u?.today_first_login_at
+        if (!cur || new Date(loginIso).getTime() < new Date(cur).getTime()) {
+          updatePayload.today_first_login_at = loginIso
+        }
+      }
+
+      await adminClient.from('app_users').update(updatePayload).eq('id', appUser.id)
+    }
 
     return NextResponse.json({ success: true })
   } catch (error) {

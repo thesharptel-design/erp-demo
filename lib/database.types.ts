@@ -107,6 +107,38 @@ export type Database = {
         Insert: Partial<Database['public']['Tables']['inventory_transactions']['Row']>
         Update: Partial<Database['public']['Tables']['inventory_transactions']['Row']>
       }
+      items: {
+        Row: {
+          id: number
+          item_code: string
+          item_name: string
+          item_spec: string | null
+          unit: string | null
+          item_type: string
+          sales_price: number
+          purchase_price: number
+          manufacturer: string | null
+          remarks: string | null
+          /** See migration comment: category, checks, sopFiles (all optional keys). */
+          process_metadata: Json
+          is_active: boolean
+          is_lot_managed: boolean
+          is_exp_managed: boolean
+          is_sn_managed: boolean
+        }
+        Insert: Partial<Database['public']['Tables']['items']['Row']>
+        Update: Partial<Database['public']['Tables']['items']['Row']>
+      }
+      item_process_config: {
+        Row: {
+          id: number
+          categories: Json
+          updated_at: string
+          updated_by: string | null
+        }
+        Insert: Partial<Database['public']['Tables']['item_process_config']['Row']>
+        Update: Partial<Database['public']['Tables']['item_process_config']['Row']>
+      }
       app_users: {
         Row: {
           id: string

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { getProcessNameFromMetadata } from '@/lib/item-config';
 import Link from 'next/link';
 import SearchableCombobox from '@/components/SearchableCombobox';
 
@@ -11,6 +12,7 @@ type GroupedInventoryRow = {
   item_name: string;
   item_spec: string | null;
   unit: string | null;
+  process_name: string;
   warehouse_id: number;
   warehouse_name: string;
   is_lot: boolean;
@@ -36,6 +38,7 @@ type InventoryDetailRow = {
         is_lot_managed: boolean;
         is_exp_managed: boolean;
         is_sn_managed: boolean;
+        process_metadata?: Record<string, unknown> | null;
       }
     | {
         item_code: string;
@@ -45,6 +48,7 @@ type InventoryDetailRow = {
         is_lot_managed: boolean;
         is_exp_managed: boolean;
         is_sn_managed: boolean;
+        process_metadata?: Record<string, unknown> | null;
       }[];
 };
 
@@ -78,7 +82,8 @@ export default function InventoryPage() {
             unit,
             is_lot_managed,
             is_exp_managed,
-            is_sn_managed
+            is_sn_managed,
+            process_metadata
           )
         `)
         .gt('current_qty', 0) // 잔량이 있는 것만 조회
@@ -111,6 +116,7 @@ export default function InventoryPage() {
             item_name: rowItem.item_name,
             item_spec: rowItem.item_spec,
             unit: rowItem.unit,
+            process_name: getProcessNameFromMetadata(rowItem.process_metadata ?? null),
             warehouse_id: row.warehouse_id,
             warehouse_name: warehouseMap.get(row.warehouse_id) ?? `창고#${row.warehouse_id}`,
             is_lot: rowItem.is_lot_managed,
@@ -147,7 +153,8 @@ export default function InventoryPage() {
     const term = searchTerm.toLowerCase();
     return (
       group.item_name.toLowerCase().includes(term) ||
-      group.item_code.toLowerCase().includes(term)
+      group.item_code.toLowerCase().includes(term) ||
+      group.process_name.toLowerCase().includes(term)
     );
   });
 
@@ -175,7 +182,7 @@ export default function InventoryPage() {
         <div className="flex flex-wrap gap-2">
           <input 
             type="text" 
-            placeholder="품목명 또는 품목 코드로 검색..." 
+            placeholder="품목명·품목코드·공정명으로 검색..." 
             className="w-full sm:w-1/2 md:w-1/3 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-blue-500 font-bold text-sm transition-colors"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -201,6 +208,7 @@ export default function InventoryPage() {
               <th className="w-12 px-6 py-4"></th>
               <th className="px-6 py-4 font-black text-gray-500 uppercase tracking-wider">품목코드</th>
               <th className="px-6 py-4 font-black text-gray-500 uppercase tracking-wider">창고</th>
+              <th className="px-6 py-4 font-black text-gray-500 uppercase tracking-wider">공정명</th>
               <th className="px-6 py-4 font-black text-gray-500 uppercase tracking-wider">품목명 / 관리옵션</th>
               <th className="px-6 py-4 font-black text-gray-500 uppercase tracking-wider">규격</th>
               <th className="px-6 py-4 text-right font-black text-gray-800 uppercase tracking-wider">총 재고수량</th>
@@ -209,13 +217,13 @@ export default function InventoryPage() {
           <tbody className="divide-y divide-gray-100">
             {isLoading ? (
               <tr>
-                <td colSpan={6} className="px-6 py-16 text-center text-gray-400 font-bold">
+                <td colSpan={7} className="px-6 py-16 text-center text-gray-400 font-bold">
                   재고 데이터를 불러오는 중입니다...
                 </td>
               </tr>
             ) : filteredGroups.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-6 py-16 text-center text-gray-400 font-bold">
+                <td colSpan={7} className="px-6 py-16 text-center text-gray-400 font-bold">
                   조건에 맞는 재고 데이터가 없습니다.
                 </td>
               </tr>
@@ -240,6 +248,9 @@ export default function InventoryPage() {
                       <td className="px-6 py-4 font-bold text-gray-700">
                         {group.warehouse_name}
                       </td>
+                      <td className="px-6 py-4 text-sm font-bold text-gray-600">
+                        {group.process_name.trim() ? group.process_name : '—'}
+                      </td>
                       <td className="px-6 py-4 font-black text-gray-900 text-base">
                         <div className="flex items-center gap-2">
                           <div className="flex gap-1">
@@ -260,7 +271,7 @@ export default function InventoryPage() {
 
                     {isTrackable && expandedRows[group.item_code] && (
                       <tr className="bg-gray-50/50">
-                        <td colSpan={6} className="p-0 border-b border-gray-200">
+                        <td colSpan={7} className="p-0 border-b border-gray-200">
                           <div className="px-14 py-4 animate-in fade-in slide-in-from-top-2 duration-200 overflow-x-auto">
                             <table className="min-w-full text-xs bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden whitespace-nowrap">
                               <thead className="bg-gray-100/80 text-gray-500 font-bold">

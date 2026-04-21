@@ -2,6 +2,7 @@
 
 import React, { useCallback, useMemo, useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { getProcessNameFromMetadata } from '@/lib/item-config';
 import SearchableCombobox from '@/components/SearchableCombobox';
 
 type Warehouse = {
@@ -21,7 +22,7 @@ type TxRow = {
   exp_date: string | null;
   warehouse_id: number | null;
   inventory_id: number | null;
-  items?: { item_code: string; item_name: string; unit: string | null } | null;
+  items?: { item_code: string; item_name: string; unit: string | null; process_metadata?: unknown } | null;
   warehouses?: { name: string | null } | null;
   processor_name?: string;
 };
@@ -63,10 +64,11 @@ export default function InventoryTransactionsPage() {
             exp_date,
             warehouse_id,
             inventory_id,
-            items (item_code, item_name, unit),
+            items (item_code, item_name, unit, process_metadata),
             warehouses (name)
           `)
           .order('trans_date', { ascending: false })
+          .order('id', { ascending: false })
           .limit(1000),
       ]);
 
@@ -129,9 +131,13 @@ export default function InventoryTransactionsPage() {
         (filter === 'IN' && direction === 'IN') ||
         (filter === 'OUT' && direction === 'OUT');
       const term = searchTerm.toLowerCase();
+      const processName = getProcessNameFromMetadata(
+        (tx.items?.process_metadata ?? null) as Record<string, unknown> | null
+      );
       const matchSearch =
         (tx.items?.item_name || '').toLowerCase().includes(term) ||
         (tx.items?.item_code || '').toLowerCase().includes(term) ||
+        processName.toLowerCase().includes(term) ||
         (tx.warehouses?.name || '').toLowerCase().includes(term) ||
         (tx.remarks || '').toLowerCase().includes(term);
       return matchType && matchSearch;
@@ -184,7 +190,7 @@ export default function InventoryTransactionsPage() {
         <div className="w-full md:w-80">
           <input
             type="text"
-            placeholder="품목/창고/비고 검색..."
+            placeholder="품목·공정명·창고·비고 검색..."
             className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-blue-500 font-bold text-sm transition-colors"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
@@ -200,6 +206,7 @@ export default function InventoryTransactionsPage() {
                 <th className="px-5 py-4 font-bold">일시</th>
                 <th className="px-5 py-4 font-bold text-center w-24">구분</th>
                 <th className="px-5 py-4 font-bold">품목정보</th>
+                <th className="px-5 py-4 font-bold">공정명</th>
                 <th className="px-5 py-4 font-bold text-blue-700">창고</th>
                 <th className="px-5 py-4 font-bold text-right w-32">수량</th>
                 <th className="px-5 py-4 font-bold text-gray-500">비고 (사유)</th>
@@ -209,14 +216,18 @@ export default function InventoryTransactionsPage() {
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-16 text-center font-bold text-gray-400">데이터를 불러오는 중입니다...</td>
+                  <td colSpan={8} className="px-5 py-16 text-center font-bold text-gray-400">데이터를 불러오는 중입니다...</td>
                 </tr>
               ) : filteredData.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-5 py-16 text-center font-bold text-gray-400">조회된 입출고 내역이 없습니다.</td>
+                  <td colSpan={8} className="px-5 py-16 text-center font-bold text-gray-400">조회된 입출고 내역이 없습니다.</td>
                 </tr>
               ) : (
-                filteredData.map((tx) => (
+                filteredData.map((tx) => {
+                  const rowProcessName = getProcessNameFromMetadata(
+                    (tx.items?.process_metadata ?? null) as Record<string, unknown> | null
+                  )
+                  return (
                   <tr key={tx.id} className="hover:bg-gray-50 transition-colors">
                     <td className="px-5 py-4 font-bold text-gray-400 text-xs tracking-tight">
                       {new Date(tx.trans_date).toLocaleString('ko-KR', {
@@ -228,6 +239,9 @@ export default function InventoryTransactionsPage() {
                     <td className="px-5 py-4">
                       <div className="font-black text-gray-800">{tx.items?.item_name || '-'}</div>
                       <div className="text-xs font-bold text-blue-600 mt-0.5">{tx.items?.item_code || '정보없음'}</div>
+                    </td>
+                    <td className="px-5 py-4 text-sm font-bold text-gray-600">
+                      {rowProcessName.trim() ? rowProcessName : '—'}
                     </td>
                     <td className="px-5 py-4 font-bold text-gray-700">
                       {tx.warehouses?.name || <span className="text-gray-300 italic">-</span>}
@@ -250,7 +264,8 @@ export default function InventoryTransactionsPage() {
                       {tx.processor_name}
                     </td>
                   </tr>
-                ))
+                  )
+                })
               )}
             </tbody>
           </table>

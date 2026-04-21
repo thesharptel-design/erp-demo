@@ -34,6 +34,23 @@ export function isAdminRole(roleName: string | null | undefined) {
   return String(roleName ?? '').toLowerCase() === 'admin'
 }
 
+/** System Admin 이상: 품목 마스터 등록·수정·삭제 (role admin 또는 시스템 관리 플래그). */
+export function canEditItemsMaster(
+  user: Pick<CurrentUserPermissions, 'role_name' | 'can_admin_manage'> | null
+): boolean {
+  if (!user) return false
+  if (isAdminRole(user.role_name)) return true
+  return Boolean(user.can_admin_manage)
+}
+
+/** 최고관리자: 중앙 공정 설정(DB) 편집 — role `admin` 전용. */
+export function canManageCentralItemProcessConfig(
+  user: Pick<CurrentUserPermissions, 'role_name'> | null
+): boolean {
+  if (!user) return false
+  return isAdminRole(user.role_name)
+}
+
 export function hasManagePermission(
   user: Partial<
     Pick<

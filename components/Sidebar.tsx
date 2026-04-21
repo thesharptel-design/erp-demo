@@ -119,7 +119,7 @@ export default function Sidebar() {
       items: [
         { name: '사용자 가입 설정', href: '/admin/user-approvals', perm: 'can_manage_permissions'},
         { name: '사용자 권한 설정', href: '/admin/user-permissions', perm: 'can_manage_permissions' },
-        { name: '로그인 감사 모니터', href: '/admin/login-audit', perm: 'can_manage_permissions' },
+        { name: '로그인 모니터', href: '/admin/login-audit', perm: 'can_manage_permissions' },
         { name: '창고 관리', href: '/admin/warehouses', perm: 'can_manage_permissions' },
         { name: 'CoA 파일 관리', href: '/admin/coa-files', perm: 'can_manage_permissions' },
         { name: '기업정보 설정', href: '/admin/company-settings', perm: 'can_manage_permissions' },
@@ -182,7 +182,7 @@ export default function Sidebar() {
               {isOpen && (
                 <div className="space-y-0.5 ml-1 border-l-2 border-gray-100">
                   {group.items.map((item) => {
-                    const enabled = hasPermission(item.perm);
+                    const enabled = hasPermission(item.perm)
                     const isCurrent = pathname === item.href;
 
                     return (

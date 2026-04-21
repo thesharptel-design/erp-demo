@@ -7,7 +7,6 @@ import { getDocDetailHref } from '@/lib/approval-status';
 import type { ApprovalDocLike } from '@/lib/approval-status';
 
 // --- 타입 정의 ---
-type ItemRow = { id: number; item_code: string; item_name: string; safety_stock_qty: number; };
 type InventoryRow = { item_id: number; current_qty: number; available_qty?: number | null; quarantine_qty?: number | null; };
 type ApprovalDocRow = {
   id: number;
@@ -71,7 +70,6 @@ const getPurchaseBadge = (status: string) => {
 
 export default function DashboardPage() {
   const [data, setData] = useState({
-    items: [] as ItemRow[],
     inventory: [] as InventoryRow[],
     approvals: [] as ApprovalDocRow[],
     productionOrders: [] as ProductionOrderRow[],
@@ -88,12 +86,11 @@ export default function DashboardPage() {
     async function loadData() {
       try {
         const [
-          { data: itemsData }, { data: inventoryData }, { data: approvalsData },
+          { data: inventoryData }, { data: approvalsData },
           { data: productionOrdersData }, { data: purchaseOrdersData },
           { data: inventoryTransactionsData }, { data: qcRequestsData }, { data: warehouseData },
           { data: coaFileData }, { data: loginAuditData },
         ] = await Promise.all([
-          supabase.from('items').select('id, item_code, item_name, safety_stock_qty').eq('is_active', true),
           supabase.from('inventory').select('item_id, current_qty, available_qty, quarantine_qty'),
           supabase.from('approval_docs').select('id, doc_no, title, status, drafted_at, doc_type, outbound_requests(id)').order('id', { ascending: false }).limit(5),
           supabase.from('production_orders').select(`id, prod_no, status, prod_date, inbound_completed, items:item_id(item_name)`).order('id', { ascending: false }).limit(5),
@@ -106,7 +103,6 @@ export default function DashboardPage() {
         ]);
 
         setData({
-          items: (itemsData as ItemRow[]) || [],
           inventory: (inventoryData as InventoryRow[]) || [],
           approvals: (approvalsData as ApprovalDocRow[]) || [],
           productionOrders: (productionOrdersData as unknown as ProductionOrderRow[]) || [],
@@ -129,9 +125,6 @@ export default function DashboardPage() {
   if (loading) return <div className="flex min-h-screen items-center justify-center bg-gray-50"><div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>;
 
   // --- 데이터 집계 로직 ---
-  const inventoryMap = new Map(data.inventory.map((row) => [row.item_id, { availableQty: Number(row.available_qty ?? 0) }]));
-  
-  const shortageCount = data.items.filter((item) => (inventoryMap.get(item.id)?.availableQty ?? 0) < Number(item.safety_stock_qty ?? 0)).length;
   const quarantineCount = data.inventory.filter((row) => Number(row.quarantine_qty ?? 0) > 0).length;
   const pendingApprovalCount = data.approvals.filter((doc) => ['submitted', 'in_review'].includes(doc.status)).length;
   const pendingOutboundRequestCount = data.approvals.filter((doc) => doc.doc_type === 'outbound_request' && ['submitted', 'in_review'].includes(doc.status)).length;
@@ -161,7 +154,6 @@ export default function DashboardPage() {
       {/* 🌟 요약 통계 카드 (브루탈리즘 스타일 적용) */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-8 gap-4">
         {[
-          { title: '부족 품목', count: shortageCount, desc: '안전재고 미만', color: 'text-red-600', bg: 'bg-red-50' },
           { title: '격리 재고', count: quarantineCount, desc: 'QC 해제 대기', color: 'text-orange-600', bg: 'bg-orange-50' },
           { title: '미결재 문서', count: pendingApprovalCount, desc: '상신/결재중', color: 'text-blue-600', bg: 'bg-blue-50' },
           { title: '출고요청 대기', count: pendingOutboundRequestCount, desc: '출고요청 결재중', color: 'text-indigo-600', bg: 'bg-indigo-50' },
@@ -266,7 +258,7 @@ export default function DashboardPage() {
             { name: '거래처 마스터', path: '/customers', icon: '🏢' },
             { name: '품목 마스터', path: '/items', icon: '🏷️' },
             { name: '사용자 권한 관리', path: '/admin/user-permissions', icon: '🔑' },
-            { name: '로그인 감사 모니터', path: '/admin/login-audit', icon: '🛡️' },
+            { name: '로그인 모니터', path: '/admin/login-audit', icon: '🛡️' },
             { name: '창고 관리', path: '/admin/warehouses', icon: '🏭' },
             { name: 'CoA 파일 관리', path: '/admin/coa-files', icon: '📎' },
             { name: '결재 문서함', path: '/approvals', icon: '✅' },

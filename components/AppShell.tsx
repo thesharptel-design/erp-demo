@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import Sidebar from '@/components/Sidebar'
@@ -11,6 +11,11 @@ type Props = {
   children: React.ReactNode
 }
 
+const HEARTBEAT_MS = 60_000
+/** Wall-clock since last user input (pointer/key/wheel anywhere in the app). */
+const IDLE_LOGOUT_MS = 10 * 60 * 1000
+const IDLE_CHECK_MS = 5_000
+
 export default function AppShell({ children }: Props) {
   const pathname = usePathname()
   const router = useRouter()
@@ -19,6 +24,9 @@ export default function AppShell({ children }: Props) {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [sessionId, setSessionId] = useState<string>('')
+
+  const lastInputAtRef = useRef(0)
+  const hadInputSinceLastBeatRef = useRef(true)
 
   const getOrCreateSessionId = (userId: string) => {
     const key = `erp-active-session:${userId}`
@@ -62,6 +70,16 @@ export default function AppShell({ children }: Props) {
   }, [])
 
   useEffect(() => {
+    const mark = () => {
+      lastInputAtRef.current = Date.now()
+      hadInputSinceLastBeatRef.current = true
+    }
+    const events: (keyof DocumentEventMap)[] = ['pointerdown', 'keydown', 'wheel']
+    events.forEach((ev) => document.addEventListener(ev, mark as EventListener, { passive: true }))
+    return () => events.forEach((ev) => document.removeEventListener(ev, mark as EventListener))
+  }, [])
+
+  useEffect(() => {
     if (isLoading) return
 
     if (!isLoggedIn && pathname !== '/login') {
@@ -81,10 +99,17 @@ export default function AppShell({ children }: Props) {
   useEffect(() => {
     if (isLoading || !isLoggedIn || !sessionId) return
 
-    let disposed = false
-    let timer: ReturnType<typeof setInterval> | null = null
+    // 로그인 페이지에서 오래 머문 뒤 로그인하면 lastInputAtRef가 마운트 시각에 머물러
+    // 유휴 10분 판정이 즉시 참이 되어 로그아웃되는 문제를 막기 위해, 세션 활성화 시점에 리셋
+    lastInputAtRef.current = Date.now()
+    hadInputSinceLastBeatRef.current = true
 
-    const sendHeartbeat = async (isOnline = true, keepalive = false) => {
+    let disposed = false
+    let idleSignOutStarted = false
+    let beatTimer: ReturnType<typeof setInterval> | null = null
+    let idleTimer: ReturnType<typeof setInterval> | null = null
+
+    const sendHeartbeat = async (isOnline = true, hadRecentInteraction = true, keepalive = false) => {
       const {
         data: { session },
       } = await supabase.auth.getSession()
@@ -98,37 +123,65 @@ export default function AppShell({ children }: Props) {
         keepalive,
         body: JSON.stringify({
           sessionId,
-          currentPath: pathname || '/',
           isOnline,
+          hadRecentInteraction,
         }),
       }).catch(() => undefined)
     }
 
-    void sendHeartbeat(true)
-    timer = setInterval(() => {
-      void sendHeartbeat(true)
-    }, 20000)
+    void sendHeartbeat(true, true)
+    hadInputSinceLastBeatRef.current = false
+
+    const tryIdleSignOut = async () => {
+      if (disposed || idleSignOutStarted) return
+      if (Date.now() - lastInputAtRef.current <= IDLE_LOGOUT_MS) return
+      idleSignOutStarted = true
+      void sendHeartbeat(false, false, true)
+      await supabase.auth.signOut()
+    }
+
+    beatTimer = setInterval(() => {
+      if (disposed) return
+      if (Date.now() - lastInputAtRef.current > IDLE_LOGOUT_MS) return
+      const had = hadInputSinceLastBeatRef.current
+      hadInputSinceLastBeatRef.current = false
+      void sendHeartbeat(true, had)
+    }, HEARTBEAT_MS)
+
+    idleTimer = setInterval(() => {
+      void tryIdleSignOut()
+    }, IDLE_CHECK_MS)
 
     const onVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        void sendHeartbeat(true)
+        void tryIdleSignOut()
+        if (!idleSignOutStarted && !disposed) {
+          void sendHeartbeat(true, false)
+        }
       }
     }
+
+    const onWindowFocus = () => {
+      void tryIdleSignOut()
+    }
     const onPageHide = () => {
-      void sendHeartbeat(false, true)
+      void sendHeartbeat(false, false, true)
     }
 
     document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('focus', onWindowFocus)
     window.addEventListener('pagehide', onPageHide)
     window.addEventListener('beforeunload', onPageHide)
     return () => {
       disposed = true
-      if (timer) clearInterval(timer)
+      if (beatTimer) clearInterval(beatTimer)
+      if (idleTimer) clearInterval(idleTimer)
       document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('focus', onWindowFocus)
       window.removeEventListener('pagehide', onPageHide)
       window.removeEventListener('beforeunload', onPageHide)
     }
-  }, [isLoading, isLoggedIn, sessionId, pathname])
+  }, [isLoading, isLoggedIn, sessionId])
 
   if (pathname === '/login') {
     return <>{children}</>
