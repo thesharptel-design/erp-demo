@@ -14,11 +14,10 @@ import {
   cooperatorReadBadge,
   getActionLabel,
   getDetailLineStatus,
-  getDocStatusBadgeClass,
-  getDocStatusLabel,
   getIsAdmin,
 } from '@/lib/approval-document-detail-helpers'
-import { getDocTypeLabel } from '@/lib/approval-status'
+import { formatWriterDepartmentLabel } from '@/lib/approval-draft'
+import { getDocTypeLabel, getUnifiedApprovalWorkflowBadges, type ApprovalDocLike } from '@/lib/approval-status'
 import { isProbablyRichHtml } from '@/lib/html-content'
 
 type ApprovalDoc = {
@@ -62,6 +61,11 @@ type AppUserProfile = {
   id: string
   user_name: string | null
   dept_id: number | null
+  department?: string | null
+  user_kind?: string | null
+  training_program?: string | null
+  school_name?: string | null
+  teacher_subject?: string | null
   role_name: string | null
   seal_image_path: string | null
 }
@@ -111,7 +115,11 @@ async function getOutboundRequestDetail(supabase: SupabaseClient, id: string) {
   const approvalDocId = request.approval_doc_id
 
   const [{ data: users }, { data: departments }, { data: whRow }] = await Promise.all([
-    supabase.from('app_users').select('id, user_name, dept_id, role_name, seal_image_path'),
+    supabase
+      .from('app_users')
+      .select(
+        'id, user_name, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, seal_image_path'
+      ),
     supabase.from('departments').select('id, dept_name'),
     supabase.from('warehouses').select('name').eq('id', request.warehouse_id).maybeSingle(),
   ])
@@ -211,10 +219,8 @@ export default async function OutboundRequestDetailPage({ params }: { params: Pr
   const writerIdForPaper = doc?.writer_id ?? request.requester_id
   const writerProfile = userMap.get(writerIdForPaper)
   const writerName = writerProfile?.user_name || writerIdForPaper.slice(0, 8)
-  const writerDeptId = doc?.dept_id ?? writerProfile?.dept_id ?? null
-  const writerDeptName = writerDeptId != null ? (deptMap.get(writerDeptId) ?? '—') : '—'
+  const writerDeptName = formatWriterDepartmentLabel(writerProfile, deptMap, { docDeptId: doc?.dept_id ?? null })
 
-  const docStatus = doc?.status ?? request.status
   const draftedDate = doc?.drafted_at
     ? new Date(doc.drafted_at).toISOString().split('T')[0]
     : new Date(request.created_at).toISOString().split('T')[0]
@@ -234,6 +240,7 @@ export default async function OutboundRequestDetailPage({ params }: { params: Pr
             approver_role: participant.role,
             status: matchedLine?.status ?? 'waiting',
             acted_at: matchedLine?.acted_at ?? null,
+            opinion: matchedLine?.opinion ?? null,
           }
         })
       : lines.map((line) => ({
@@ -242,6 +249,7 @@ export default async function OutboundRequestDetailPage({ params }: { params: Pr
           approver_role: line.approver_role,
           status: line.status,
           acted_at: line.acted_at ?? null,
+          opinion: line.opinion ?? null,
         }))
 
   const cooperativeLines = displayLines.filter((line) => line.approver_role === 'cooperator')
@@ -262,12 +270,13 @@ export default async function OutboundRequestDetailPage({ params }: { params: Pr
   })
   const cooperativeRows = cooperativeLines.map((line) => {
     const profile = userMap.get(line.approver_id)
-    const dept = profile?.dept_id != null ? (deptMap.get(profile.dept_id) ?? '—') : '—'
+    const dept = formatWriterDepartmentLabel(profile, deptMap)
     return {
       id: `coop-${line.line_no}-${line.approver_id}`,
       dept,
       name: profile?.user_name ?? '—',
       readStatus: cooperatorReadBadge(line.status),
+      opinionText: line.opinion,
     }
   })
   const reviewerNames = participants
@@ -284,6 +293,21 @@ export default async function OutboundRequestDetailPage({ params }: { params: Pr
   const docTypeLabel = doc ? getDocTypeLabel(doc.doc_type) : '출고요청'
 
   const drafterActedAt = doc?.drafted_at ?? request.created_at
+
+  const workflowDoc: ApprovalDocLike =
+    doc ??
+    ({
+      status: request.status,
+      remarks: null,
+      current_line_no: null,
+      doc_type: 'outbound_request',
+    } as ApprovalDocLike)
+  const workflowLines = lines.map((l) => ({
+    line_no: l.line_no,
+    approver_role: l.approver_role,
+    status: l.status,
+  }))
+  const docStatusBand = getUnifiedApprovalWorkflowBadges(workflowDoc, workflowLines)[0]!
 
   const userNameById = new Map(users.map((u) => [u.id, u.user_name]))
   const opinionRows = selectApprovalOpinionRows(
@@ -349,8 +373,9 @@ export default async function OutboundRequestDetailPage({ params }: { params: Pr
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
       <ApprovalDocumentPaperView
-        docStatusLabel={getDocStatusLabel(docStatus)}
-        docStatusClassName={getDocStatusBadgeClass(docStatus)}
+        paperTitle="출고요청서"
+        docStatusLabel={docStatusBand.label}
+        docStatusClassName={docStatusBand.className}
         showCancelRequestBadge={Boolean(doc?.remarks?.includes('취소 요청'))}
         writerName={writerName}
         writerDeptName={writerDeptName}

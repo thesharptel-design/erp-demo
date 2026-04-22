@@ -30,7 +30,7 @@ describe('getApprovalDocDetailedStatusLabel', () => {
     ).toBe('기안자 취소요청')
   })
 
-  it('maps in_review line positions', () => {
+  it('maps in_review without lines to unified 진행중', () => {
     expect(
       getApprovalDocDetailedStatusLabel({
         status: 'in_review',
@@ -38,7 +38,7 @@ describe('getApprovalDocDetailedStatusLabel', () => {
         current_line_no: 2,
         doc_type: 'draft_doc',
       })
-    ).toBe('검토자 대기중')
+    ).toBe('결재,협조진행중')
     expect(
       getApprovalDocDetailedStatusLabel({
         status: 'submitted',
@@ -46,7 +46,7 @@ describe('getApprovalDocDetailedStatusLabel', () => {
         current_line_no: 3,
         doc_type: 'draft_doc',
       })
-    ).toBe('결재 대기중')
+    ).toBe('결재,협조진행중')
   })
 })
 
@@ -72,26 +72,50 @@ describe('formatCancellationProgressChain', () => {
 })
 
 describe('getApprovalDocDetailedStatusPresentation', () => {
-  it('returns 결재완료 and 협조대기 when approved but cooperator still waiting', () => {
+  it('returns 결재완료/협조대기 when approved but cooperator still waiting', () => {
     const pres = getApprovalDocDetailedStatusPresentation(
       { status: 'approved', remarks: null, current_line_no: null, doc_type: 'draft_doc' },
       [
-        { approver_role: 'approver', status: 'approved' },
-        { approver_role: 'cooperator', status: 'waiting' },
+        { line_no: 1, approver_role: 'approver', status: 'approved' },
+        { line_no: 2, approver_role: 'cooperator', status: 'waiting' },
       ]
     )
-    expect(pres.badges.map((b) => b.label)).toEqual(['결재완료', '협조대기'])
+    expect(pres.badges.map((b) => b.label)).toEqual(['결재완료/협조대기'])
   })
 
-  it('returns single 결재완료 when approved and no pending cooperator', () => {
+  it('returns single 최종승인 when approved and no pending cooperator', () => {
     const pres = getApprovalDocDetailedStatusPresentation(
       { status: 'approved', remarks: null, current_line_no: null, doc_type: 'draft_doc' },
       [
-        { approver_role: 'approver', status: 'approved' },
-        { approver_role: 'cooperator', status: 'approved' },
+        { line_no: 1, approver_role: 'approver', status: 'approved' },
+        { line_no: 2, approver_role: 'cooperator', status: 'approved' },
       ]
     )
-    expect(pres.badges.map((b) => b.label)).toEqual(['결재완료'])
+    expect(pres.badges.map((b) => b.label)).toEqual(['최종승인'])
+  })
+
+  it('returns 결재진행/협조완료 when next pending is approver and all cooperators approved', () => {
+    const pres = getApprovalDocDetailedStatusPresentation(
+      { status: 'in_review', remarks: null, current_line_no: 3, doc_type: 'draft_doc' },
+      [
+        { line_no: 1, approver_role: 'approver', status: 'approved' },
+        { line_no: 2, approver_role: 'cooperator', status: 'approved' },
+        { line_no: 3, approver_role: 'approver', status: 'pending' },
+      ]
+    )
+    expect(pres.badges.map((b) => b.label)).toEqual(['결재진행/협조완료'])
+  })
+
+  it('returns 결재완료/협조대기 when doc still in_review but all approvers approved and cooperator pending (사후 협조)', () => {
+    const pres = getApprovalDocDetailedStatusPresentation(
+      { status: 'in_review', remarks: null, current_line_no: 4, doc_type: 'draft_doc' },
+      [
+        { line_no: 1, approver_role: 'approver', status: 'approved' },
+        { line_no: 2, approver_role: 'approver', status: 'approved' },
+        { line_no: 3, approver_role: 'cooperator', status: 'pending' },
+      ]
+    )
+    expect(pres.badges.map((b) => b.label)).toEqual(['결재완료/협조대기'])
   })
 })
 

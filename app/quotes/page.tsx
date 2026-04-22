@@ -1,37 +1,45 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import SearchableCombobox from '@/components/SearchableCombobox'
+import { supabase } from '@/lib/supabase'
 import { hasManagePermission } from '@/lib/permissions'
+import { getQuoteStatusUnifiedBadge } from '@/lib/quote-ui-status'
+
+const STATUS_FILTER_OPTIONS = [
+  { value: '', label: '전체' },
+  { value: 'pending', label: '결재,협조진행중', keywords: ['진행', 'pending'] },
+  { value: 'approved', label: '최종승인', keywords: ['승인'] },
+  { value: 'draft', label: '임시저장', keywords: ['임시'] },
+  { value: 'cancelled', label: '반려', keywords: ['취소'] },
+]
 
 export default function QuotesPage() {
   const [quotes, setQuotes] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [userData, setUserData] = useState<any>(null)
+  const [filterStatus, setFilterStatus] = useState('')
 
   useEffect(() => {
-    fetchData()
+    void fetchData()
   }, [])
 
   async function fetchData() {
-    setLoading(true);
-    
-    // 1. 현재 사용자 권한 정보 가져오기
-    const { data: { session } } = await supabase.auth.getSession();
+    setLoading(true)
+
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
     if (session?.user) {
-      const { data: user } = await supabase
-        .from('app_users')
-        .select('*')
-        .eq('id', session.user.id)
-        .single();
-      setUserData(user);
+      const { data: user } = await supabase.from('app_users').select('*').eq('id', session.user.id).single()
+      setUserData(user)
     }
 
-    // 2. 견적서 목록 가져오기
     const { data, error } = await supabase
       .from('quotes')
-      .select(`
+      .select(
+        `
         id,
         quote_no,
         quote_date,
@@ -40,91 +48,141 @@ export default function QuotesPage() {
         remarks,
         customers (customer_name),
         app_users (user_name)
-      `)
-      .order('id', { ascending: false });
+      `
+      )
+      .order('id', { ascending: false })
 
-    if (!error) setQuotes(data || []);
-    setLoading(false);
+    if (!error) setQuotes(data || [])
+    setLoading(false)
   }
 
-  // 🌟 권한 체크 (관리자거나 영업권한이 true일 때)
-  const hasPermission = hasManagePermission(userData, 'can_sales_manage');
+  const filteredQuotes = useMemo(() => {
+    if (!filterStatus) return quotes
+    return quotes.filter((q) => String(q.status ?? '').toLowerCase() === filterStatus)
+  }, [quotes, filterStatus])
 
-  if (loading) return <div className="p-20 text-center font-bold text-gray-400">데이터 로딩 중...</div>
+  const hasPermission = hasManagePermission(userData, 'can_sales_manage')
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-[1600px] p-6">
+        <p className="py-24 text-center text-sm font-bold text-gray-400">데이터 로딩 중...</p>
+      </div>
+    )
+  }
 
   return (
-    <div className="p-8 font-sans bg-gray-50 min-h-screen space-y-8">
-      
-      {/* 🌟 중복되던 'Current User' 바를 삭제했습니다. (AppShell에서 이미 보여줌) */}
-
-      {/* 헤더 섹션 */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between pt-4">
-        <div>
-          <h1 className="text-4xl font-black text-gray-900 tracking-tighter uppercase">Quotation <span className="text-blue-600">Management</span></h1>
-          <p className="mt-1 text-sm font-bold text-gray-400">
-            전체 견적서 목록을 확인하고 새로운 견적을 등록합니다.
-          </p>
+    <div className="mx-auto flex min-h-[calc(100dvh-10.5rem)] max-w-[1600px] flex-col space-y-6 bg-gray-50 p-6 font-sans">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-3xl font-black tracking-tighter text-gray-900">견적서 관리</h1>
+          <p className="mt-1 text-sm font-bold text-gray-500">전체 견적서 목록을 확인하고 새 견적을 등록합니다.</p>
         </div>
-
-        {/* 🌟 고집불통 ProtectedCreateButton 대신 직접 제어하는 버튼으로 변경 */}
-        {hasPermission ? (
-          <Link 
-            href="/quotes/new" 
-            className="px-10 py-4 bg-blue-600 text-white rounded-2xl font-black shadow-lg hover:bg-blue-700 transition-all active:scale-95"
-          >
-            견적서 등록
-          </Link>
-        ) : (
-          <div className="px-10 py-4 bg-gray-200 text-gray-400 rounded-2xl font-black flex items-center gap-2 cursor-not-allowed border border-gray-100">
-            🔒 권한 필요 (영업)
-          </div>
-        )}
+        <div className="flex flex-wrap gap-3">
+          {hasPermission ? (
+            <Link
+              href="/quotes/new"
+              className="inline-flex h-12 items-center justify-center rounded-xl border-2 border-black bg-blue-600 px-6 text-sm font-black text-white shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-blue-700 active:translate-y-1 active:shadow-none"
+            >
+              견적서 등록
+            </Link>
+          ) : (
+            <div className="inline-flex h-12 cursor-not-allowed items-center rounded-xl border-2 border-gray-200 bg-gray-100 px-6 text-sm font-black text-gray-400">
+              권한 필요 (영업)
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* 테이블 섹션 */}
-      <div className="overflow-hidden rounded-[2.5rem] border border-gray-100 bg-white shadow-sm">
-        <table className="min-w-full text-sm">
-          <thead className="bg-gray-50/50 text-left text-[11px] font-black uppercase tracking-widest text-gray-400 border-b border-gray-50">
-            <tr>
-              <th className="px-8 py-5">견적번호</th>
-              <th className="px-8 py-5">견적일</th>
-              <th className="px-8 py-5">거래처</th>
-              <th className="px-8 py-5">작성자</th>
-              <th className="px-8 py-5 text-center">상태</th>
-              <th className="px-8 py-5 text-right">총금액 (KRW)</th>
-              <th className="px-8 py-5">비고</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
-            {quotes.map((quote) => (
-              <tr key={quote.id} className="hover:bg-blue-50/20 transition-all group">
-                <td className="px-8 py-5">
-                  <Link href={`/quotes/${quote.id}`} className="text-blue-600 font-black hover:underline decoration-2 underline-offset-4">
-                    {quote.quote_no}
-                  </Link>
-                </td>
-                <td className="px-8 py-5 text-gray-500 font-medium">{quote.quote_date}</td>
-                <td className="px-8 py-5 font-bold text-gray-700">{quote.customers?.customer_name || '-'}</td>
-                <td className="px-8 py-5 text-gray-500">{quote.app_users?.user_name || '-'}</td>
-                <td className="px-8 py-5 text-center">
-                  <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${
-                    quote.status === 'approved' ? 'bg-emerald-100 text-emerald-600' :
-                    quote.status === 'cancelled' ? 'bg-red-100 text-red-600' :
-                    'bg-gray-100 text-gray-500'
-                  }`}>
-                    {quote.status === 'pending' ? '진행중' : quote.status}
-                  </span>
-                </td>
-                <td className="px-8 py-5 text-right font-black text-gray-900">
-                  {quote.total_amount?.toLocaleString()}
-                </td>
-                <td className="px-8 py-5 text-gray-400 text-xs truncate max-w-[150px]">
-                  {quote.remarks || '-'}
-                </td>
+      <div className="flex flex-wrap items-center gap-3 text-xs font-bold text-gray-500">
+        <span className="text-gray-600">
+          {filteredQuotes.length}건 표시
+          {filterStatus ? ` · 상태 필터 적용` : ''}
+        </span>
+        <div className="w-full min-w-[12rem] max-w-xs sm:w-56">
+          <SearchableCombobox
+            value={filterStatus}
+            onChange={setFilterStatus}
+            options={STATUS_FILTER_OPTIONS}
+            placeholder="상태 필터"
+            showClearOption={false}
+            listMaxHeightClass="max-h-56 overflow-y-auto"
+            buttonClassName="text-[11px] font-bold py-2"
+            dropdownClassName="text-xs"
+            dropdownPlacement="auto"
+          />
+        </div>
+      </div>
+
+      <div className="flex flex-1 flex-col overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+        <div className="min-h-[min(60vh,calc(100dvh-14rem))] overflow-x-auto">
+          <table className="min-w-[960px] w-full table-fixed text-sm">
+            <colgroup>
+              <col className="w-[11rem]" />
+              <col className="w-[7rem]" />
+              <col />
+              <col className="w-[7rem]" />
+              <col className="w-[9.5rem]" />
+              <col className="w-[8.5rem]" />
+              <col className="w-[12rem]" />
+            </colgroup>
+            <thead className="sticky top-0 z-10 border-b-2 border-black bg-gray-50 text-left text-xs font-black uppercase tracking-wider text-gray-400">
+              <tr>
+                <th className="px-4 py-4">견적번호</th>
+                <th className="px-3 py-4">견적일</th>
+                <th className="px-4 py-4">거래처</th>
+                <th className="px-3 py-4">작성자</th>
+                <th className="px-3 py-4 text-center">상태</th>
+                <th className="px-3 py-4 text-right">총금액</th>
+                <th className="px-4 py-4">비고</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-gray-100 bg-white">
+              {filteredQuotes.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="p-12 text-center text-sm font-bold text-gray-400">
+                    표시할 견적이 없습니다.
+                  </td>
+                </tr>
+              ) : (
+                filteredQuotes.map((quote) => {
+                  const st = getQuoteStatusUnifiedBadge(quote.status)
+                  return (
+                    <tr key={quote.id} className="transition-colors hover:bg-gray-50">
+                      <td className="px-4 py-4 font-black">
+                        <Link href={`/quotes/${quote.id}`} className="text-blue-600 hover:underline" title={quote.quote_no}>
+                          {quote.quote_no}
+                        </Link>
+                      </td>
+                      <td className="px-3 py-4 text-xs font-bold text-gray-600">{quote.quote_date}</td>
+                      <td className="px-4 py-4">
+                        <span className="block min-w-0 truncate font-bold text-gray-800" title={quote.customers?.customer_name}>
+                          {quote.customers?.customer_name || '—'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-4">
+                        <span className="block min-w-0 truncate text-xs font-bold text-gray-600" title={quote.app_users?.user_name}>
+                          {quote.app_users?.user_name || '—'}
+                        </span>
+                      </td>
+                      <td className="px-3 py-4 text-center">
+                        <span className={st.className}>{st.label}</span>
+                      </td>
+                      <td className="px-3 py-4 text-right font-black text-gray-900">
+                        {quote.total_amount != null ? Number(quote.total_amount).toLocaleString() : '—'}
+                      </td>
+                      <td className="px-4 py-4">
+                        <span className="block min-w-0 truncate text-xs font-bold text-gray-500" title={quote.remarks}>
+                          {quote.remarks?.trim() ? quote.remarks : '—'}
+                        </span>
+                      </td>
+                    </tr>
+                  )
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )

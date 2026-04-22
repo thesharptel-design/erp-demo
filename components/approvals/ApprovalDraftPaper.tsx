@@ -2,6 +2,7 @@
 
 import type { ReactNode } from 'react'
 import SearchableCombobox, { type ComboboxOption } from '@/components/SearchableCombobox'
+import { formatWriterDepartmentLabel } from '@/lib/approval-draft'
 import type { ApprovalRole } from '@/lib/approval-roles'
 import ApprovalLineDnD from '@/components/approvals/ApprovalLineDnD'
 import ApprovalDraftRichEditor from '@/components/approvals/ApprovalDraftRichEditor'
@@ -202,28 +203,43 @@ export default function ApprovalDraftPaper({
                     결재 라인에서 역할을 &quot;협조&quot;로 지정하면 이곳에 표시됩니다.
                   </p>
                 ) : (
-                  <table className="w-full border border-gray-300 bg-white text-left text-[11px]">
+                  <table className="w-full table-fixed border border-gray-300 bg-white text-left text-[11px]">
+                    <colgroup>
+                      <col className="w-[4.25rem]" />
+                      <col className="w-[5.25rem]" />
+                      <col className="w-[4.75rem]" />
+                      <col />
+                    </colgroup>
                     <thead>
                       <tr className="bg-gray-100">
-                        <th className="border-b border-gray-300 px-2 py-1 font-black">부서</th>
-                        <th className="border-b border-l border-gray-300 px-2 py-1 font-black">이름</th>
-                        <th className="border-b border-l border-gray-300 px-2 py-1 font-black">확인</th>
+                        <th className="border-b border-gray-300 px-1 py-1 text-[10px] font-black">부서</th>
+                        <th className="border-b border-l border-gray-300 px-1 py-1 text-[10px] font-black">이름</th>
+                        <th className="border-b border-l border-gray-300 px-1 py-1 text-[10px] font-black">확인</th>
+                        <th className="border-b border-l border-gray-300 px-2 py-1 text-[10px] font-black">의견</th>
                       </tr>
                     </thead>
                     <tbody>
                       {cooperatorSlots.map((line) => {
                         const u = resolveLineUser(line.userId)
-                        const dept = u ? (deptMap.get(u.dept_id ?? -1) ?? '—') : '—'
+                        const dept = u ? formatWriterDepartmentLabel(u, deptMap) : '—'
                         return (
                           <tr key={line.id} className="border-t border-gray-200">
-                            <td className="px-2 py-1.5 font-bold text-gray-800">{dept}</td>
-                            <td className="border-l border-gray-200 px-2 py-1.5 font-bold text-gray-900">
+                            <td className="max-w-0 truncate px-1 py-1.5 text-[10px] font-bold text-gray-800" title={dept}>
+                              {dept}
+                            </td>
+                            <td
+                              className="max-w-0 truncate border-l border-gray-200 px-1 py-1.5 text-[10px] font-bold text-gray-900"
+                              title={u?.user_name ?? '—'}
+                            >
                               {u?.user_name ?? '—'}
                             </td>
-                            <td className="border-l border-gray-200 px-2 py-1.5">
-                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-800">
+                            <td className="border-l border-gray-200 px-1 py-1.5 text-center">
+                              <span className="inline-flex rounded bg-amber-100 px-1 py-0.5 text-[9px] font-black text-amber-800">
                                 안읽음
                               </span>
+                            </td>
+                            <td className="min-w-0 border-l border-gray-200 px-2 py-1.5 text-[10px] font-bold text-gray-400">
+                              —
                             </td>
                           </tr>
                         )

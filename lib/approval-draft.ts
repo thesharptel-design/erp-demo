@@ -156,24 +156,7 @@ export type SyncWebGeneralDraftInput = {
   remarksTag?: string
 }
 
-export function buildReferenceSummaryForDraft(
-  approvalOrder: Array<{ role: ApprovalRole; userId: string }>,
-  users: Array<{ id: string; user_name: string; dept_id: number | null }>,
-  deptMap: Map<number, string>
-): string {
-  return approvalOrder
-    .filter((l) => l.role === 'reviewer' && l.userId.trim())
-    .map((l) => {
-      const u = users.find((x) => x.id === l.userId)
-      if (!u) return ''
-      const d = deptMap.get(u.dept_id ?? -1) ?? ''
-      return d ? `${d} ${u.user_name}` : u.user_name
-    })
-    .filter(Boolean)
-    .join(', ')
-}
-
-/** 기안지 헤더·콤보박스 등: 정규 부서 → 텍스트 부서 → 학생/교사 표시 순 */
+/** 기안지·용지: `departments.id` FK + `app_users.department` 텍스트 + 학생/교사 보조 */
 export type WriterDepartmentDisplayUser = {
   dept_id: number | null
   department?: string | null
@@ -183,13 +166,26 @@ export type WriterDepartmentDisplayUser = {
   teacher_subject?: string | null
 }
 
+/**
+ * 부서 표기 단일 규칙 (통합 결재함 `approval_inbox_query` 와 동일한 우선순위):
+ * 1) `departments` FK (`docDeptId` → `dept_name`, 문서에 스냅샷된 값)
+ * 2) 작성자/사용자 `dept_id` → `departments.dept_name`
+ * 3) `app_users.department` 텍스트(관리 화면에서 선택한 부서 라벨 등)
+ * 4) 학생/교사 보조 표기
+ */
 export function formatWriterDepartmentLabel(
   user: WriterDepartmentDisplayUser | undefined,
-  deptMap: Map<number, string>
+  deptMap: Map<number, string>,
+  options?: { docDeptId?: number | null }
 ): string {
+  const docId = options?.docDeptId
+  if (docId != null && Number.isFinite(Number(docId))) {
+    const fromDoc = deptMap.get(Number(docId))
+    if (fromDoc?.trim()) return fromDoc.trim()
+  }
   if (!user) return '—'
   const fromDept = user.dept_id != null ? deptMap.get(user.dept_id) : undefined
-  if (fromDept) return fromDept
+  if (fromDept?.trim()) return fromDept.trim()
   const textDept = (user.department ?? '').trim()
   if (textDept && textDept.toUpperCase() !== 'EMPTY') return textDept
   if (user.user_kind === 'student') {
@@ -203,6 +199,24 @@ export function formatWriterDepartmentLabel(
     return '교사'
   }
   return '—'
+}
+
+export function buildReferenceSummaryForDraft(
+  approvalOrder: Array<{ role: ApprovalRole; userId: string }>,
+  users: Array<{ id: string; user_name: string } & WriterDepartmentDisplayUser>,
+  deptMap: Map<number, string>
+): string {
+  return approvalOrder
+    .filter((l) => l.role === 'reviewer' && l.userId.trim())
+    .map((l) => {
+      const u = users.find((x) => x.id === l.userId)
+      if (!u) return ''
+      const d = formatWriterDepartmentLabel(u, deptMap)
+      if (!d || d === '—') return u.user_name ?? ''
+      return `${d} ${u.user_name ?? ''}`.trim()
+    })
+    .filter(Boolean)
+    .join(', ')
 }
 
 export async function syncWebGeneralDraft(input: SyncWebGeneralDraftInput): Promise<{ draftDocId: number }> {

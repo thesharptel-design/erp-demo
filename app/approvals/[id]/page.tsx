@@ -6,17 +6,16 @@ import ApprovalActionButtons from '@/components/ApprovalActionButtons'
 import ApprovalDocumentPaperView from '@/components/approvals/ApprovalDocumentPaperView'
 import ApprovalLineOpinionsBlock from '@/components/approvals/ApprovalLineOpinionsBlock'
 import { selectApprovalOpinionRows } from '@/lib/approval-line-opinions'
-import { getDocTypeLabel } from '@/lib/approval-status'
+import { getDocTypeLabel, getUnifiedApprovalWorkflowBadges, type ApprovalDocLike } from '@/lib/approval-status'
 import {
   canViewApprovalDoc,
   cooperatorReadBadge,
   getActionLabel,
   getDetailLineStatus,
-  getDocStatusBadgeClass,
-  getDocStatusLabel,
   getIsAdmin,
 } from '@/lib/approval-document-detail-helpers'
 import { isProbablyRichHtml } from '@/lib/html-content'
+import { formatWriterDepartmentLabel } from '@/lib/approval-draft'
 
 // --- 타입 정의 ---
 type ApprovalDoc = {
@@ -60,6 +59,11 @@ type AppUserProfile = {
   id: string
   user_name: string | null
   dept_id: number | null
+  department?: string | null
+  user_kind?: string | null
+  training_program?: string | null
+  school_name?: string | null
+  teacher_subject?: string | null
   role_name: string | null
   seal_image_path: string | null
 }
@@ -81,7 +85,11 @@ async function getApprovalDetail(supabase: SupabaseClient, id: string) {
     { data: participants },
   ] = await Promise.all([
     supabase.from('approval_docs').select('*').eq('id', docId).single(),
-    supabase.from('app_users').select('id, user_name, dept_id, role_name, seal_image_path'),
+    supabase
+      .from('app_users')
+      .select(
+        'id, user_name, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, seal_image_path'
+      ),
     supabase.from('departments').select('id, dept_name'),
     supabase.from('approval_lines').select('*').eq('approval_doc_id', docId).order('line_no'),
     supabase.from('approval_histories').select('*').eq('approval_doc_id', docId).order('action_at'),
@@ -145,6 +153,7 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
             approver_role: participant.role,
             status: matchedLine?.status ?? 'waiting',
             acted_at: matchedLine?.acted_at ?? null,
+            opinion: matchedLine?.opinion ?? null,
           }
         })
       : lines.map((line) => ({
@@ -153,6 +162,7 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
           approver_role: line.approver_role,
           status: line.status,
           acted_at: line.acted_at ?? null,
+          opinion: line.opinion ?? null,
         }))
   const cooperativeLines = displayLines.filter((line) => line.approver_role === 'cooperator')
   const writerProfile = userMap.get(doc.writer_id)
@@ -166,7 +176,7 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
   }
 
   const writerName = writerProfile?.user_name || doc.writer_id.slice(0, 8)
-  const writerDeptName = deptMap.get(doc.dept_id) ?? '—'
+  const writerDeptName = formatWriterDepartmentLabel(writerProfile, deptMap, { docDeptId: doc.dept_id })
   const approverLines = displayLines
     .filter((line) => line.approver_role === 'approver')
     .sort((a, b) => a.line_no - b.line_no)
@@ -184,12 +194,13 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
   })
   const cooperativeRows = cooperativeLines.map((line) => {
     const profile = userMap.get(line.approver_id)
-    const dept = profile?.dept_id != null ? (deptMap.get(profile.dept_id) ?? '—') : '—'
+    const dept = formatWriterDepartmentLabel(profile, deptMap)
     return {
       id: `coop-${line.line_no}-${line.approver_id}`,
       dept,
       name: profile?.user_name ?? '—',
       readStatus: cooperatorReadBadge(line.status),
+      opinionText: line.opinion,
     }
   })
   const reviewerNames = participants
@@ -202,6 +213,14 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
   const contentIsHtml = Boolean(contentRaw && isProbablyRichHtml(contentRaw))
 
   const userNameById = new Map(users.map((u) => [u.id, u.user_name]))
+  const workflowDoc: ApprovalDocLike = doc
+  const workflowLines = lines.map((l) => ({
+    line_no: l.line_no,
+    approver_role: l.approver_role,
+    status: l.status,
+  }))
+  const docStatusBand = getUnifiedApprovalWorkflowBadges(workflowDoc, workflowLines)[0]!
+
   const opinionRows = selectApprovalOpinionRows(
     lines.map((l) => ({
       id: l.id,
@@ -218,8 +237,8 @@ export default async function ApprovalDetailPage({ params }: { params: Promise<{
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
       <ApprovalDocumentPaperView
-        docStatusLabel={getDocStatusLabel(doc.status)}
-        docStatusClassName={getDocStatusBadgeClass(doc.status)}
+        docStatusLabel={docStatusBand.label}
+        docStatusClassName={docStatusBand.className}
         showCancelRequestBadge={Boolean(doc.remarks?.includes('취소 요청'))}
         writerName={writerName}
         writerDeptName={writerDeptName}

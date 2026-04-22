@@ -73,36 +73,83 @@ export function getDocDetailHref(doc: ApprovalDocLike & { id: number }) {
 const badge = (classes: string) =>
   `inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-black border ${classes}`
 
+export type ApprovalStatusBadge = { label: string; className: string }
+
 /** 통합 결재문서함 테이블용 상태 텍스트 (필터·정렬·접근성) */
-export function getApprovalDocDetailedStatusLabel(doc: ApprovalDocLike): string {
+export type ApprovalWorkflowLineInput = { line_no: number; approver_role: string; status: string }
+
+/**
+ * 기안·출고 통합: [임시저장][결재,협조진행중][결재완료/협조대기][결재진행/협조완료][최종승인][반려]
+ * (취소 릴레이 등 비고는 `getApprovalDocDetailedStatusPresentation` 쪽에서 별도 처리)
+ */
+export function getUnifiedApprovalWorkflowBadges(
+  doc: ApprovalDocLike,
+  lines: ApprovalWorkflowLineInput[] | null | undefined
+): ApprovalStatusBadge[] {
+  const L = [...(lines ?? [])].sort((a, b) => a.line_no - b.line_no)
+  const one = (label: string, cls: string): ApprovalStatusBadge[] => [{ label, className: badge(cls) }]
+
+  if (doc.status === 'draft') return one('임시저장', 'bg-gray-100 text-gray-500 font-bold border-gray-200')
+  if (doc.status === 'rejected') return one('반려', 'bg-red-50 text-red-700 border-red-300 font-black')
+
+  const hasCoop = L.some((l) => normalizeApprovalRole(l.approver_role) === 'cooperator')
+  const allCoopDone = !L.some(
+    (l) => normalizeApprovalRole(l.approver_role) === 'cooperator' && l.status !== 'approved'
+  )
+
+  const approverLines = L.filter((l) => normalizeApprovalRole(l.approver_role) === 'approver')
+  const allApproversApproved =
+    approverLines.length > 0 && approverLines.every((l) => l.status === 'approved')
+
+  if (doc.status === 'approved') {
+    if (hasCoop && !allCoopDone) {
+      return one('결재완료/협조대기', 'bg-emerald-50 text-emerald-900 border-emerald-400 font-black')
+    }
+    return one('최종승인', 'bg-green-100 text-green-800 border-green-400 font-black')
+  }
+
+  if (doc.status === 'submitted' || doc.status === 'in_review') {
+    /**
+     * 최종 결재자 승인 후 협조만 남는 경우: `approval_docs`는 아직 `in_review`인데
+     * 다음 `pending`이 협조 라인일 수 있음 → "결재,협조진행중"으로 떨어지지 않도록 처리.
+     */
+    if (allApproversApproved && hasCoop && !allCoopDone) {
+      return one('결재완료/협조대기', 'bg-emerald-50 text-emerald-900 border-emerald-400 font-black')
+    }
+
+    const pending = L.find((l) => l.status === 'pending')
+    if (
+      pending &&
+      normalizeApprovalRole(pending.approver_role) === 'approver' &&
+      hasCoop &&
+      allCoopDone
+    ) {
+      return one('결재진행/협조완료', 'bg-indigo-50 text-indigo-900 border-indigo-400 font-black')
+    }
+    return one('결재,협조진행중', 'bg-blue-50 text-blue-900 border-blue-300 font-black')
+  }
+
+  return one(String(doc.status ?? ''), 'bg-gray-100 text-gray-600 font-bold')
+}
+
+export function getApprovalDocDetailedStatusLabel(
+  doc: ApprovalDocLike,
+  lines?: ApprovalWorkflowLineInput[] | null
+): string {
   const remarks = doc.remarks || ''
   if (remarks.includes('취소 요청 중')) return '기안자 취소요청'
   if (remarks.includes('취소완료') && !remarks.includes('재고환원')) return remarks
   if (remarks.includes('취소승인')) return remarks
   if (remarks.includes('재고환원') || remarks.includes('결재 중 취소됨')) return '취소 완료됨'
-  switch (doc.status) {
-    case 'draft':
-      return '임시저장'
-    case 'rejected':
-      return '반려됨'
-    case 'approved':
-      return '결재완료'
-    case 'submitted':
-    case 'in_review':
-      if (doc.current_line_no === 2) return '검토자 대기중'
-      if ((doc.current_line_no ?? 0) >= 3) return '결재 대기중'
-      return '결재 진행중'
-    default:
-      return String(doc.status ?? '')
-  }
+  return getUnifiedApprovalWorkflowBadges(doc, lines ?? null)
+    .map((b) => b.label)
+    .join(' · ')
 }
 
-export type ApprovalStatusBadge = { label: string; className: string }
-
-/** 통합 결재문서함·대시보드: 상태 뱃지(복수 가능: 결재완료 + 협조대기 등) */
+/** 통합 결재문서함·대시보드: 상태 뱃지 (취소 릴레이 비고는 별도, 그 외는 `getUnifiedApprovalWorkflowBadges`) */
 export function getApprovalDocDetailedStatusPresentation(
   doc: ApprovalDocLike,
-  lines?: Array<Pick<ApprovalLineLike, 'approver_role' | 'status'>> | null
+  lines?: ApprovalWorkflowLineInput[] | null
 ): { badges: ApprovalStatusBadge[] } {
   const remarks = doc.remarks || ''
   const one = (label: string, className: string): { badges: ApprovalStatusBadge[] } => ({
@@ -122,38 +169,7 @@ export function getApprovalDocDetailedStatusPresentation(
     return one('취소 완료됨', 'bg-gray-200 text-gray-500 font-bold border-gray-300')
   }
 
-  switch (doc.status) {
-    case 'draft':
-      return one('임시저장', 'bg-gray-100 text-gray-500 font-bold border-gray-200')
-    case 'rejected':
-      return one('반려됨', 'bg-red-50 text-red-600 border-red-200')
-    case 'approved': {
-      const coopWait = (lines ?? []).some((l) => {
-        const r = normalizeApprovalRole(l.approver_role)
-        return r === 'cooperator' && (l.status === 'waiting' || l.status === 'pending')
-      })
-      if (coopWait) {
-        return {
-          badges: [
-            { label: '결재완료', className: badge('bg-emerald-100 text-emerald-900 border-emerald-300') },
-            { label: '협조대기', className: badge('bg-sky-100 text-sky-900 border-sky-400') },
-          ],
-        }
-      }
-      return one('결재완료', 'bg-emerald-100 text-emerald-900 border-emerald-300')
-    }
-    case 'submitted':
-    case 'in_review':
-      if (doc.current_line_no === 2) {
-        return one('협조/검토 대기중', 'bg-blue-100 text-blue-600 border-blue-200 font-bold')
-      }
-      if ((doc.current_line_no ?? 0) >= 3) {
-        return one('결재 대기중', 'bg-indigo-100 text-indigo-700 border-indigo-200')
-      }
-      return one('결재 진행중', 'bg-blue-50 text-blue-500 border-blue-100 font-bold')
-    default:
-      return one(String(doc.status ?? ''), 'bg-gray-100 text-gray-600 font-bold')
-  }
+  return { badges: getUnifiedApprovalWorkflowBadges(doc, lines ?? null) }
 }
 
 /**
@@ -191,28 +207,8 @@ export function getOutboundRequestRowPresentation(input: {
     return { label: '취소 완료됨', className: badge('bg-gray-200 text-gray-500 font-bold line-through border-gray-300') }
   }
   if (doc.status === 'rejected') {
-    return { label: '반려됨', className: badge('bg-red-50 text-red-600 font-bold border-red-100') }
-  }
-
-  if (doc.status === 'in_review' || doc.status === 'submitted') {
-    const pendingLine = sorted.find((l) => l.status === 'pending')
-    if (pendingLine) {
-      const roleLabel = getApprovalRoleLabel(pendingLine.approver_role)
-      return {
-        label: `${roleLabel} 대기중`,
-        className: badge('bg-blue-100 text-blue-700 font-bold border-blue-200 shadow-sm'),
-      }
-    }
-    const approvedLines = sorted.filter((l) => l.status === 'approved')
-    if (approvedLines.length > 0) {
-      const lastApproved = approvedLines[approvedLines.length - 1]
-      const roleLabel = getApprovalRoleLabel(lastApproved.approver_role)
-      return {
-        label: `${roleLabel} 승인 완료`,
-        className: badge('bg-blue-100 text-blue-700 font-bold border-blue-200 shadow-sm'),
-      }
-    }
-    return { label: '결재 진행중', className: badge('bg-yellow-100 text-yellow-700 font-bold border-yellow-200') }
+    const b = getUnifiedApprovalWorkflowBadges(doc, sorted)
+    return { label: b[0].label, className: b[0].className }
   }
 
   if (reqStatus === 'completed') {
@@ -221,14 +217,9 @@ export function getOutboundRequestRowPresentation(input: {
   if (reqStatus === 'cancelled') {
     return { label: '취소 완료', className: badge('bg-gray-200 text-gray-500 font-bold line-through border-gray-300') }
   }
-  if (doc.status === 'approved') {
-    return { label: '최종 승인', className: badge('bg-green-100 text-green-700 font-black border-green-200 shadow-sm') }
-  }
-  if (doc.status === 'draft') {
-    return { label: '임시저장', className: badge('bg-gray-100 text-gray-600 font-bold border-gray-200') }
-  }
 
-  return { label: String(reqStatus), className: badge('bg-gray-100 text-gray-700') }
+  const b = getUnifiedApprovalWorkflowBadges(doc, sorted)
+  return { label: b[0].label, className: b[0].className }
 }
 
 /** 결재 취소 릴레이 UI (`ApprovalActionButtons`)와 동일한 문자열 기준 */

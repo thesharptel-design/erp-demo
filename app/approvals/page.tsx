@@ -27,7 +27,7 @@ type ApprovalsDocRow = ApprovalDocLike & {
   /** `approval_lines.opinion` 등록 여부 */
   hasLineOpinion: boolean;
   /** 상태 뱃지(결재완료·협조대기 등) 계산용 */
-  linesForStatusPresentation: Array<{ approver_role: string; status: string }>;
+  linesForStatusPresentation: Array<{ line_no: number; approver_role: string; status: string }>;
   app_users?: { user_name?: string } | { user_name?: string }[] | null;
   departments?: { dept_name?: string } | { dept_name?: string }[] | null;
   progressLabel: string;
@@ -101,7 +101,10 @@ function parseInboxPayload(raw: unknown): InboxRpcPayload | null {
 
 function mapRpcRowToDoc(
   row: InboxRpcItem
-): Omit<ApprovalsDocRow, 'progressLabel' | 'approverLineNames' | 'recent_reject_comment' | 'hasLineOpinion' | 'linesForStatusPresentation'> {
+): Omit<
+  ApprovalsDocRow,
+  'progressLabel' | 'approverLineNames' | 'recent_reject_comment' | 'hasLineOpinion' | 'linesForStatusPresentation'
+> {
   return {
     id: row.id,
     doc_no: row.doc_no,
@@ -318,6 +321,7 @@ export default function ApprovalsPage() {
             recent_reject_comment: rejectCommentMap.get(doc.id) ?? null,
             hasLineOpinion: hasOpinionByDoc.get(doc.id) ?? false,
             linesForStatusPresentation: lines.map((l) => ({
+              line_no: l.line_no,
               approver_role: l.approver_role,
               status: l.status,
             })),
@@ -445,7 +449,7 @@ export default function ApprovalsPage() {
               : '기안했거나 결재·참조·협조 등 결재선에 포함된 문서만 표시됩니다.'}
           </p>
           <p className="mt-2 text-[11px] font-bold text-gray-400">
-            필터·페이지·건수는 서버에서 계산됩니다. (Supabase에 마이그레이션 적용 후 동작)
+            필터·페이지·건수는 서버에서 계산됩니다. 
           </p>
         </div>
 

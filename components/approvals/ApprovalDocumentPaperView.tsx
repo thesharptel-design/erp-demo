@@ -15,6 +15,8 @@ export type ApprovalPaperCooperatorRow = {
   dept: string
   name: string
   readStatus: ReactNode
+  /** 협조자 `approval_lines.opinion` */
+  opinionText?: string | null
 }
 
 function SealOrInitials({ name, sealUrl, show }: { name: string; sealUrl: string | null; show: boolean }) {
@@ -39,6 +41,8 @@ function SealOrInitials({ name, sealUrl, show }: { name: string; sealUrl: string
 }
 
 export type ApprovalDocumentPaperViewProps = {
+  /** 용지 제목 (기본: 업무기안서) */
+  paperTitle?: string
   /** 문서 진행 상태 (배지) */
   docStatusLabel: string
   docStatusClassName: string
@@ -69,6 +73,7 @@ export type ApprovalDocumentPaperViewProps = {
 }
 
 export default function ApprovalDocumentPaperView({
+  paperTitle = '업무기안서',
   docStatusLabel,
   docStatusClassName,
   showCancelRequestBadge,
@@ -100,7 +105,7 @@ export default function ApprovalDocumentPaperView({
         <div className="space-y-3 border-b-2 border-black pb-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <div>
-              <h3 className="text-xl font-black tracking-tight text-gray-900 sm:text-2xl">출고요청서</h3>
+              <h3 className="text-xl font-black tracking-tight text-gray-900 sm:text-2xl">{paperTitle}</h3>
               <p className="mt-1 text-xs font-bold text-gray-500">문서번호 {docNo} · 결재 진행 현황을 확인합니다.</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -206,20 +211,43 @@ export default function ApprovalDocumentPaperView({
                 {cooperators.length === 0 ? (
                   <p className="py-2 text-center text-[11px] font-bold text-gray-500">등록된 협조자가 없습니다.</p>
                 ) : (
-                  <table className="w-full border border-gray-300 bg-white text-left text-[11px]">
+                  <table className="w-full table-fixed border border-gray-300 bg-white text-left text-[11px]">
+                    <colgroup>
+                      <col className="w-[4.25rem]" />
+                      <col className="w-[5.25rem]" />
+                      <col className="w-[4.75rem]" />
+                      <col />
+                    </colgroup>
                     <thead>
                       <tr className="bg-gray-100">
-                        <th className="border-b border-gray-300 px-2 py-1 font-black">부서</th>
-                        <th className="border-b border-l border-gray-300 px-2 py-1 font-black">이름</th>
-                        <th className="border-b border-l border-gray-300 px-2 py-1 font-black">확인</th>
+                        <th className="border-b border-gray-300 px-1 py-1 text-[10px] font-black">부서</th>
+                        <th className="border-b border-l border-gray-300 px-1 py-1 text-[10px] font-black">이름</th>
+                        <th className="border-b border-l border-gray-300 px-1 py-1 text-[10px] font-black">확인</th>
+                        <th className="border-b border-l border-gray-300 px-2 py-1 text-[10px] font-black">의견</th>
                       </tr>
                     </thead>
                     <tbody>
                       {cooperators.map((row) => (
                         <tr key={row.id} className="border-t border-gray-200">
-                          <td className="px-2 py-1.5 font-bold text-gray-800">{row.dept}</td>
-                          <td className="border-l border-gray-200 px-2 py-1.5 font-bold text-gray-900">{row.name}</td>
-                          <td className="border-l border-gray-200 px-2 py-1.5">{row.readStatus}</td>
+                          <td className="max-w-0 truncate px-1 py-1.5 text-[10px] font-bold text-gray-800" title={row.dept}>
+                            {row.dept}
+                          </td>
+                          <td
+                            className="max-w-0 truncate border-l border-gray-200 px-1 py-1.5 text-[10px] font-bold text-gray-900"
+                            title={row.name}
+                          >
+                            {row.name}
+                          </td>
+                          <td className="border-l border-gray-200 px-1 py-1.5 text-center [&>*]:inline-flex">
+                            {row.readStatus}
+                          </td>
+                          <td className="min-w-0 border-l border-gray-200 px-2 py-1.5 text-[10px] font-bold leading-snug text-gray-800">
+                            {row.opinionText?.trim() ? (
+                              <span className="block whitespace-pre-wrap break-words">{row.opinionText}</span>
+                            ) : (
+                              <span className="text-gray-400">—</span>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
