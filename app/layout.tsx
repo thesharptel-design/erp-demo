@@ -15,14 +15,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   
   // 🌟 '/print'라는 단어가 포함된 모든 경로는 AppShell(사이드바)을 아예 그리지 않음
   const isPrintPage = pathname && pathname.includes('/print');
+  const useBareShell = Boolean(
+    isPrintPage || pathname === '/approvals/new' || pathname === '/outbound-requests/new'
+  )
 
   return (
     <html lang="ko" className={cn("font-sans", geist.variable)}>
-      <head><title>BIO-ERP 시스템</title></head>
+      <head><title>ERP-BIOGTP</title></head>
       <body className="bg-gray-100 text-gray-900">
-        {isPrintPage ? (
-          // 인쇄 페이지일 때는 사이드바/헤더 없이 순수 내용만!
-          <div className="bg-white min-h-screen">
+        {useBareShell ? (
+          <div className="min-h-screen bg-white">
             {children}
           </div>
         ) : (

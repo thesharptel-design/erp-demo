@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
 export type ComboboxOption = {
   value: string
@@ -17,12 +17,18 @@ type Props = {
   emptyText?: string
   disabled?: boolean
   className?: string
+  /** Trigger button (e.g. smaller text in table header filters). */
+  buttonClassName?: string
+  /** Dropdown panel: default avoids 1-character-per-line wrap in narrow table cells. */
+  dropdownClassName?: string
   /** Scrollable list region (max-height + overflow-y). */
   listMaxHeightClass?: string
   /** Allow committing the current search text as the value (inline edit / free text). */
   creatable?: boolean
   /** When false, the built-in 「선택 안 함」(clear to empty) row is hidden — use when options already include an empty value. */
   showClearOption?: boolean
+  /** auto: open upward if viewport space below the trigger is tight (e.g. table footers). */
+  dropdownPlacement?: 'auto' | 'below' | 'above'
 }
 
 export default function SearchableCombobox({
@@ -33,13 +39,18 @@ export default function SearchableCombobox({
   emptyText = '검색 결과가 없습니다.',
   disabled = false,
   className = '',
+  buttonClassName = '',
+  dropdownClassName = '',
   listMaxHeightClass = 'max-h-72 overflow-y-auto',
   creatable = false,
   showClearOption = true,
+  dropdownPlacement = 'below',
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
+  const buttonRef = useRef<HTMLButtonElement | null>(null)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [openUpward, setOpenUpward] = useState(false)
 
   const selectedOption = useMemo(
     () => options.find((opt) => opt.value === value) ?? null,
@@ -66,18 +77,84 @@ export default function SearchableCombobox({
     return () => document.removeEventListener('mousedown', onClickOutside)
   }, [])
 
+  useLayoutEffect(() => {
+    if (!open) {
+      setOpenUpward(false)
+      return
+    }
+    if (dropdownPlacement !== 'auto') {
+      setOpenUpward(false)
+      return
+    }
+
+    const estimatedPanelPx = 300
+    const margin = 12
+
+    const overflowClips = (style: CSSStyleDeclaration) => {
+      const ox = style.overflowX
+      const oy = style.overflowY
+      return (
+        ['auto', 'scroll', 'hidden', 'clip'].includes(ox) ||
+        ['auto', 'scroll', 'hidden', 'clip'].includes(oy)
+      )
+    }
+
+    /** 뷰포트 + 스크롤/클립 조상 기준으로 트리거 아래·위에 실제로 보이는 여유(px) */
+    const getClippedSpace = (el: HTMLElement) => {
+      const rect = el.getBoundingClientRect()
+      let clipTop = 0
+      let clipBottom = window.innerHeight
+      let node: HTMLElement | null = el.parentElement
+      while (node && node !== document.documentElement) {
+        const st = window.getComputedStyle(node)
+        if (overflowClips(st)) {
+          const pr = node.getBoundingClientRect()
+          clipTop = Math.max(clipTop, pr.top)
+          clipBottom = Math.min(clipBottom, pr.bottom)
+        }
+        node = node.parentElement
+      }
+      const spaceBelow = Math.max(0, clipBottom - rect.bottom - margin)
+      const spaceAbove = Math.max(0, rect.top - clipTop - margin)
+      return { spaceBelow, spaceAbove }
+    }
+
+    const updatePlacement = () => {
+      const btn = buttonRef.current
+      if (!btn) return
+      const { spaceBelow, spaceAbove } = getClippedSpace(btn)
+      setOpenUpward(spaceBelow < estimatedPanelPx && spaceAbove > spaceBelow)
+    }
+
+    updatePlacement()
+    window.addEventListener('scroll', updatePlacement, true)
+    window.addEventListener('resize', updatePlacement)
+    return () => {
+      window.removeEventListener('scroll', updatePlacement, true)
+      window.removeEventListener('resize', updatePlacement)
+    }
+  }, [open, dropdownPlacement])
+
+  const placementAbove =
+    dropdownPlacement === 'above' || (dropdownPlacement === 'auto' && openUpward)
+
   return (
     <div ref={wrapperRef} className={`relative ${className}`}>
       <button
+        ref={buttonRef}
         type="button"
         disabled={disabled}
-        className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-left text-sm text-gray-800 disabled:bg-gray-100 disabled:text-gray-500"
+        className={`w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-left text-sm text-gray-800 disabled:bg-gray-100 disabled:text-gray-500 ${buttonClassName}`}
         onClick={() => setOpen((prev) => !prev)}
       >
         {(selectedOption?.label ?? value.trim()) || placeholder}
       </button>
       {open && !disabled && (
-        <div className="absolute z-40 mt-1 w-full rounded-lg border border-gray-200 bg-white shadow-lg">
+        <div
+          className={`absolute left-0 z-50 w-max min-w-[10.5rem] max-w-[min(100vw-1.5rem,22rem)] rounded-lg border border-gray-200 bg-white shadow-lg ${
+            placementAbove ? 'bottom-full mb-1' : 'top-full mt-1'
+          } ${dropdownClassName}`}
+        >
           <input
             autoFocus
             value={query}

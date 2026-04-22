@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  formatApprovalProgressChain,
+  formatApproverLineNames,
+  formatCancellationProgressChain,
   getApprovalDocDetailedStatusLabel,
+  getApprovalDocDetailedStatusPresentation,
   getOutboundRequestRowPresentation,
   isApprovalCancellationRemarkProcess,
 } from '@/lib/approval-status'
@@ -43,6 +47,86 @@ describe('getApprovalDocDetailedStatusLabel', () => {
         doc_type: 'draft_doc',
       })
     ).toBe('결재 대기중')
+  })
+})
+
+describe('formatCancellationProgressChain', () => {
+  it('maps cancel request and relay remarks', () => {
+    expect(formatCancellationProgressChain({ status: 'approved', remarks: '취소 요청 중', current_line_no: 1 })).toContain(
+      '취소요청'
+    )
+    expect(
+      formatCancellationProgressChain({ status: 'approved', remarks: '결재자 취소완료', current_line_no: 1 })
+    ).toContain('역순취소진행')
+    expect(formatCancellationProgressChain({ status: 'approved', remarks: '결재자 취소승인', current_line_no: 0 })).toContain(
+      '재고환원 대기'
+    )
+    expect(
+      formatCancellationProgressChain({ status: 'rejected', remarks: '취소 완료(재고환원)', current_line_no: null })
+    ).toBe('취소처리완료(재고환원)')
+    expect(formatCancellationProgressChain({ status: 'rejected', remarks: '결재 중 취소됨', current_line_no: null })).toContain(
+      '결재진행'
+    )
+    expect(formatCancellationProgressChain({ status: 'approved', remarks: null, current_line_no: 1 })).toBeNull()
+  })
+})
+
+describe('getApprovalDocDetailedStatusPresentation', () => {
+  it('returns 결재완료 and 협조대기 when approved but cooperator still waiting', () => {
+    const pres = getApprovalDocDetailedStatusPresentation(
+      { status: 'approved', remarks: null, current_line_no: null, doc_type: 'draft_doc' },
+      [
+        { approver_role: 'approver', status: 'approved' },
+        { approver_role: 'cooperator', status: 'waiting' },
+      ]
+    )
+    expect(pres.badges.map((b) => b.label)).toEqual(['결재완료', '협조대기'])
+  })
+
+  it('returns single 결재완료 when approved and no pending cooperator', () => {
+    const pres = getApprovalDocDetailedStatusPresentation(
+      { status: 'approved', remarks: null, current_line_no: null, doc_type: 'draft_doc' },
+      [
+        { approver_role: 'approver', status: 'approved' },
+        { approver_role: 'cooperator', status: 'approved' },
+      ]
+    )
+    expect(pres.badges.map((b) => b.label)).toEqual(['결재완료'])
+  })
+})
+
+describe('formatApprovalProgressChain', () => {
+  it('shows 임시저장 for draft', () => {
+    expect(formatApprovalProgressChain({ status: 'draft', remarks: null, current_line_no: null }, [])).toBe('임시저장')
+  })
+
+  it('shows 기안회수 when draft with 회수 remarks', () => {
+    expect(formatApprovalProgressChain({ status: 'draft', remarks: '기안 회수됨', current_line_no: null }, [])).toBe(
+      '기안회수(상신취소·작성복귀)'
+    )
+  })
+
+  it('chains 기안완료 with approver pending', () => {
+    const s = formatApprovalProgressChain(
+      { status: 'in_review', remarks: null, current_line_no: 2 },
+      [
+        { line_no: 1, status: 'approved', approver_role: 'reviewer', user_name: '이참조' },
+        { line_no: 2, status: 'pending', approver_role: 'approver', user_name: '김영태' },
+      ]
+    )
+    expect(s).toContain('기안완료')
+    expect(s).toContain('이참조참조완료')
+    expect(s).toContain('김영태결재대기중')
+  })
+
+  it('joins approver names for 결재라인', () => {
+    expect(
+      formatApproverLineNames([
+        { line_no: 1, status: 'approved', approver_role: 'reviewer', user_name: '무시' },
+        { line_no: 2, status: 'pending', approver_role: 'approver', user_name: '김영태' },
+        { line_no: 3, status: 'waiting', approver_role: 'approver', user_name: '박형배' },
+      ])
+    ).toBe('김영태-박형배')
   })
 })
 

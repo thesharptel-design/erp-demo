@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/database.types'
 import { getOutboundRequestRowPresentation } from '@/lib/approval-status'
@@ -153,6 +153,19 @@ export default function OutboundRequestsPage() {
     return new Map(customers.map((customer) => [customer.id, customer.customer_name]))
   }, [customers])
 
+  const openOutboundDraftPopup = useCallback(() => {
+    const popup = window.open(
+      '/outbound-requests/new',
+      'outboundRequestDraftPopup',
+      'popup=yes,width=1280,height=920,scrollbars=yes,resizable=yes'
+    )
+    if (!popup) {
+      window.location.href = '/outbound-requests/new'
+      return
+    }
+    popup.focus()
+  }, [])
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -165,9 +178,13 @@ export default function OutboundRequestsPage() {
           </p>
         </div>
 
-        <Link href="/outbound-requests/new" className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-black hover:bg-blue-700 transition-colors shadow-sm text-sm">
+        <button
+          type="button"
+          onClick={openOutboundDraftPopup}
+          className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-black hover:bg-blue-700 transition-colors shadow-sm text-sm"
+        >
           + 출고요청서 작성
-        </Link>
+        </button>
       </div>
 
       {errorMessage && <div className="p-4 bg-red-50 text-red-600 rounded-lg border border-red-200 font-bold">{errorMessage}</div>}

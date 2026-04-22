@@ -285,15 +285,22 @@ export default function DashboardPage() {
           <div className="space-y-2 flex-1">
             {data.approvals.length === 0 ? <p className="text-xs text-gray-400 font-bold py-4 text-center">데이터가 없습니다.</p> : 
               data.approvals.map((doc) => {
-                const statusPresentation = getApprovalDocDetailedStatusPresentation(doc as unknown as ApprovalDocLike)
+                const statusPresentation = getApprovalDocDetailedStatusPresentation(
+                  doc as unknown as ApprovalDocLike,
+                  null
+                )
                 return (
                   <Link key={doc.id} href={getDocDetailHref(doc as unknown as ApprovalDocLike & { id: number })} className="flex justify-between items-center p-3 rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all">
                     <div className="min-w-0 flex-1 pr-2">
                       <p className="text-[10px] font-bold text-gray-400 truncate">{doc.doc_no}</p>
                       <p className="text-xs font-black text-gray-900 mt-0.5 truncate">{doc.title}</p>
                     </div>
-                    <div>
-                      <span className={statusPresentation.className}>{statusPresentation.label}</span>
+                    <div className="flex flex-shrink-0 flex-wrap justify-end gap-1">
+                      {statusPresentation.badges.map((b, i) => (
+                        <span key={i} className={b.className}>
+                          {b.label}
+                        </span>
+                      ))}
                     </div>
                   </Link>
                 )

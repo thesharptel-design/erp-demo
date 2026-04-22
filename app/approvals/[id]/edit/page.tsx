@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { formatWriterDepartmentLabel } from '@/lib/approval-draft'
 import { normalizeApprovalRole, type ApprovalRole } from '@/lib/approval-roles'
 import { buildApprovalLines, buildApprovalParticipantsRows, normalizeParticipants } from '@/lib/approval-participants'
 import SearchableCombobox, { type ComboboxOption } from '@/components/SearchableCombobox'
@@ -23,7 +24,7 @@ type ApprovalDoc = {
   status: string
   current_line_no: number | null
   writer_id: string
-  dept_id: number
+  dept_id: number | null
 }
 
 type AppUser = {
@@ -31,6 +32,11 @@ type AppUser = {
   login_id: string
   user_name: string
   dept_id: number | null
+  department?: string | null
+  user_kind?: string | null
+  training_program?: string | null
+  school_name?: string | null
+  teacher_subject?: string | null
   role_name: string
   can_approval_participate: boolean
 }
@@ -258,7 +264,9 @@ export default function EditApprovalPage({
           .order('line_no'),
         supabase
           .from('app_users')
-          .select('id, login_id, user_name, dept_id, role_name, can_approval_participate')
+          .select(
+            'id, login_id, user_name, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate'
+          )
           .order('user_name'),
         supabase.from('departments').select('id, dept_name').order('id'),
         supabase.auth.getUser(),
@@ -414,11 +422,6 @@ export default function EditApprovalPage({
       return
     }
 
-    if (selectedWriter?.dept_id === null || selectedWriter?.dept_id === undefined) {
-      setErrorMessage('선택한 작성자에 부서 정보가 없습니다.')
-      return
-    }
-
     setIsSaving(true)
 
     const { error: docError } = await supabase
@@ -432,7 +435,7 @@ export default function EditApprovalPage({
         cooperation_dept: cooperationDept.trim() || null,
         agreement_text: agreementText.trim() || null,
         writer_id: writerId,
-        dept_id: selectedWriter.dept_id,
+        dept_id: selectedWriter?.dept_id ?? null,
         remarks: '웹 수정 문서',
       })
       .eq('id', docId)
@@ -550,12 +553,15 @@ export default function EditApprovalPage({
               value={writerId}
               onChange={setWriterId}
               disabled={!canEdit}
-              options={users.map((user) => ({
-                value: user.id,
-                label: `${user.user_name} / ${deptMap.get(user.dept_id ?? -1) ?? '-'} / ${user.role_name}${user.can_approval_participate ? '' : ' [결재권 없음]'}`,
-                keywords: [user.user_name, user.login_id, user.role_name, String(deptMap.get(user.dept_id ?? -1) ?? '')],
-                disabled: !user.can_approval_participate,
-              }))}
+              options={users.map((user) => {
+                const deptLabel = formatWriterDepartmentLabel(user, deptMap)
+                return {
+                  value: user.id,
+                  label: `${user.user_name} / ${deptLabel} / ${user.role_name}${user.can_approval_participate ? '' : ' [결재권 없음]'}`,
+                  keywords: [user.user_name, user.login_id, user.role_name, deptLabel],
+                  disabled: !user.can_approval_participate,
+                }
+              })}
               placeholder="작성자 선택"
             />
           </div>

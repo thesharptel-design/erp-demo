@@ -65,7 +65,17 @@ export default function SalesOrderDetailPage({ params }: { params: Promise<{ id:
         </div>
         <div className="flex gap-3">
           <button
-            onClick={() => router.push(`/outbound-requests/new?so_id=${id}`)}
+            type="button"
+            onClick={() => {
+              const url = `/outbound-requests/new?so_id=${encodeURIComponent(id)}`;
+              const popup = window.open(
+                url,
+                'outboundRequestDraftPopup',
+                'popup=yes,width=1280,height=920,scrollbars=yes,resizable=yes'
+              );
+              if (!popup) window.location.href = url;
+              else popup.focus();
+            }}
             className="px-10 py-4 bg-gray-900 text-white rounded-[1.5rem] font-black shadow-xl hover:bg-black transition-all active:scale-95"
           >
             📦 출고 등록 (Outbound)

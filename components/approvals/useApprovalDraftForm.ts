@@ -1,33 +1,44 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import {
+  buildReferenceSummaryForDraft,
   createApprovalDraft,
+  deleteWebGeneralDraft,
+  fetchWebGeneralDraftBundle,
   getApprovalCreateErrorMessage,
+  syncWebGeneralDraft,
+  WEB_GENERAL_DRAFT_REMARKS,
 } from '@/lib/approval-draft'
+import type { ApprovalRole } from '@/lib/approval-roles'
 import type { ApprovalDraftAppUser, ApprovalOrderItem } from '@/components/approvals/ApprovalDraftPaper'
+import { isHtmlContentEffectivelyEmpty } from '@/lib/html-content'
 
 type Department = {
   id: number
   dept_name: string
 }
 
-type UseApprovalDraftFormParams = {
+export type UseApprovalDraftFormParams = {
   enabled?: boolean
   remarks: string
   autosaveKey?: string
+  /** Supabase에 status=draft 문서로 임시저장 */
+  enableServerDraft?: boolean
+  /** 임시 문서 remarks 구분 (모달·신규 페이지 분리) */
+  webDraftRemarksTag?: string
 }
 
-type ApprovalDraftAutosavePayload = {
-  version: 1
+type ApprovalDraftAutosavePayloadV2 = {
+  version: 2
   savedAt: string
+  serverDraftDocId: number | null
   docType: string
   title: string
   content: string
   executionStartDate: string
   executionEndDate: string
-  cooperationDept: string
   agreementText: string
   approvalOrder: ApprovalOrderItem[]
 }
@@ -36,23 +47,49 @@ function makeEmptyApprovalLine(): ApprovalOrderItem {
   return { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, role: 'approver', userId: '' }
 }
 
-export function useApprovalDraftForm({ enabled = true, remarks, autosaveKey }: UseApprovalDraftFormParams) {
+function participantsToApprovalOrder(
+  rows: Array<{ user_id: string; role: string; line_no: number }>
+): ApprovalOrderItem[] {
+  const sorted = [...rows].sort((a, b) => a.line_no - b.line_no)
+  return sorted.map((r) => ({
+    id: `srv-${r.line_no}-${r.user_id}`,
+    role: (r.role === 'reviewer' || r.role === 'cooperator' || r.role === 'approver' ? r.role : 'approver') as ApprovalRole,
+    userId: r.user_id,
+  }))
+}
+
+export function useApprovalDraftForm({
+  enabled = true,
+  remarks,
+  autosaveKey,
+  enableServerDraft = false,
+  webDraftRemarksTag = WEB_GENERAL_DRAFT_REMARKS,
+}: UseApprovalDraftFormParams) {
   const [users, setUsers] = useState<ApprovalDraftAppUser[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+  const [isDraftSaving, setIsDraftSaving] = useState(false)
+  const [isDraftDeleting, setIsDraftDeleting] = useState(false)
 
   const [docType, setDocType] = useState('draft_doc')
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [executionStartDate, setExecutionStartDate] = useState('')
   const [executionEndDate, setExecutionEndDate] = useState('')
-  const [cooperationDept, setCooperationDept] = useState('')
   const [agreementText, setAgreementText] = useState('')
   const [writerId, setWriterId] = useState('')
   const [approvalOrder, setApprovalOrder] = useState<ApprovalOrderItem[]>([makeEmptyApprovalLine()])
+  const [serverDraftDocId, setServerDraftDocId] = useState<number | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
+  const [lastLocalSaveAt, setLastLocalSaveAt] = useState<string | null>(null)
+  const [lastServerSaveAt, setLastServerSaveAt] = useState<string | null>(null)
   const hasRestoredAutosaveRef = useRef(false)
+  const bypassBeforeUnloadRef = useRef(false)
+
+  const allowLeavingWithoutBeforeUnloadPrompt = useCallback(() => {
+    bypassBeforeUnloadRef.current = true
+  }, [])
 
   useEffect(() => {
     if (!enabled) return
@@ -66,7 +103,9 @@ export function useApprovalDraftForm({ enabled = true, remarks, autosaveKey }: U
       const [{ data: usersData }, { data: deptData }] = await Promise.all([
         supabase
           .from('app_users')
-          .select('id, login_id, user_name, dept_id, role_name, can_approval_participate')
+          .select(
+            'id, login_id, user_name, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate'
+          )
           .order('user_name'),
         supabase.from('departments').select('id, dept_name').order('id'),
       ])
@@ -96,17 +135,70 @@ export function useApprovalDraftForm({ enabled = true, remarks, autosaveKey }: U
           content.trim() ||
           executionStartDate ||
           executionEndDate ||
-          cooperationDept.trim() ||
           agreementText.trim() ||
           approvalOrder.some((line) => line.userId.trim())
       ),
-    [agreementText, approvalOrder, content, cooperationDept, executionEndDate, executionStartDate, title]
+    [agreementText, approvalOrder, content, executionEndDate, executionStartDate, title]
   )
 
-  const clearSavedDraft = () => {
+  const persistLocalPayload = useCallback(() => {
+    if (!autosaveKey || typeof window === 'undefined') return
+    const payload: ApprovalDraftAutosavePayloadV2 = {
+      version: 2,
+      savedAt: new Date().toISOString(),
+      serverDraftDocId,
+      docType,
+      title,
+      content,
+      executionStartDate,
+      executionEndDate,
+      agreementText,
+      approvalOrder,
+    }
+    const iso = new Date().toISOString()
+    localStorage.setItem(autosaveKey, JSON.stringify(payload))
+    setLastLocalSaveAt(iso)
+  }, [
+    agreementText,
+    approvalOrder,
+    autosaveKey,
+    content,
+    docType,
+    executionEndDate,
+    executionStartDate,
+    serverDraftDocId,
+    title,
+  ])
+
+  const clearSavedDraft = useCallback(() => {
     if (!autosaveKey || typeof window === 'undefined') return
     localStorage.removeItem(autosaveKey)
-  }
+  }, [autosaveKey])
+
+  const applyPayloadToState = useCallback((parsed: Partial<ApprovalDraftAutosavePayloadV2>) => {
+    if (parsed.docType) setDocType(parsed.docType)
+    if (typeof parsed.title === 'string') setTitle(parsed.title)
+    if (typeof parsed.content === 'string') setContent(parsed.content)
+    if (typeof parsed.executionStartDate === 'string') setExecutionStartDate(parsed.executionStartDate)
+    if (typeof parsed.executionEndDate === 'string') setExecutionEndDate(parsed.executionEndDate)
+    if (typeof parsed.agreementText === 'string') setAgreementText(parsed.agreementText)
+    if ('serverDraftDocId' in parsed && (typeof parsed.serverDraftDocId === 'number' || parsed.serverDraftDocId === null)) {
+      setServerDraftDocId(parsed.serverDraftDocId)
+    }
+    if (Array.isArray(parsed.approvalOrder) && parsed.approvalOrder.length > 0) {
+      const normalizedOrder = parsed.approvalOrder
+        .map((line) => ({
+          id: String(line.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+          role:
+            line.role === 'reviewer' || line.role === 'cooperator' || line.role === 'approver'
+              ? line.role
+              : 'approver',
+          userId: String(line.userId || ''),
+        }))
+        .filter((line) => line.role)
+      setApprovalOrder(normalizedOrder.length > 0 ? normalizedOrder : [makeEmptyApprovalLine()])
+    }
+  }, [])
 
   useEffect(() => {
     if (!enabled) return
@@ -122,68 +214,45 @@ export function useApprovalDraftForm({ enabled = true, remarks, autosaveKey }: U
     }
 
     try {
-      const parsed = JSON.parse(raw) as Partial<ApprovalDraftAutosavePayload>
-      if (parsed.docType) setDocType(parsed.docType)
-      if (typeof parsed.title === 'string') setTitle(parsed.title)
-      if (typeof parsed.content === 'string') setContent(parsed.content)
-      if (typeof parsed.executionStartDate === 'string') setExecutionStartDate(parsed.executionStartDate)
-      if (typeof parsed.executionEndDate === 'string') setExecutionEndDate(parsed.executionEndDate)
-      if (typeof parsed.cooperationDept === 'string') setCooperationDept(parsed.cooperationDept)
-      if (typeof parsed.agreementText === 'string') setAgreementText(parsed.agreementText)
-      if (Array.isArray(parsed.approvalOrder) && parsed.approvalOrder.length > 0) {
-        const normalizedOrder = parsed.approvalOrder
-          .map((line) => ({
-            id: String(line.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
-            role: line.role === 'reviewer' || line.role === 'cooperator' || line.role === 'approver' ? line.role : 'approver',
-            userId: String(line.userId || ''),
-          }))
-          .filter((line) => line.role)
-        setApprovalOrder(normalizedOrder.length > 0 ? normalizedOrder : [makeEmptyApprovalLine()])
+      const parsed = JSON.parse(raw) as Partial<ApprovalDraftAutosavePayloadV2> & { version?: number }
+      if (parsed.version === 2) {
+        applyPayloadToState(parsed)
+        if (typeof parsed.savedAt === 'string') setLastLocalSaveAt(parsed.savedAt)
+      } else {
+        const legacy = parsed as Record<string, unknown>
+        if (typeof legacy.docType === 'string') setDocType(legacy.docType as string)
+        if (typeof legacy.title === 'string') setTitle(legacy.title)
+        if (typeof legacy.content === 'string') setContent(legacy.content)
+        if (typeof legacy.executionStartDate === 'string') setExecutionStartDate(legacy.executionStartDate)
+        if (typeof legacy.executionEndDate === 'string') setExecutionEndDate(legacy.executionEndDate)
+        if (typeof legacy.agreementText === 'string') setAgreementText(legacy.agreementText)
+        if (Array.isArray(legacy.approvalOrder) && legacy.approvalOrder.length > 0) {
+          applyPayloadToState({ approvalOrder: legacy.approvalOrder as ApprovalOrderItem[] })
+        }
+        setServerDraftDocId(null)
       }
     } catch {
       localStorage.removeItem(autosaveKey)
     } finally {
       hasRestoredAutosaveRef.current = true
     }
-  }, [autosaveKey, enabled])
+  }, [applyPayloadToState, autosaveKey, enabled])
 
   useEffect(() => {
     if (!enabled || !autosaveKey || typeof window === 'undefined' || !hasRestoredAutosaveRef.current) return
 
     const timer = window.setTimeout(() => {
-      const payload: ApprovalDraftAutosavePayload = {
-        version: 1,
-        savedAt: new Date().toISOString(),
-        docType,
-        title,
-        content,
-        executionStartDate,
-        executionEndDate,
-        cooperationDept,
-        agreementText,
-        approvalOrder,
-      }
-      localStorage.setItem(autosaveKey, JSON.stringify(payload))
+      persistLocalPayload()
     }, 500)
 
     return () => window.clearTimeout(timer)
-  }, [
-    agreementText,
-    approvalOrder,
-    autosaveKey,
-    content,
-    cooperationDept,
-    docType,
-    enabled,
-    executionEndDate,
-    executionStartDate,
-    title,
-  ])
+  }, [agreementText, approvalOrder, autosaveKey, content, docType, enabled, executionEndDate, executionStartDate, persistLocalPayload, title, serverDraftDocId])
 
   useEffect(() => {
     if (!enabled || !autosaveKey || typeof window === 'undefined') return
 
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (bypassBeforeUnloadRef.current) return
       if (!hasDraftContent) return
       event.preventDefault()
       event.returnValue = ''
@@ -193,23 +262,191 @@ export function useApprovalDraftForm({ enabled = true, remarks, autosaveKey }: U
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [autosaveKey, enabled, hasDraftContent])
 
-  const resetForm = (options?: { clearAutosave?: boolean }) => {
-    const shouldClearAutosave = options?.clearAutosave !== false
-    setDocType('draft_doc')
-    setTitle('')
-    setContent('')
-    setExecutionStartDate('')
-    setExecutionEndDate('')
-    setCooperationDept('')
-    setAgreementText('')
-    setApprovalOrder([makeEmptyApprovalLine()])
+  const resetForm = useCallback(
+    (options?: { clearAutosave?: boolean }) => {
+      const shouldClearAutosave = options?.clearAutosave !== false
+      setDocType('draft_doc')
+      setTitle('')
+      setContent('')
+      setExecutionStartDate('')
+      setExecutionEndDate('')
+      setAgreementText('')
+      setApprovalOrder([makeEmptyApprovalLine()])
+      setServerDraftDocId(null)
+      setErrorMessage('')
+      setLastLocalSaveAt(null)
+      setLastServerSaveAt(null)
+      if (shouldClearAutosave) clearSavedDraft()
+    },
+    [clearSavedDraft]
+  )
+
+  const reloadFromLocalStorage = useCallback(() => {
+    if (!autosaveKey || typeof window === 'undefined') return false
+    const raw = localStorage.getItem(autosaveKey)
+    if (!raw) return false
+    try {
+      const parsed = JSON.parse(raw) as Partial<ApprovalDraftAutosavePayloadV2>
+      if (parsed.version === 2) {
+        applyPayloadToState(parsed)
+        if (typeof parsed.savedAt === 'string') setLastLocalSaveAt(parsed.savedAt)
+      } else {
+        applyPayloadToState({
+          ...parsed,
+          version: 2,
+          serverDraftDocId: null,
+        } as ApprovalDraftAutosavePayloadV2)
+      }
+      return true
+    } catch {
+      return false
+    }
+  }, [applyPayloadToState, autosaveKey])
+
+  const saveDraftNow = useCallback(async () => {
     setErrorMessage('')
-    if (shouldClearAutosave) clearSavedDraft()
-  }
+    persistLocalPayload()
+    if (!enableServerDraft || !writerId) {
+      return { ok: true as const, localOnly: true as const }
+    }
+    setIsDraftSaving(true)
+    try {
+      const referenceSummary = buildReferenceSummaryForDraft(approvalOrder, users, deptMap)
+      const { draftDocId } = await syncWebGeneralDraft({
+        supabase,
+        draftDocId: serverDraftDocId,
+        docType,
+        title,
+        content,
+        writerId,
+        writerDeptId: selectedWriter?.dept_id ?? null,
+        approvalOrder,
+        executionStartDate,
+        executionEndDate,
+        cooperationDept: referenceSummary,
+        agreementText,
+        remarksTag: webDraftRemarksTag,
+      })
+      setServerDraftDocId(draftDocId)
+      setLastServerSaveAt(new Date().toISOString())
+      if (autosaveKey && typeof window !== 'undefined') {
+        const payload: ApprovalDraftAutosavePayloadV2 = {
+          version: 2,
+          savedAt: new Date().toISOString(),
+          serverDraftDocId: draftDocId,
+          docType,
+          title,
+          content,
+          executionStartDate,
+          executionEndDate,
+          agreementText,
+          approvalOrder,
+        }
+        localStorage.setItem(autosaveKey, JSON.stringify(payload))
+      }
+      return { ok: true as const, localOnly: false as const }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '임시저장에 실패했습니다.'
+      setErrorMessage(msg)
+      return { ok: false as const, localOnly: false as const }
+    } finally {
+      setIsDraftSaving(false)
+    }
+  }, [
+    agreementText,
+    approvalOrder,
+    autosaveKey,
+    content,
+    deptMap,
+    docType,
+    enableServerDraft,
+    executionEndDate,
+    executionStartDate,
+    persistLocalPayload,
+    selectedWriter,
+    serverDraftDocId,
+    title,
+    users,
+    webDraftRemarksTag,
+    writerId,
+  ])
+
+  const deleteDraftDocument = useCallback(async () => {
+    setErrorMessage('')
+    if (!writerId) {
+      clearSavedDraft()
+      resetForm({ clearAutosave: true })
+      return { ok: true as const }
+    }
+    setIsDraftDeleting(true)
+    try {
+      if (enableServerDraft && serverDraftDocId != null) {
+        await deleteWebGeneralDraft(supabase as any, serverDraftDocId, writerId, webDraftRemarksTag)
+      }
+      clearSavedDraft()
+      resetForm({ clearAutosave: false })
+      return { ok: true as const }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '삭제에 실패했습니다.'
+      setErrorMessage(msg)
+      return { ok: false as const }
+    } finally {
+      setIsDraftDeleting(false)
+    }
+  }, [clearSavedDraft, enableServerDraft, resetForm, serverDraftDocId, webDraftRemarksTag, writerId])
+
+  const loadServerDraftById = useCallback(
+    async (draftDocId: number) => {
+      setErrorMessage('')
+      if (!writerId) {
+        setErrorMessage('작성자 정보가 없습니다.')
+        return false
+      }
+      try {
+        const { doc, participants } = await fetchWebGeneralDraftBundle(
+          supabase as any,
+          draftDocId,
+          writerId,
+          webDraftRemarksTag
+        )
+        setServerDraftDocId(draftDocId)
+        setDocType(String(doc.doc_type ?? 'draft_doc'))
+        setTitle(String(doc.title ?? ''))
+        setContent(String(doc.content ?? ''))
+        setExecutionStartDate(String(doc.execution_start_date ?? '').slice(0, 10))
+        setExecutionEndDate(String(doc.execution_end_date ?? '').slice(0, 10))
+        setAgreementText(String(doc.agreement_text ?? ''))
+        const nextOrder = participants.length > 0 ? participantsToApprovalOrder(participants) : [makeEmptyApprovalLine()]
+        setApprovalOrder(nextOrder)
+        if (autosaveKey && typeof window !== 'undefined') {
+          const payload: ApprovalDraftAutosavePayloadV2 = {
+            version: 2,
+            savedAt: new Date().toISOString(),
+            serverDraftDocId: draftDocId,
+            docType: String(doc.doc_type ?? 'draft_doc'),
+            title: String(doc.title ?? ''),
+            content: String(doc.content ?? ''),
+            executionStartDate: String(doc.execution_start_date ?? '').slice(0, 10),
+            executionEndDate: String(doc.execution_end_date ?? '').slice(0, 10),
+            agreementText: String(doc.agreement_text ?? ''),
+            approvalOrder: nextOrder,
+          }
+          localStorage.setItem(autosaveKey, JSON.stringify(payload))
+        }
+        setLastLocalSaveAt(new Date().toISOString())
+        return true
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : '불러오기에 실패했습니다.'
+        setErrorMessage(msg)
+        return false
+      }
+    },
+    [autosaveKey, webDraftRemarksTag, writerId]
+  )
 
   const submitDraft = async () => {
     setErrorMessage('')
-    if (!title.trim() || !content.trim()) {
+    if (!title.trim() || isHtmlContentEffectivelyEmpty(content)) {
       setErrorMessage('제목과 내용을 모두 입력하십시오.')
       return false
     }
@@ -225,14 +462,12 @@ export function useApprovalDraftForm({ enabled = true, remarks, autosaveKey }: U
       setErrorMessage('결재자를 선택하십시오.')
       return false
     }
-    if (selectedWriter?.dept_id === null || selectedWriter?.dept_id === undefined) {
-      setErrorMessage('작성자에게 부서(dept_id)가 배정되지 않았습니다.')
-      return false
-    }
     if (executionStartDate && executionEndDate && executionEndDate < executionStartDate) {
       setErrorMessage('시행 종료일은 시작일 이후여야 합니다.')
       return false
     }
+
+    const referenceSummary = buildReferenceSummaryForDraft(approvalOrder, users, deptMap)
 
     setIsSaving(true)
     try {
@@ -242,15 +477,25 @@ export function useApprovalDraftForm({ enabled = true, remarks, autosaveKey }: U
         title,
         content,
         writerId,
-        writerDeptId: selectedWriter.dept_id,
+        writerDeptId: selectedWriter?.dept_id ?? null,
         approvalOrder,
         executionStartDate,
         executionEndDate,
-        cooperationDept,
+        cooperationDept: referenceSummary,
         agreementText,
         remarks,
       })
+      if (enableServerDraft && serverDraftDocId != null && writerId) {
+        try {
+          await deleteWebGeneralDraft(supabase as any, serverDraftDocId, writerId, webDraftRemarksTag)
+        } catch {
+          /* 상신은 성공했으므로 임시문서 삭제 실패는 무시 */
+        }
+      }
       clearSavedDraft()
+      setServerDraftDocId(null)
+      setLastLocalSaveAt(null)
+      setLastServerSaveAt(null)
       return true
     } catch (err: any) {
       setErrorMessage(getApprovalCreateErrorMessage(err))
@@ -263,6 +508,8 @@ export function useApprovalDraftForm({ enabled = true, remarks, autosaveKey }: U
   return {
     isLoading,
     isSaving,
+    isDraftSaving,
+    isDraftDeleting,
     errorMessage,
     setErrorMessage,
     docType,
@@ -275,20 +522,28 @@ export function useApprovalDraftForm({ enabled = true, remarks, autosaveKey }: U
     setExecutionStartDate,
     executionEndDate,
     setExecutionEndDate,
-    cooperationDept,
-    setCooperationDept,
     agreementText,
     setAgreementText,
     approvalOrder,
     setApprovalOrder,
+    serverDraftDocId,
+    users,
     selectableUsers,
     deptMap,
     selectedWriter,
+    writerId,
     writerHasApprovalRight,
+    lastLocalSaveAt,
+    lastServerSaveAt,
     draftedDate,
     hasDraftContent,
     clearSavedDraft,
     resetForm,
     submitDraft,
+    saveDraftNow,
+    deleteDraftDocument,
+    loadServerDraftById,
+    reloadFromLocalStorage,
+    allowLeavingWithoutBeforeUnloadPrompt,
   }
 }

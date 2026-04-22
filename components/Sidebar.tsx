@@ -132,7 +132,7 @@ export default function Sidebar() {
       <div className="p-6 border-b border-gray-50 bg-gray-50/20 shrink-0">
         <Link href="/dashboard" className="group">
           <h1 className="text-2xl font-black tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors uppercase">
-            BIO-ERP
+            ERP-BIOGTP
           </h1>
         </Link>
         {userData && (

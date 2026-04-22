@@ -13,7 +13,7 @@ const ROLE_ORDER: Record<ApprovalRole, number> = {
 }
 
 const ROLE_LABEL: Record<ApprovalRole, string> = {
-  reviewer: '검토자',
+  reviewer: '참조',
   cooperator: '협조',
   approver: '결재',
 }

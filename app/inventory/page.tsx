@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getProcessNameFromMetadata } from '@/lib/item-config';
 import { getAllowedWarehouseIds, getCurrentUserPermissions } from '@/lib/permissions';
@@ -215,6 +215,19 @@ export default function InventoryPage() {
     return map;
   }, [warehouses]);
 
+  const openOutboundRequestDraftPopup = useCallback(() => {
+    const popup = window.open(
+      '/outbound-requests/new',
+      'outboundRequestDraftPopup',
+      'popup=yes,width=1280,height=920,scrollbars=yes,resizable=yes'
+    );
+    if (!popup) {
+      window.location.href = '/outbound-requests/new';
+      return;
+    }
+    popup.focus();
+  }, []);
+
   return (
     <div className="p-4 max-w-[1800px] mx-auto font-sans bg-gray-50 min-h-screen space-y-4">
       
@@ -228,9 +241,13 @@ export default function InventoryPage() {
           <Link href="/inbound/new" className="px-3 py-1.5 border border-blue-200 text-blue-700 bg-blue-50 rounded-lg text-xs font-black hover:bg-blue-100 transition-colors shadow-sm">
             + 입고 등록
           </Link>
-          <Link href="/outbound-requests/new" className="px-3 py-1.5 border border-red-200 text-red-700 bg-red-50 rounded-lg text-xs font-black hover:bg-red-100 transition-colors shadow-sm">
+          <button
+            type="button"
+            onClick={openOutboundRequestDraftPopup}
+            className="px-3 py-1.5 border border-red-200 text-red-700 bg-red-50 rounded-lg text-xs font-black hover:bg-red-100 transition-colors shadow-sm"
+          >
             - 수동 출고
-          </Link>
+          </button>
         </div>
       </div>
 

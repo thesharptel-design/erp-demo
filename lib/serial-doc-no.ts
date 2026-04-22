@@ -7,6 +7,13 @@ export function yyMMDD(d = new Date()) {
   return `${yy}${mm}${dd}`
 }
 
+/** `HHMM` (24h), 예: 1430 */
+export function hhmm(d = new Date()) {
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mm = String(d.getMinutes()).padStart(2, '0')
+  return `${hh}${mm}`
+}
+
 /** 예: `code`가 `PO`이면 `PO-260410-` */
 export function serialPrefix(code: string, d = new Date()) {
   return `${code}-${yyMMDD(d)}-`

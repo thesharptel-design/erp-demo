@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
-import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
+import { generateNextSerialDocNo, hhmm, yyMMDD } from '@/lib/serial-doc-no'
+
+describe('hhmm / yyMMDD', () => {
+  it('formats time as HHMM', () => {
+    expect(hhmm(new Date(2026, 3, 22, 14, 30))).toBe('1430')
+  })
+  it('formats date as YYMMDD', () => {
+    expect(yyMMDD(new Date(2026, 3, 22))).toBe('260422')
+  })
+})
 
 describe('generateNextSerialDocNo', () => {
   it('increments tail from latest row', async () => {

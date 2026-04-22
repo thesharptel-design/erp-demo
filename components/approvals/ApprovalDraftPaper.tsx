@@ -1,16 +1,21 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import SearchableCombobox, { type ComboboxOption } from '@/components/SearchableCombobox'
 import type { ApprovalRole } from '@/lib/approval-roles'
 import ApprovalLineDnD from '@/components/approvals/ApprovalLineDnD'
-import { supabase } from '@/lib/supabase'
+import ApprovalDraftRichEditor from '@/components/approvals/ApprovalDraftRichEditor'
 
 export type ApprovalDraftAppUser = {
   id: string
   login_id: string
   user_name: string
   dept_id: number | null
+  department?: string | null
+  user_kind?: string | null
+  training_program?: string | null
+  school_name?: string | null
+  teacher_subject?: string | null
   role_name: string
   can_approval_participate: boolean
 }
@@ -31,42 +36,47 @@ type ApprovalDraftPaperProps = {
   onContentChange: (value: string) => void
   executionStartDate: string
   executionEndDate: string
-  cooperationDept: string
   agreementText: string
   onExecutionStartDateChange: (value: string) => void
   onExecutionEndDateChange: (value: string) => void
-  onCooperationDeptChange: (value: string) => void
   onAgreementTextChange: (value: string) => void
   writerName: string
   writerDeptName: string
   draftedDate: string
+  /** 신규 기안 시 문서번호 안내 문구 (예: 상신 시 자동 부여) */
+  documentNumberHint: string
   approvalOrder: ApprovalOrderItem[]
   selectableUsers: ApprovalDraftAppUser[]
+  /** 결재선·참조·협조 표시용 사용자 조회 (작성자 포함 전체) */
+  resolveLineUser: (userId: string) => ApprovalDraftAppUser | undefined
   deptMap: Map<number, string>
   onApprovalOrderRoleChange: (lineId: string, role: ApprovalRole) => void
   onApprovalOrderAssigneeChange: (lineId: string, userId: string) => void
   onApprovalOrderAdd: () => void
   onApprovalOrderRemove: (lineId: string) => void
   onApprovalOrderMove: (draggedId: string, targetId: string) => void
+  /** 기본: 업무기안서 */
+  paperTitle?: string
+  paperSubtitle?: string
+  /**
+   * 본문 행 바로 아래, 동일 2열 그리드에 삽입 (왼쪽 라벨 고정 `출고`, 오른쪽에 슬롯).
+   * 출고요청 작성 등에서 창고·품목 UI를 넣습니다.
+   */
+  postBodyGridSlot?: ReactNode
+  /** true면 문서유형을 콤보 대신 고정 라벨로만 표시 */
+  docTypeSelectDisabled?: boolean
 }
 
-type ContentPreviewBlock =
-  | { type: 'text'; value: string }
-  | { type: 'image'; value: string }
-
-function isImageUrl(url: string): boolean {
-  return (
-    /\.(png|jpe?g|gif|webp|bmp|svg)(\?.*)?$/i.test(url) ||
-    url.includes('/storage/v1/object/public/approval_attachments/')
-  )
-}
-
-function buildContentPreviewBlocks(raw: string): ContentPreviewBlock[] {
-  return raw
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => (isImageUrl(line) ? { type: 'image', value: line } : { type: 'text', value: line }))
+function formatReferenceLine(order: ApprovalOrderItem[], resolveLineUser: (id: string) => ApprovalDraftAppUser | undefined) {
+  const parts = order
+    .filter((l) => l.role === 'reviewer' && l.userId.trim())
+    .map((l) => {
+      const u = resolveLineUser(l.userId)
+      if (!u) return ''
+      return u.user_name
+    })
+    .filter(Boolean)
+  return parts.length > 0 ? parts.join(', ') : '—'
 }
 
 export default function ApprovalDraftPaper({
@@ -79,152 +89,153 @@ export default function ApprovalDraftPaper({
   onContentChange,
   executionStartDate,
   executionEndDate,
-  cooperationDept,
   agreementText,
   onExecutionStartDateChange,
   onExecutionEndDateChange,
-  onCooperationDeptChange,
   onAgreementTextChange,
   writerName,
   writerDeptName,
   draftedDate,
+  documentNumberHint,
   approvalOrder,
   selectableUsers,
+  resolveLineUser,
   deptMap,
   onApprovalOrderRoleChange,
   onApprovalOrderAssigneeChange,
   onApprovalOrderAdd,
   onApprovalOrderRemove,
   onApprovalOrderMove,
+  paperTitle = '업무기안서',
+  paperSubtitle = '문서 작성 후 결재선을 지정해 바로 상신합니다.',
+  postBodyGridSlot,
+  docTypeSelectDisabled = false,
 }: ApprovalDraftPaperProps) {
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null)
-  const [isUploadingImage, setIsUploadingImage] = useState(false)
-  const [uploadErrorMessage, setUploadErrorMessage] = useState('')
-  const previewBlocks = buildContentPreviewBlocks(content)
-
-  function getCurrentSelection() {
-    const textarea = textareaRef.current
-    if (!textarea) {
-      const fallbackPos = content.length
-      return { start: fallbackPos, end: fallbackPos }
-    }
-    return {
-      start: textarea.selectionStart ?? 0,
-      end: textarea.selectionEnd ?? 0,
-    }
-  }
-
-  function insertTextAtSelection(text: string, selection?: { start: number; end: number }) {
-    const textarea = textareaRef.current
-    if (!textarea) {
-      onContentChange(content + text)
-      return
-    }
-    const start = selection?.start ?? textarea.selectionStart ?? textarea.value.length
-    const end = selection?.end ?? textarea.selectionEnd ?? start
-    const currentValue = textarea.value
-    const nextValue = `${currentValue.slice(0, start)}${text}${currentValue.slice(end)}`
-    const nextCursorPos = start + text.length
-    onContentChange(nextValue)
-    requestAnimationFrame(() => {
-      textarea.focus()
-      textarea.setSelectionRange(nextCursorPos, nextCursorPos)
-    })
-  }
-
-  async function uploadImageAndInsert(file: File, selection: { start: number; end: number }) {
-    try {
-      setUploadErrorMessage('')
-      setIsUploadingImage(true)
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-      if (!session?.access_token) {
-        throw new Error('로그인 세션이 만료되어 이미지를 업로드할 수 없습니다.')
-      }
-
-      const formData = new FormData()
-      formData.append('file', file)
-      const response = await fetch('/api/approvals/attachments/upload', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: formData,
-      })
-
-      const payload = await response.json().catch(() => null)
-      if (!response.ok) {
-        throw new Error(payload?.error ?? '이미지 업로드에 실패했습니다.')
-      }
-      if (!payload?.publicUrl || typeof payload.publicUrl !== 'string') {
-        throw new Error('업로드 URL을 확인할 수 없습니다.')
-      }
-      insertTextAtSelection(`\n${payload.publicUrl}\n`, selection)
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : '이미지 업로드 중 오류가 발생했습니다.'
-      setUploadErrorMessage(message)
-    } finally {
-      setIsUploadingImage(false)
-    }
-  }
-
-  function getImageFileFromList(fileList: FileList | null): File | null {
-    if (!fileList) return null
-    for (const file of Array.from(fileList)) {
-      if (file.type.startsWith('image/')) {
-        return file
-      }
-    }
-    return null
-  }
-
-  function handleContentPaste(event: React.ClipboardEvent<HTMLTextAreaElement>) {
-    const imageFile = getImageFileFromList(event.clipboardData?.files ?? null)
-    if (!imageFile) return
-    event.preventDefault()
-    const selection = getCurrentSelection()
-    void uploadImageAndInsert(imageFile, selection)
-  }
-
-  function handleContentDrop(event: React.DragEvent<HTMLTextAreaElement>) {
-    const imageFile = getImageFileFromList(event.dataTransfer?.files ?? null)
-    if (!imageFile) return
-    event.preventDefault()
-    const selection = getCurrentSelection()
-    void uploadImageAndInsert(imageFile, selection)
-  }
+  const approverSlots = approvalOrder.filter((l) => l.role === 'approver')
+  const cooperatorSlots = approvalOrder.filter((l) => l.role === 'cooperator' && l.userId.trim())
+  const approvalStampColCount = 1 + approverSlots.length
 
   return (
     <div className="overflow-x-auto">
       <div className="w-full min-w-0 space-y-4 rounded-xl border-2 border-black bg-white p-3 sm:p-4 md:min-w-[860px]">
-        <div className="flex flex-col items-start justify-between gap-4 border-b-2 border-black pb-3 sm:flex-row sm:gap-6">
+        <div className="space-y-3 border-b-2 border-black pb-4">
           <div>
-            <h3 className="text-xl font-black tracking-tight text-gray-900 sm:text-2xl">업무기안서</h3>
-            <p className="mt-1 text-xs font-bold text-gray-500">문서 작성 후 결재선을 지정해 바로 상신합니다.</p>
+            <h3 className="text-xl font-black tracking-tight text-gray-900 sm:text-2xl">{paperTitle}</h3>
+            <p className="mt-1 text-xs font-bold text-gray-500">{paperSubtitle}</p>
           </div>
-          <div className="grid w-full grid-cols-1 gap-2 text-[11px] min-[430px]:grid-cols-2 sm:min-w-[300px] sm:w-auto">
-            <div className="rounded border border-gray-200 bg-gray-50 p-2">
-              <p className="text-[10px] font-black text-gray-500">기안자</p>
-              <p className="font-bold text-gray-800">{writerName || '-'}</p>
-            </div>
-            <div className="rounded border border-gray-200 bg-gray-50 p-2">
-              <p className="text-[10px] font-black text-gray-500">소속</p>
-              <p className="font-bold text-gray-800">{writerDeptName || '-'}</p>
-            </div>
-            <div className="rounded border border-gray-200 bg-gray-50 p-2">
-              <p className="text-[10px] font-black text-gray-500">기안일</p>
-              <p className="font-bold text-gray-800">{draftedDate}</p>
-            </div>
-            <div className="rounded border border-gray-200 bg-gray-50 p-2">
-              <p className="text-[10px] font-black text-gray-500">문서유형</p>
-              <SearchableCombobox
-                value={docType}
-                onChange={onDocTypeChange}
-                options={docTypeOptions}
-                placeholder="문서 유형"
-                showClearOption={false}
-              />
+
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
+            <table className="w-full table-fixed border border-black text-left text-xs lg:w-[300px] lg:flex-shrink-0">
+              <tbody>
+                <tr className="border-b border-black">
+                  <th className="w-[28%] border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">기안자</th>
+                  <td className="px-2 py-2 font-bold text-gray-900">{writerName || '—'}</td>
+                </tr>
+                <tr className="border-b border-black">
+                  <th className="border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">부서</th>
+                  <td className="px-2 py-2 font-bold text-gray-900">{writerDeptName || '—'}</td>
+                </tr>
+                <tr className="border-b border-black">
+                  <th className="border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">기안일</th>
+                  <td className="px-2 py-2 font-bold text-gray-900">{draftedDate}</td>
+                </tr>
+                <tr>
+                  <th className="border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">문서번호</th>
+                  <td className="px-2 py-2 font-bold text-gray-600">{documentNumberHint}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="overflow-x-auto rounded border border-black">
+                <table className="w-full table-fixed border-collapse text-center text-xs">
+                  <colgroup>
+                    {Array.from({ length: approvalStampColCount }).map((_, i) => (
+                      <col key={i} style={{ width: `${100 / approvalStampColCount}%` }} />
+                    ))}
+                  </colgroup>
+                  <thead>
+                    <tr className="border-b border-black bg-gray-100">
+                      <th className="border-r border-black px-2 py-2 font-black text-gray-800">기안</th>
+                      {approverSlots.map((line) => (
+                        <th key={line.id} className="border-l border-black px-2 py-2 font-black text-gray-800">
+                          결재
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr className="border-b border-black">
+                      <td className="min-w-0 border-r border-black bg-white px-2 py-3 font-bold text-gray-900">
+                        <span className="block truncate">{writerName || '—'}</span>
+                      </td>
+                      {approverSlots.map((line) => {
+                        const u = line.userId.trim() ? resolveLineUser(line.userId) : undefined
+                        return (
+                          <td
+                            key={line.id}
+                            className="min-w-0 border-l border-black bg-white px-2 py-3 font-bold text-gray-900"
+                          >
+                            <span className="block truncate">
+                              {u?.user_name ?? (line.userId.trim() ? '—' : '미지정')}
+                            </span>
+                          </td>
+                        )
+                      })}
+                    </tr>
+                    <tr>
+                      <td className="border-r border-black bg-gray-50 px-1 py-8 align-top text-[10px] font-bold text-gray-400">
+                        서명/날인
+                      </td>
+                      {approverSlots.map((line) => (
+                        <td key={`sig-${line.id}`} className="border-l border-black bg-gray-50 px-1 py-8 align-top" />
+                      ))}
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="rounded border border-gray-400 bg-gray-50 p-2">
+                <p className="mb-2 border-b border-gray-300 pb-1 text-center text-[11px] font-black text-gray-800">협조</p>
+                {cooperatorSlots.length === 0 ? (
+                  <p className="py-2 text-center text-[11px] font-bold text-gray-500">
+                    결재 라인에서 역할을 &quot;협조&quot;로 지정하면 이곳에 표시됩니다.
+                  </p>
+                ) : (
+                  <table className="w-full border border-gray-300 bg-white text-left text-[11px]">
+                    <thead>
+                      <tr className="bg-gray-100">
+                        <th className="border-b border-gray-300 px-2 py-1 font-black">부서</th>
+                        <th className="border-b border-l border-gray-300 px-2 py-1 font-black">이름</th>
+                        <th className="border-b border-l border-gray-300 px-2 py-1 font-black">확인</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {cooperatorSlots.map((line) => {
+                        const u = resolveLineUser(line.userId)
+                        const dept = u ? (deptMap.get(u.dept_id ?? -1) ?? '—') : '—'
+                        return (
+                          <tr key={line.id} className="border-t border-gray-200">
+                            <td className="px-2 py-1.5 font-bold text-gray-800">{dept}</td>
+                            <td className="border-l border-gray-200 px-2 py-1.5 font-bold text-gray-900">
+                              {u?.user_name ?? '—'}
+                            </td>
+                            <td className="border-l border-gray-200 px-2 py-1.5">
+                              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-800">
+                                안읽음
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+                <p className="mt-1 text-[10px] font-bold text-gray-500">
+                  읽음 여부는 상신 후 협조자가 문서를 열람하면 시스템에서 갱신하도록 연동할 수 있습니다. (작성 화면에서는 안내용으로
+                  &quot;안읽음&quot;을 표시합니다.)
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -246,14 +257,30 @@ export default function ApprovalDraftPaper({
               className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
             />
           </div>
-          <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">협조부서</div>
+          <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">문서유형</div>
           <div className="border-b px-3 py-2">
-            <input
-              value={cooperationDept}
-              onChange={(e) => onCooperationDeptChange(e.target.value)}
-              placeholder="협조 부서를 입력하세요"
-              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
-            />
+            {docTypeSelectDisabled ? (
+              <span className="inline-block rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-900">
+                {docTypeOptions.find((o) => o.value === docType)?.label ?? docType}
+              </span>
+            ) : (
+              <SearchableCombobox
+                value={docType}
+                onChange={onDocTypeChange}
+                options={docTypeOptions}
+                placeholder="문서 유형"
+                showClearOption={false}
+              />
+            )}
+          </div>
+          <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">참조</div>
+          <div className="border-b px-3 py-2">
+            <p className="rounded border border-dashed border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-800">
+              {formatReferenceLine(approvalOrder, resolveLineUser)}
+            </p>
+            <p className="mt-1 text-[11px] font-bold text-gray-500">
+              결재 라인에서 역할을 &quot;참조&quot;로 지정한 사람이 자동으로 표시됩니다.
+            </p>
           </div>
           <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">합의</div>
           <div className="border-b px-3 py-2">
@@ -275,56 +302,16 @@ export default function ApprovalDraftPaper({
               required
             />
           </div>
-          <div className="bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">본문</div>
-          <div className="px-3 py-2">
-            <textarea
-              ref={textareaRef}
-              value={content}
-              onChange={(e) => onContentChange(e.target.value)}
-              onPaste={handleContentPaste}
-              onDrop={handleContentDrop}
-              onDragOver={(event) => event.preventDefault()}
-              rows={7}
-              placeholder="업무기안 내용을 입력하세요"
-              className="w-full min-h-[220px] resize-y rounded border border-gray-300 px-3 py-2 text-sm"
-              required
-            />
-            <div className="mt-1 space-y-1">
-              <p className="text-[11px] font-bold text-gray-500">
-                이미지 붙여넣기(Ctrl+V) 또는 드롭 시 자동 업로드 후 URL이 본문에 삽입됩니다.
-              </p>
-              {isUploadingImage && (
-                <p className="text-[11px] font-bold text-blue-600">이미지 업로드 중...</p>
-              )}
-              {uploadErrorMessage && (
-                <p className="text-[11px] font-bold text-red-600">{uploadErrorMessage}</p>
-              )}
-            </div>
-            {previewBlocks.length > 0 && (
-              <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
-                <p className="mb-2 text-[11px] font-black text-gray-600">본문 미리보기</p>
-                <div className="space-y-2">
-                  {previewBlocks.map((block, index) =>
-                    block.type === 'image' ? (
-                      <img
-                        key={`${block.value}-${index}`}
-                        src={block.value}
-                        alt={`본문 이미지 ${index + 1}`}
-                        className="max-h-64 w-full rounded border border-gray-200 object-contain bg-white"
-                      />
-                    ) : (
-                      <p
-                        key={`${block.value}-${index}`}
-                        className="whitespace-pre-wrap break-words text-sm text-gray-700"
-                      >
-                        {block.value}
-                      </p>
-                    )
-                  )}
-                </div>
-              </div>
-            )}
+          <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">본문</div>
+          <div className="border-b px-3 py-2">
+            <ApprovalDraftRichEditor value={content} onChange={onContentChange} />
           </div>
+          {postBodyGridSlot ? (
+            <>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">출고</div>
+              <div className="border-b px-3 py-2">{postBodyGridSlot}</div>
+            </>
+          ) : null}
         </div>
 
         <div className="rounded-xl border border-gray-200 p-3">

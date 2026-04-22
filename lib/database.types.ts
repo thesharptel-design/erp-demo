@@ -199,6 +199,20 @@ export type Database = {
     }
     Views: Record<string, never>
     Functions: {
+      approval_inbox_query: {
+        Args: {
+          p_doc_no?: string | null
+          p_doc_type?: string | null
+          p_title?: string | null
+          p_draft_date?: string | null
+          p_approver_line?: string | null
+          p_progress?: string | null
+          p_status?: string | null
+          p_limit?: number | null
+          p_offset?: number | null
+        }
+        Returns: Json
+      }
       execute_outbound_request_fulfillment: {
         Args: { p_outbound_request_id: number; p_lines: Json }
         Returns: undefined

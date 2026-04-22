@@ -155,13 +155,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    if (requesterUser.dept_id === null || requesterUser.dept_id === undefined) {
-      return NextResponse.json(
-        { error: '요청자 부서 정보가 없어 결재문서를 생성할 수 없습니다.' },
-        { status: 400 }
-      )
-    }
-
     let customerName = ''
     if (outboundRequest.customer_id) {
       const { data: customerRow } = await adminClient
@@ -222,7 +215,7 @@ export async function POST(request: NextRequest) {
         title,
         content,
         writer_id: outboundRequest.requester_id,
-        dept_id: requesterUser.dept_id,
+        dept_id: requesterUser.dept_id ?? null,
         status: 'submitted',
         current_line_no: 1,
         drafted_at: draftedAt,

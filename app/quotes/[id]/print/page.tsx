@@ -173,7 +173,7 @@ export default function QuotePrintPage({ params }: { params: Promise<{ id: strin
 
         {/* 푸터 */}
         <div className="mt-auto pt-10 flex justify-between items-center text-[9px] font-bold text-slate-200 uppercase tracking-[0.4em]">
-          <span>Powered by Bio-ERP</span>
+          <span>Powered by Niks Solutions</span>
           <div className="h-px bg-slate-50 flex-1 mx-12"></div>
           <span>Authorized Document</span>
         </div>

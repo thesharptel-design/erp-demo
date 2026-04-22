@@ -535,3 +535,13 @@ h2, .ui-h2 {
     @apply font-sans;
   }
 }
+
+/* 기안 TipTap 본문 placeholder */
+.approval-tiptap-editor .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: #9ca3af;
+  font-weight: 600;
+}

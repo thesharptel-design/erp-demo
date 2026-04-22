@@ -1,404 +1,398 @@
-'use client';
+'use client'
 
-import { useMemo, useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
-import { generateNextDroDocNo } from '@/lib/approval-doc-no';
-import { useRouter } from 'next/navigation';
-import { APPROVAL_ROLES, getApprovalRoleLabel } from '@/lib/approval-roles';
-import { buildApprovalLines, buildApprovalParticipantsRows, normalizeParticipants } from '@/lib/approval-participants';
-import SearchableCombobox from '@/components/SearchableCombobox';
-import { getAllowedWarehouseIds } from '@/lib/permissions';
+import type { FormEvent } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { useCallback, useState } from 'react'
+import { toast } from 'sonner'
+import ApprovalDraftPaper from '@/components/approvals/ApprovalDraftPaper'
+import ApprovalDraftLoadDialog from '@/components/approvals/ApprovalDraftLoadDialog'
+import SearchableCombobox from '@/components/SearchableCombobox'
+import { useOutboundRequestDraftForm } from '@/components/outbound/useOutboundRequestDraftForm'
+import { listOutboundWebDrafts, WEB_OUTBOUND_DRAFT_REMARKS } from '@/lib/outbound-request-draft'
+
+const OUTBOUND_DOC_TYPE_OPTIONS = [{ value: 'outbound_request', label: '출고요청' }]
+const AUTOSAVE_KEY = 'approval-outbound-request-draft-v3'
+
+const LEAVE_DRAFT_CONFIRM =
+  '작성 중인 내용이 있습니다. 그래도 나가시겠습니까?\n(브라우저 자동 저장은 이미 적용되었을 수 있습니다.)'
+
+function formatSaveAt(iso: string | null) {
+  if (!iso) return null
+  try {
+    return new Date(iso).toLocaleString('ko-KR', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    })
+  } catch {
+    return null
+  }
+}
+
+function closePopupOrNavigate(router: ReturnType<typeof useRouter>) {
+  if (typeof window !== 'undefined' && window.opener && !window.opener.closed) {
+    try {
+      window.opener.location.reload()
+    } catch {
+      /* ignore */
+    }
+    window.close()
+    return
+  }
+  router.push('/outbound-requests')
+  router.refresh()
+}
 
 export default function NewOutboundPage() {
-  const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const emptyRoleAssignees = useMemo(
-    () =>
-      APPROVAL_ROLES.reduce<Record<string, string[]>>((acc, role) => {
-        acc[role] = [''];
-        return acc;
-      }, {}),
-    []
-  );
-  const emptyRoleSearches = useMemo(
-    () =>
-      APPROVAL_ROLES.reduce<Record<string, string>>((acc, role) => {
-        acc[role] = '';
-        return acc;
-      }, {}),
-    []
-  );
-  
-  const [userProfile, setUserProfile] = useState<any>(null); 
-  const [items, setItems] = useState<any[]>([]); 
-  const [appUsers, setAppUsers] = useState<any[]>([]);
-  const [warehouses, setWarehouses] = useState<any[]>([]);
+  const router = useRouter()
+  const [loadDialogOpen, setLoadDialogOpen] = useState(false)
 
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [selectedItems, setSelectedItems] = useState([{ item_id: '', quantity: 1 }]);
-  const [itemSearchKeyword, setItemSearchKeyword] = useState('');
-  
-  const [warehouseId, setWarehouseId] = useState('');
-  const [roleAssignees, setRoleAssignees] = useState<Record<string, string[]>>(emptyRoleAssignees);
-  const [roleSearches, setRoleSearches] = useState<Record<string, string>>(emptyRoleSearches);
+  const {
+    isLoading,
+    isSaving,
+    isDraftSaving,
+    isDraftDeleting,
+    errorMessage,
+    title,
+    setTitle,
+    content,
+    setContent,
+    executionStartDate,
+    setExecutionStartDate,
+    executionEndDate,
+    setExecutionEndDate,
+    agreementText,
+    setAgreementText,
+    approvalOrder,
+    setApprovalOrder,
+    users,
+    selectableUsers,
+    deptMap,
+    selectedWriter,
+    writerHasApprovalRight,
+    draftedDate,
+    writerDeptName,
+    warehouseId,
+    setWarehouseId,
+    warehouses,
+    selectedItems,
+    setSelectedItems,
+    itemSearchKeyword,
+    setItemSearchKeyword,
+    itemOptions,
+    addItemRow,
+    removeItemRow,
+    submitForApproval,
+    saveDraftNow,
+    deleteDraftDocument,
+    loadServerDraftById,
+    reloadFromLocalStorage,
+    writerId,
+    hasDraftContent,
+    lastLocalSaveAt,
+    lastServerSaveAt,
+    allowLeavingWithoutBeforeUnloadPrompt,
+  } = useOutboundRequestDraftForm({
+    autosaveKey: AUTOSAVE_KEY,
+    enableServerDraft: true,
+    webDraftRemarksTag: WEB_OUTBOUND_DRAFT_REMARKS,
+  })
 
-  const getDeptName = (id: number) => {
-    const depts: any = {
-      0: '시스템관리', 1: '관리부', 2: '영업부', 3: '구매부', 4: '생산부', 5: '품질관리부', 6: '자재부'
-    };
-    return depts[id] || '미소속';
-  };
-
-  const filteredUsersByRole = useMemo(
-    () =>
-      APPROVAL_ROLES.reduce<Record<string, any[]>>((acc, role) => {
-        const keyword = (roleSearches[role] ?? '').trim().toLowerCase();
-        acc[role] = appUsers.filter((u) => {
-          if (!keyword) return true;
-          return (
-            String(u.user_name ?? '').toLowerCase().includes(keyword) ||
-            String(u.role_name ?? '').toLowerCase().includes(keyword) ||
-            String(getDeptName(u.dept_id)).toLowerCase().includes(keyword)
-          );
-        });
-        return acc;
-      }, {}),
-    [appUsers, roleSearches]
-  );
-  const filteredItems = useMemo(() => {
-    const keyword = itemSearchKeyword.trim().toLowerCase();
-    if (!keyword) return items;
-    return items.filter((item) =>
-      String(item.item_code ?? '').toLowerCase().includes(keyword) ||
-      String(item.item_name ?? '').toLowerCase().includes(keyword)
-    );
-  }, [items, itemSearchKeyword]);
-  const itemOptions = useMemo(
-    () =>
-      filteredItems.map((item) => ({
-        value: String(item.id),
-        label: `[${item.item_code}] ${item.item_name}`,
-        keywords: [item.item_code, item.item_name],
-      })),
-    [filteredItems]
-  );
-
-  useEffect(() => {
-    const initData = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      let allowedWarehouseIds: number[] | null = [];
-      if (user) {
-        const { data: profile } = await supabase.from('app_users').select('*').eq('id', user.id).single();
-        setUserProfile(profile);
-        allowedWarehouseIds = await getAllowedWarehouseIds(profile);
+  const handleListClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (hasDraftContent && typeof window !== 'undefined' && !window.confirm(LEAVE_DRAFT_CONFIRM)) {
+        e.preventDefault()
+        return
       }
-      const { data: itemsData } = await supabase.from('items').select('*');
-      setItems(itemsData || []);
-      const { data: usersData } = await supabase.from('app_users').select('id, user_name, role_name, dept_id').neq('id', user?.id || '');
-      setAppUsers(usersData || []);
-      let warehouseQuery = supabase
-        .from('warehouses')
-        .select('id, name, is_active, sort_order')
-        .eq('is_active', true)
-        .order('sort_order', { ascending: true });
-      if (allowedWarehouseIds !== null) {
-        if (allowedWarehouseIds.length === 0) {
-          setWarehouses([]);
-          setWarehouseId('');
-          return;
-        }
-        warehouseQuery = warehouseQuery.in('id', allowedWarehouseIds);
+      allowLeavingWithoutBeforeUnloadPrompt()
+      if (typeof window !== 'undefined' && window.opener) {
+        e.preventDefault()
+        closePopupOrNavigate(router)
       }
-      const { data: warehouseData } = await warehouseQuery;
-      setWarehouses(warehouseData || []);
-      if (warehouseData?.[0]?.id) setWarehouseId(String(warehouseData[0].id));
-    };
-    initData();
-  }, []);
+    },
+    [allowLeavingWithoutBeforeUnloadPrompt, hasDraftContent, router]
+  )
 
-  const addItemRow = () => setSelectedItems([...selectedItems, { item_id: '', quantity: 1 }]);
-  const removeItemRow = (index: number) => setSelectedItems(selectedItems.filter((_, i) => i !== index));
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault()
+    const r = await submitForApproval()
+    if (!r.ok) {
+      if (!r.validationFailed) toast.error('상신에 실패했습니다.')
+      return
+    }
+    toast.success('출고요청을 상신했습니다.')
+    allowLeavingWithoutBeforeUnloadPrompt()
+    closePopupOrNavigate(router)
+  }
 
-  const handleSave = async (isSubmit: boolean) => {
-    const participants = normalizeParticipants(
-      APPROVAL_ROLES.flatMap((role) =>
-        (roleAssignees[role] ?? []).map((userId) => ({ role, userId }))
-      )
+  const handleSaveDraft = async () => {
+    const r = await saveDraftNow()
+    if (r.ok) {
+      toast.success(r.localOnly ? '브라우저에 임시저장했습니다.' : '임시저장했습니다. (서버·브라우저)')
+    } else {
+      toast.error('임시저장에 실패했습니다.')
+    }
+  }
+
+  const handleDeleteDraft = async () => {
+    if (!confirm('작성 중인 내용과 임시저장을 모두 삭제할까요?')) return
+    const r = await deleteDraftDocument()
+    if (r.ok) {
+      toast.success('삭제했습니다.')
+    } else {
+      toast.error('삭제에 실패했습니다.')
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center text-sm font-bold text-gray-500">
+        로딩 중…
+      </div>
     )
-
-    if (!title) return alert('기안 제목을 입력하세요.');
-    if (!warehouseId) return alert('출고 창고를 선택하세요.');
-    if (!userProfile?.id) return alert('사용자 정보가 없어 저장할 수 없습니다.');
-    if (userProfile?.dept_id === null || userProfile?.dept_id === undefined) {
-      return alert('작성자 부서 정보가 없어 저장할 수 없습니다.');
-    }
-    if (isSubmit && !(roleAssignees.approver ?? []).some((id) => id.trim())) return alert('결재자를 지정하세요.');
-
-    setLoading(true);
-    try {
-      // 1. [STEP 1] 결재 마스터 (approval_docs)
-      const docNo = await generateNextDroDocNo(supabase);
-      const { data: doc, error: docError } = await supabase
-        .from('approval_docs')
-        .insert([{
-          doc_no: docNo,
-          title: title,
-          content: description,
-          writer_id: userProfile.id,
-          dept_id: userProfile.dept_id,
-          status: isSubmit ? 'submitted' : 'draft',
-          submitted_at: isSubmit ? new Date().toISOString() : null,
-          current_line_no: isSubmit ? 1 : null, 
-          doc_type: 'outbound_request'
-        }])
-        .select().single();
-        
-      if (docError) throw new Error(`[결재마스터 에러] ${docError.message}`);
-
-      // 🌟 2. [STEP 2] 결재선 (approval_lines) 핵심 버그 수정!!
-      const linesToInsert = buildApprovalLines(doc.id, participants).map((line) => ({
-        ...line,
-        status: isSubmit ? line.status : 'waiting',
-      }));
-      const participantRows = buildApprovalParticipantsRows(doc.id, participants);
-
-      if (linesToInsert.length > 0) {
-        const { error: lineError } = await supabase.from('approval_lines').insert(linesToInsert);
-        if (lineError) throw new Error(`[결재선 에러] ${lineError.message}`);
-      }
-      if (participantRows.length > 0) {
-        const { error: participantError } = await supabase.from('approval_participants').insert(participantRows);
-        if (participantError) throw new Error(`[참여자 에러] ${participantError.message}`);
-      }
-
-      // 3. [STEP 3] 출고 요청서 본문 (outbound_requests)
-      const reqNo = docNo;
-      const { data: req, error: reqError } = await supabase
-        .from('outbound_requests')
-        .insert([{ 
-          req_no: reqNo,
-          requester_id: userProfile.id,
-          purpose: description,
-          approval_doc_id: doc.id,
-          warehouse_id: Number(warehouseId),
-          status: isSubmit ? 'submitted' : 'draft'
-        }])
-        .select().single();
-        
-      if (reqError) throw new Error(`[상세문서 에러] ${reqError.message}`);
-
-      // 4. [STEP 4] 출고 요청 품목 (outbound_request_items)
-      const itemInserts = selectedItems.map((si, idx) => ({ 
-        outbound_request_id: req.id, 
-        line_no: idx + 1,
-        item_id: si.item_id, 
-        qty: si.quantity 
-      }));
-      const { error: itemError } = await supabase.from('outbound_request_items').insert(itemInserts);
-      
-      if (itemError) throw new Error(`[품목저장 에러] ${itemError.message}`);
-
-      // 5. [STEP 5] 결재 이력 (approval_histories)
-      if (isSubmit) {
-        const { error: historyError } = await supabase.from('approval_histories').insert([{
-          approval_doc_id: doc.id,
-          actor_id: userProfile.id,
-          action_type: 'submit'
-        }]);
-        if (historyError) throw new Error(`[결재이력 에러] ${historyError.message}`);
-      }
-
-      // 모든 과정 성공!
-      alert(isSubmit ? '상신 완료!' : '저장 완료!');
-      router.push('/approvals');
-      
-    } catch (err: any) {
-      console.error(err);
-      alert('저장 실패: ' + err.message); 
-    } finally { 
-      setLoading(false); 
-    }
-  };
+  }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto text-gray-800 font-sans">
-      
-      {/* 상단 헤더 */}
-      <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-300">
-        <div>
-          <h1 className="text-2xl font-bold">출고요청서 기안</h1>
-          <p className="text-sm text-gray-500 mt-1">{getDeptName(userProfile?.dept_id)} | {userProfile?.user_name}</p>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => handleSave(false)} className="px-4 py-2 border border-gray-300 rounded bg-white hover:bg-gray-50 text-sm font-medium transition-colors">
-            임시 저장
-          </button>
-          <button onClick={() => handleSave(true)} disabled={loading} className="px-5 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm font-medium transition-colors shadow-sm">
-            {loading ? '처리 중...' : '작성 후 상신'}
-          </button>
-        </div>
-      </div>
+    <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+      <ApprovalDraftLoadDialog
+        open={loadDialogOpen}
+        onOpenChange={setLoadDialogOpen}
+        writerId={writerId || null}
+        remarksTag={WEB_OUTBOUND_DRAFT_REMARKS}
+        listServerDrafts={(c, w, t) => listOutboundWebDrafts(c as any, w, t)}
+        onLoadServerDraft={loadServerDraftById}
+        onReloadLocal={reloadFromLocalStorage}
+      />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* 좌측: 문서 정보 및 품목 */}
-        <div className="lg:col-span-2 space-y-6">
-          <section className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm">
-            <h3 className="text-sm font-bold text-gray-700 mb-3">문서 정보</h3>
-            <input type="text" placeholder="기안 제목을 입력하세요" className="w-full p-2.5 border border-gray-300 rounded mb-3 text-sm focus:border-blue-500 outline-none transition-shadow" value={title} onChange={e => setTitle(e.target.value)} />
-            <textarea placeholder="요청 사유 상세" rows={4} className="w-full p-2.5 border border-gray-300 rounded text-sm focus:border-blue-500 outline-none resize-none transition-shadow" value={description} onChange={e => setDescription(e.target.value)} />
-            <SearchableCombobox
-              className="mt-3"
-              value={warehouseId}
-              onChange={setWarehouseId}
-              options={warehouses.map((wh) => ({ value: String(wh.id), label: wh.name, keywords: [wh.name] }))}
-              placeholder="출고 창고 선택..."
-            />
-          </section>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {errorMessage ? (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-600">
+            {errorMessage}
+          </div>
+        ) : null}
+        {!writerHasApprovalRight ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-700">
+            작성자에게 결재권이 없어 저장·상신할 수 없습니다. 관리자에게 결재권 부여를 요청하세요.
+          </div>
+        ) : null}
+        {warehouses.length === 0 ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+            선택 가능한 창고가 없습니다. 창고 권한을 확인하거나 관리자에게 문의하세요.
+          </div>
+        ) : null}
 
-          <section className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm">
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="text-sm font-bold text-gray-700">품목 선택</h3>
-              <button onClick={addItemRow} className="text-xs border border-gray-300 px-3 py-1.5 rounded bg-white hover:bg-gray-50 text-gray-600 font-medium transition-colors shadow-sm">
-                + 품목 추가
-              </button>
-            </div>
-            <input
-              value={itemSearchKeyword}
-              onChange={(e) => setItemSearchKeyword(e.target.value)}
-              placeholder="품목 검색 (코드/명)"
-              className="mb-3 w-full rounded border border-gray-200 px-3 py-2 text-sm outline-none focus:border-blue-500"
-            />
-            
-            {/* 🌟 모바일 호환: 표(Table) 가로 스크롤 적용 구역 */}
-            <div className="overflow-x-auto rounded-lg border border-gray-200">
-              <table className="min-w-full text-left text-sm whitespace-nowrap">
-                <thead className="bg-gray-50 border-b border-gray-200 text-gray-500">
-                  <tr>
-                    <th className="px-4 py-3 font-bold">품목명 / 코드</th>
-                    <th className="px-4 py-3 w-32 text-center font-bold">수량</th>
-                    <th className="px-4 py-3 w-12 text-center"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 bg-white">
-                  {selectedItems.map((si, idx) => (
-                    <tr key={idx} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-4 py-3">
-                        <SearchableCombobox
-                          value={String(si.item_id || '')}
-                          onChange={(nextValue) => {
-                            const newArr = [...selectedItems];
-                            newArr[idx].item_id = nextValue;
-                            setSelectedItems(newArr);
-                          }}
-                          options={itemOptions}
-                          placeholder="품목 선택..."
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input type="number" min="1" className="w-full p-2 border border-gray-300 rounded text-center outline-none focus:border-blue-500" value={si.quantity} onChange={e => {
-                          const newArr = [...selectedItems]; newArr[idx].quantity = parseInt(e.target.value) || 0; setSelectedItems(newArr);
-                        }} />
-                      </td>
-                      <td className="px-4 py-3 text-center">
-                        <button onClick={() => removeItemRow(idx)} className="text-gray-400 hover:text-red-500 font-black px-2 py-1">✕</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </div>
-
-        {/* 우측: 결재 라인 */}
-        <aside>
-          <div className="bg-white border border-gray-200 rounded-lg p-5 shadow-sm sticky top-6">
-            <h3 className="text-sm font-bold text-gray-700 mb-4 border-b border-gray-200 pb-2">결재 라인</h3>
-            
-            <div className="space-y-3">
-              {/* 기안자 */}
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 shrink-0 rounded bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-500">기안</div>
-                <div className="flex-1 bg-gray-50 border border-gray-200 rounded p-2 text-sm text-gray-600 truncate">
-                  {userProfile?.user_name || '로딩 중...'}
-                </div>
+        <ApprovalDraftPaper
+          docType="outbound_request"
+          docTypeOptions={OUTBOUND_DOC_TYPE_OPTIONS}
+          onDocTypeChange={() => {}}
+          docTypeSelectDisabled
+          paperTitle="출고 요청 기안"
+          paperSubtitle="출고 창고·품목·수량을 지정하고 결재선을 구성한 뒤 상신합니다."
+          title={title}
+          onTitleChange={setTitle}
+          content={content}
+          onContentChange={setContent}
+          executionStartDate={executionStartDate}
+          executionEndDate={executionEndDate}
+          agreementText={agreementText}
+          onExecutionStartDateChange={setExecutionStartDate}
+          onExecutionEndDateChange={setExecutionEndDate}
+          onAgreementTextChange={setAgreementText}
+          writerName={selectedWriter?.user_name ?? '—'}
+          writerDeptName={writerDeptName}
+          draftedDate={draftedDate}
+          documentNumberHint="(저장·상신 시 DRO-YYMMDD-HHMM 자동 부여)"
+          approvalOrder={approvalOrder}
+          selectableUsers={selectableUsers}
+          resolveLineUser={(userId) => users.find((u) => u.id === userId)}
+          deptMap={deptMap}
+          onApprovalOrderRoleChange={(lineId, role) =>
+            setApprovalOrder((prev) => prev.map((line) => (line.id === lineId ? { ...line, role } : line)))
+          }
+          onApprovalOrderAssigneeChange={(lineId, userId) =>
+            setApprovalOrder((prev) => prev.map((line) => (line.id === lineId ? { ...line, userId } : line)))
+          }
+          onApprovalOrderAdd={() =>
+            setApprovalOrder((prev) => [
+              ...prev,
+              { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, role: 'approver', userId: '' },
+            ])
+          }
+          onApprovalOrderRemove={(lineId) =>
+            setApprovalOrder((prev) => {
+              const next = prev.filter((line) => line.id !== lineId)
+              if (next.length > 0) return next
+              return [{ id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, role: 'approver', userId: '' }]
+            })
+          }
+          onApprovalOrderMove={(draggedId, targetId) =>
+            setApprovalOrder((prev) => {
+              const draggedIndex = prev.findIndex((line) => line.id === draggedId)
+              const targetIndex = prev.findIndex((line) => line.id === targetId)
+              if (draggedIndex < 0 || targetIndex < 0 || draggedIndex === targetIndex) return prev
+              const next = [...prev]
+              const [dragged] = next.splice(draggedIndex, 1)
+              next.splice(targetIndex, 0, dragged)
+              return next
+            })
+          }
+          postBodyGridSlot={
+            <div className="space-y-5">
+              <div className="grid grid-cols-1 items-start gap-2 sm:grid-cols-[5.5rem_1fr] sm:items-center">
+                <span className="pt-2 text-xs font-black text-gray-600 sm:pt-0">출고창고</span>
+                <SearchableCombobox
+                  value={warehouseId}
+                  onChange={setWarehouseId}
+                  options={warehouses.map((wh) => ({
+                    value: String(wh.id),
+                    label: wh.name,
+                    keywords: [wh.name],
+                  }))}
+                  placeholder="창고 선택"
+                  showClearOption={false}
+                  dropdownPlacement="auto"
+                />
               </div>
-
-              {APPROVAL_ROLES.map((role) => (
-                <div key={role} className="space-y-1.5">
-                  <input
-                    value={roleSearches[role] ?? ''}
-                    onChange={(e) =>
-                      setRoleSearches((prev) => ({
-                        ...prev,
-                        [role]: e.target.value,
-                      }))
-                    }
-                    placeholder={`${getApprovalRoleLabel(role)} 검색 (이름/부서)`}
-                    className="w-full rounded border border-gray-200 px-3 py-1.5 text-xs text-gray-700 outline-none focus:border-blue-500"
-                  />
-                  {(roleAssignees[role] ?? ['']).map((assignee, idx) => (
-                    <div key={`${role}-${idx}`} className="flex items-center gap-2 pt-2">
-                      <div className="w-20 h-9 shrink-0 rounded bg-blue-50 flex items-center justify-center text-[10px] font-bold text-blue-700">
-                        {idx === 0 ? getApprovalRoleLabel(role) : `${getApprovalRoleLabel(role)} ${idx + 1}`}
-                      </div>
-                      <SearchableCombobox
-                        value={assignee}
-                        onChange={(nextValue) =>
-                          setRoleAssignees((prev) => {
-                            const next = [...(prev[role] ?? [''])]
-                            next[idx] = nextValue
-                            return { ...prev, [role]: next }
-                          })
-                        }
-                        options={(filteredUsersByRole[role] ?? []).map((u) => ({
-                          value: u.id,
-                          label: `${u.user_name} (${getDeptName(u.dept_id)})`,
-                          keywords: [u.user_name, getDeptName(u.dept_id), u.role_name ?? ''],
-                        }))}
-                        placeholder={role === 'approver' ? '필수 선택' : '선택 안 함'}
-                        className="flex-1"
-                      />
-                      {idx > 0 && (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setRoleAssignees((prev) => {
-                              const next = [...(prev[role] ?? [''])]
-                              next.splice(idx, 1)
-                              return { ...prev, [role]: next.length > 0 ? next : [''] }
-                            })
-                          }
-                          className="px-2 py-1 rounded border border-red-200 text-red-600 text-xs font-black"
-                        >
-                          삭제
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                  <div className="pl-[5.5rem]">
+              <div className="grid grid-cols-1 items-start gap-2 sm:grid-cols-[5.5rem_1fr]">
+                <span className="text-xs font-black text-gray-600 sm:pt-2">출고품목</span>
+                <div className="min-w-0 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      value={itemSearchKeyword}
+                      onChange={(e) => setItemSearchKeyword(e.target.value)}
+                      placeholder="코드·명 검색"
+                      className="min-w-[12rem] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-black"
+                    />
                     <button
                       type="button"
-                      onClick={() =>
-                        setRoleAssignees((prev) => ({
-                          ...prev,
-                          [role]: [...(prev[role] ?? ['']), ''],
-                        }))
-                      }
-                      className="px-2 py-1 rounded border border-dashed border-blue-300 text-blue-700 text-xs font-black"
+                      onClick={addItemRow}
+                      className="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs font-black text-gray-800 hover:bg-gray-50"
                     >
-                      + {getApprovalRoleLabel(role)} 추가
+                      + 행 추가
                     </button>
                   </div>
+                  <div className="overflow-x-auto rounded-lg border border-gray-200">
+                    <table className="w-full min-w-[280px] text-left text-sm">
+                      <thead className="border-b border-gray-200 bg-gray-50 text-gray-600">
+                        <tr>
+                          <th className="px-3 py-2 font-black">품목</th>
+                          <th className="w-24 px-2 py-2 text-center font-black">수량</th>
+                          <th className="w-10 px-1 py-2" />
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">
+                        {selectedItems.map((si, idx) => (
+                          <tr key={idx}>
+                            <td className="px-2 py-2">
+                              <SearchableCombobox
+                                value={String(si.item_id || '')}
+                                onChange={(next) => {
+                                  const nextArr = [...selectedItems]
+                                  nextArr[idx] = { ...nextArr[idx], item_id: next }
+                                  setSelectedItems(nextArr)
+                                }}
+                                options={itemOptions}
+                                placeholder="품목 선택"
+                                showClearOption={false}
+                                dropdownPlacement="auto"
+                              />
+                            </td>
+                            <td className="px-2 py-2">
+                              <input
+                                type="number"
+                                min={1}
+                                className="w-full rounded border border-gray-300 px-2 py-1.5 text-center text-sm outline-none focus:border-black"
+                                value={si.quantity}
+                                onChange={(e) => {
+                                  const nextArr = [...selectedItems]
+                                  nextArr[idx] = {
+                                    ...nextArr[idx],
+                                    quantity: Math.max(1, parseInt(e.target.value, 10) || 1),
+                                  }
+                                  setSelectedItems(nextArr)
+                                }}
+                              />
+                            </td>
+                            <td className="px-1 py-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => removeItemRow(idx)}
+                                className="text-sm font-black text-gray-400 hover:text-red-600"
+                                aria-label="행 삭제"
+                              >
+                                ✕
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
-              ))}
+              </div>
+            </div>
+          }
+        />
+
+        <div className="space-y-2 border-t border-gray-200 pt-4">
+          <div className="text-[11px] font-bold text-gray-500">
+            {lastLocalSaveAt ? (
+              <span>로컬 저장: {formatSaveAt(lastLocalSaveAt) ?? lastLocalSaveAt}</span>
+            ) : (
+              <span className="text-gray-400">로컬 저장 시각: —</span>
+            )}
+            {lastServerSaveAt ? (
+              <span className="ml-3">서버 임시저장: {formatSaveAt(lastServerSaveAt) ?? lastServerSaveAt}</span>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => void handleSaveDraft()}
+                disabled={isDraftSaving}
+                className="rounded-lg border-2 border-black bg-amber-100 px-4 py-2 text-sm font-black text-gray-900 disabled:opacity-50"
+              >
+                {isDraftSaving ? '저장 중…' : '임시저장'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setLoadDialogOpen(true)}
+                className="rounded-lg border border-gray-400 bg-white px-4 py-2 text-sm font-bold text-gray-800 hover:bg-gray-50"
+              >
+                임시저장 불러오기
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteDraft()}
+                disabled={isDraftDeleting}
+                className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-black text-red-800 disabled:opacity-50"
+              >
+                {isDraftDeleting ? '삭제 중…' : '삭제'}
+              </button>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Link
+                href="/outbound-requests"
+                onClick={handleListClick}
+                className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-bold text-gray-700"
+              >
+                목록
+              </Link>
+              <button
+                type="submit"
+                disabled={isSaving || !writerHasApprovalRight || warehouses.length === 0}
+                className="rounded-lg border-2 border-black bg-blue-600 px-4 py-2 text-sm font-black text-white disabled:opacity-50"
+              >
+                {isSaving ? '처리 중…' : '작성 후 상신'}
+              </button>
             </div>
           </div>
-        </aside>
-
-      </div>
+        </div>
+      </form>
     </div>
-  );
+  )
 }

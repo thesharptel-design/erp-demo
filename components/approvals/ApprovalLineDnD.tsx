@@ -1,5 +1,6 @@
 'use client'
 
+import { formatWriterDepartmentLabel } from '@/lib/approval-draft'
 import type { ApprovalRole } from '@/lib/approval-roles'
 import { APPROVAL_ROLES, getApprovalRoleLabel } from '@/lib/approval-roles'
 import SearchableCombobox from '@/components/SearchableCombobox'
@@ -26,12 +27,15 @@ export default function ApprovalLineDnD({
   onLineRemove,
   onLineMove,
 }: ApprovalLineDnDProps) {
-  const assigneeOptions = users.map((user) => ({
-    value: user.id,
-    label: `${user.user_name} / ${deptMap.get(user.dept_id ?? -1) ?? '-'}${user.can_approval_participate ? '' : ' [결재권 없음]'}`,
-    keywords: [user.user_name, user.login_id, user.role_name, String(deptMap.get(user.dept_id ?? -1) ?? '')],
-    disabled: !user.can_approval_participate,
-  }))
+  const assigneeOptions = users.map((user) => {
+    const deptLabel = formatWriterDepartmentLabel(user, deptMap)
+    return {
+      value: user.id,
+      label: `${user.user_name} / ${deptLabel}${user.can_approval_participate ? '' : ' [결재권 없음]'}`,
+      keywords: [user.user_name, user.login_id, user.role_name, deptLabel],
+      disabled: !user.can_approval_participate,
+    }
+  })
 
   return (
     <div className="space-y-2">
@@ -76,7 +80,13 @@ export default function ApprovalLineDnD({
             value={line.userId}
             onChange={(nextValue) => onLineAssigneeChange(line.id, nextValue)}
             options={assigneeOptions}
-            placeholder={line.role === 'approver' ? '결재자 선택 (필수)' : '결재자 선택'}
+            placeholder={
+              line.role === 'approver'
+                ? '결재자 선택 (필수)'
+                : line.role === 'reviewer'
+                  ? '참조자 선택'
+                  : '협조자 선택'
+            }
           />
           <button
             type="button"
