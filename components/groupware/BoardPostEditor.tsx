@@ -108,6 +108,10 @@ export default function BoardPostEditor({
               본문 안에 넣는 그림은 자동으로 <code className="rounded bg-gray-200 px-1">board_attachments</code>{' '}
               저장소에 올라갑니다. 파일당 최대 10MB, 이미지 형식만 가능합니다.
             </p>
+            <p>
+              링크가 걸린 텍스트를 붙여넣으면 링크도 함께 유지될 수 있습니다. 다만 PDF/이미지처럼 원본에서 링크
+              정보를 주지 않으면 텍스트만 붙여넣어집니다.
+            </p>
             <p className="text-gray-500">별도 파일 첨부 UI는 다음 단계에서 연결할 수 있습니다.</p>
           </div>
         </div>

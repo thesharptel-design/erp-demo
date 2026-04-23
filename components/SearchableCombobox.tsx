@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 export type ComboboxOption = {
   value: string
@@ -51,9 +52,18 @@ export default function SearchableCombobox({
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
+  const panelRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [openUpward, setOpenUpward] = useState(false)
+  const [isPortalReady, setIsPortalReady] = useState(false)
+  const [panelLayout, setPanelLayout] = useState<{
+    left: number
+    top?: number
+    bottom?: number
+    minWidth: number
+    maxWidth: number
+    listMaxHeight: number
+  } | null>(null)
 
   const selectedOption = useMemo(
     () => options.find((opt) => opt.value === value) ?? null,
@@ -70,11 +80,16 @@ export default function SearchableCombobox({
   }, [options, query])
 
   useEffect(() => {
+    setIsPortalReady(true)
+  }, [])
+
+  useEffect(() => {
     const onClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node
       if (!wrapperRef.current) return
-      if (!wrapperRef.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
+      if (wrapperRef.current.contains(target)) return
+      if (panelRef.current?.contains(target)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', onClickOutside)
     return () => document.removeEventListener('mousedown', onClickOutside)
@@ -82,51 +97,44 @@ export default function SearchableCombobox({
 
   useLayoutEffect(() => {
     if (!open) {
-      setOpenUpward(false)
+      setPanelLayout(null)
       return
-    }
-    if (dropdownPlacement !== 'auto') {
-      setOpenUpward(false)
-      return
-    }
-
-    const estimatedPanelPx = 300
-    const margin = 12
-
-    const overflowClips = (style: CSSStyleDeclaration) => {
-      const ox = style.overflowX
-      const oy = style.overflowY
-      return (
-        ['auto', 'scroll', 'hidden', 'clip'].includes(ox) ||
-        ['auto', 'scroll', 'hidden', 'clip'].includes(oy)
-      )
-    }
-
-    /** 뷰포트 + 스크롤/클립 조상 기준으로 트리거 아래·위에 실제로 보이는 여유(px) */
-    const getClippedSpace = (el: HTMLElement) => {
-      const rect = el.getBoundingClientRect()
-      let clipTop = 0
-      let clipBottom = window.innerHeight
-      let node: HTMLElement | null = el.parentElement
-      while (node && node !== document.documentElement) {
-        const st = window.getComputedStyle(node)
-        if (overflowClips(st)) {
-          const pr = node.getBoundingClientRect()
-          clipTop = Math.max(clipTop, pr.top)
-          clipBottom = Math.min(clipBottom, pr.bottom)
-        }
-        node = node.parentElement
-      }
-      const spaceBelow = Math.max(0, clipBottom - rect.bottom - margin)
-      const spaceAbove = Math.max(0, rect.top - clipTop - margin)
-      return { spaceBelow, spaceAbove }
     }
 
     const updatePlacement = () => {
       const btn = buttonRef.current
       if (!btn) return
-      const { spaceBelow, spaceAbove } = getClippedSpace(btn)
-      setOpenUpward(spaceBelow < estimatedPanelPx && spaceAbove > spaceBelow)
+      const rect = btn.getBoundingClientRect()
+      const margin = 8
+      const gap = 4
+      const reserveInputPx = 56
+      const minListHeight = 120
+      const maxListHeight = 360
+      const desiredPanelPx = reserveInputPx + minListHeight
+
+      const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - margin)
+      const spaceAbove = Math.max(0, rect.top - margin)
+      const placeAbove =
+        dropdownPlacement === 'above' ||
+        (dropdownPlacement === 'auto' && spaceBelow < desiredPanelPx && spaceAbove > spaceBelow)
+
+      const effectiveSpace = placeAbove ? spaceAbove : spaceBelow
+      const listMaxHeight = Math.max(minListHeight, Math.min(maxListHeight, effectiveSpace - reserveInputPx))
+
+      const minWidth = Math.max(rect.width, 168)
+      const maxWidth = Math.max(minWidth, Math.min(352, window.innerWidth - margin * 2))
+      let left = rect.left
+      if (left + maxWidth > window.innerWidth - margin) left = window.innerWidth - margin - maxWidth
+      if (left < margin) left = margin
+
+      setPanelLayout({
+        left,
+        top: placeAbove ? undefined : rect.bottom + gap,
+        bottom: placeAbove ? window.innerHeight - rect.top + gap : undefined,
+        minWidth,
+        maxWidth,
+        listMaxHeight,
+      })
     }
 
     updatePlacement()
@@ -138,14 +146,106 @@ export default function SearchableCombobox({
     }
   }, [open, dropdownPlacement])
 
-  const placementAbove =
-    dropdownPlacement === 'above' || (dropdownPlacement === 'auto' && openUpward)
-
   const commitValue = (nextValue: string) => {
     onChange(nextValue)
     setOpen(false)
     setQuery('')
   }
+
+  const dropdownNode =
+    open && !disabled && panelLayout ? (
+      <div
+        ref={panelRef}
+        className={`fixed z-[80] w-max rounded-lg border border-gray-200 bg-white shadow-lg ${dropdownClassName}`}
+        style={{
+          left: panelLayout.left,
+          top: panelLayout.top,
+          bottom: panelLayout.bottom,
+          minWidth: panelLayout.minWidth,
+          maxWidth: panelLayout.maxWidth,
+        }}
+      >
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault()
+              setOpen(false)
+              setQuery('')
+              return
+            }
+            if (e.key !== 'Enter') return
+            e.preventDefault()
+            const typed = query.trim()
+            if (!typed) return
+
+            const exact = options.find((opt) => !opt.disabled && (opt.value === typed || opt.label === typed))
+            if (exact) {
+              commitValue(exact.value)
+              return
+            }
+            if (creatable || enterToApplyQuery) {
+              commitValue(typed)
+            }
+          }}
+          placeholder={placeholder}
+          className="w-full border-b border-gray-100 px-3 py-2 text-sm outline-none"
+        />
+        <ul
+          className={`py-1 overflow-y-auto overscroll-contain ${listMaxHeightClass}`}
+          style={{ WebkitOverflowScrolling: 'touch', maxHeight: `${panelLayout.listMaxHeight}px` }}
+          onWheel={(e) => e.stopPropagation()}
+        >
+          {showClearOption ? (
+            <li>
+              <button
+                type="button"
+                className="w-full px-3 py-2 text-left text-sm text-gray-600 hover:bg-gray-50"
+                onClick={() => {
+                  commitValue('')
+                }}
+              >
+                선택 안 함
+              </button>
+            </li>
+          ) : null}
+          {creatable && query.trim() && !filteredOptions.some((o) => o.value === query.trim()) ? (
+            <li>
+              <button
+                type="button"
+                className="w-full px-3 py-2 text-left text-sm font-bold text-blue-700 hover:bg-blue-50"
+                onClick={() => {
+                  commitValue(query.trim())
+                }}
+              >
+                「{query.trim()}」로 적용
+              </button>
+            </li>
+          ) : null}
+          {filteredOptions.length === 0 && !(creatable && query.trim()) ? (
+            <li className="px-3 py-2 text-sm text-gray-400">{emptyText}</li>
+          ) : filteredOptions.length > 0 ? (
+            filteredOptions.map((opt) => (
+              <li key={opt.value}>
+                <button
+                  type="button"
+                  disabled={opt.disabled}
+                  className="w-full px-3 py-2 text-left text-sm text-gray-800 hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent"
+                  onClick={() => {
+                    if (opt.disabled) return
+                    commitValue(opt.value)
+                  }}
+                >
+                  {opt.label}
+                </button>
+              </li>
+            ))
+          ) : null}
+        </ul>
+      </div>
+    ) : null
 
   return (
     <div ref={wrapperRef} className={`relative ${className}`}>
@@ -158,93 +258,7 @@ export default function SearchableCombobox({
       >
         {(selectedOption?.label ?? value.trim()) || placeholder}
       </button>
-      {open && !disabled && (
-        <div
-          className={`absolute left-0 z-50 w-max min-w-[10.5rem] max-w-[min(100vw-1.5rem,22rem)] rounded-lg border border-gray-200 bg-white shadow-lg ${
-            placementAbove ? 'bottom-full mb-1' : 'top-full mt-1'
-          } ${dropdownClassName}`}
-        >
-          <input
-            autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                e.preventDefault()
-                setOpen(false)
-                setQuery('')
-                return
-              }
-              if (e.key !== 'Enter') return
-              e.preventDefault()
-              const typed = query.trim()
-              if (!typed) return
-
-              const exact = options.find((opt) => !opt.disabled && (opt.value === typed || opt.label === typed))
-              if (exact) {
-                commitValue(exact.value)
-                return
-              }
-              if (creatable || enterToApplyQuery) {
-                commitValue(typed)
-              }
-            }}
-            placeholder={placeholder}
-            className="w-full border-b border-gray-100 px-3 py-2 text-sm outline-none"
-          />
-          <ul
-            className={`py-1 overflow-y-auto overscroll-contain ${listMaxHeightClass}`}
-            style={{ WebkitOverflowScrolling: 'touch' }}
-            onWheel={(e) => e.stopPropagation()}
-          >
-            {showClearOption ? (
-              <li>
-                <button
-                  type="button"
-                  className="w-full px-3 py-2 text-left text-sm text-gray-600 hover:bg-gray-50"
-                  onClick={() => {
-                    commitValue('')
-                  }}
-                >
-                  선택 안 함
-                </button>
-              </li>
-            ) : null}
-            {creatable && query.trim() && !filteredOptions.some((o) => o.value === query.trim()) ? (
-              <li>
-                <button
-                  type="button"
-                  className="w-full px-3 py-2 text-left text-sm font-bold text-blue-700 hover:bg-blue-50"
-                  onClick={() => {
-                    commitValue(query.trim())
-                  }}
-                >
-                  「{query.trim()}」로 적용
-                </button>
-              </li>
-            ) : null}
-            {filteredOptions.length === 0 && !(creatable && query.trim()) ? (
-              <li className="px-3 py-2 text-sm text-gray-400">{emptyText}</li>
-            ) : filteredOptions.length > 0 ? (
-              filteredOptions.map((opt) => (
-                <li key={opt.value}>
-                  <button
-                    type="button"
-                    disabled={opt.disabled}
-                    className="w-full px-3 py-2 text-left text-sm text-gray-800 hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent"
-                    onClick={() => {
-                      if (opt.disabled) return
-                      commitValue(opt.value)
-                    }}
-                  >
-                    {opt.label}
-                  </button>
-                </li>
-              ))
-            ) : null}
-          </ul>
-        </div>
-      )}
+      {isPortalReady && dropdownNode ? createPortal(dropdownNode, document.body) : null}
     </div>
   )
 }

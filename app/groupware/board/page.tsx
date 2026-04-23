@@ -18,6 +18,7 @@ type BoardPostListRow = {
   title: string
   created_at: string
   view_count: number
+  like_count: number
   comment_count: number
   is_notice: boolean
   has_images: boolean
@@ -67,7 +68,7 @@ export default function GroupwareBoardListPage() {
       let q = supabase
         .from('board_posts')
         .select(
-          'id, category, title, created_at, view_count, comment_count, is_notice, has_images, author_id'
+          'id, category, title, created_at, view_count, like_count, comment_count, is_notice, has_images, author_id'
         )
         .order('is_notice', { ascending: false })
         .order('created_at', { ascending: false })
@@ -197,18 +198,21 @@ export default function GroupwareBoardListPage() {
               <th scope="col" className="whitespace-nowrap px-2 py-2 text-right font-bold sm:px-3">
                 조회
               </th>
+              <th scope="col" className="whitespace-nowrap px-2 py-2 text-right font-bold sm:px-3">
+                좋아요
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 text-gray-800">
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-3 py-8 text-center text-gray-500">
+                <td colSpan={6} className="px-3 py-8 text-center text-gray-500">
                   불러오는 중…
                 </td>
               </tr>
             ) : displayRows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-3 py-8 text-center text-gray-500">
+                <td colSpan={6} className="px-3 py-8 text-center text-gray-500">
                   게시글이 없습니다.
                 </td>
               </tr>
@@ -257,6 +261,9 @@ export default function GroupwareBoardListPage() {
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-gray-600 sm:px-3">
                       {row.view_count}
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-gray-600 sm:px-3">
+                      {row.like_count}
                     </td>
                   </tr>
                 )

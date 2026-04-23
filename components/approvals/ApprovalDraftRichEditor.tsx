@@ -2,11 +2,9 @@
 
 import { Color } from '@tiptap/extension-color'
 import { Image } from '@tiptap/extension-image'
-import { Link } from '@tiptap/extension-link'
 import { Placeholder } from '@tiptap/extension-placeholder'
 import { TextAlign } from '@tiptap/extension-text-align'
 import { TextStyle } from '@tiptap/extension-text-style'
-import { Underline } from '@tiptap/extension-underline'
 import type { Editor } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { StarterKit } from '@tiptap/starter-kit'
@@ -137,15 +135,15 @@ export default function ApprovalDraftRichEditor({
         heading: { levels: [2, 3] },
         bulletList: { keepMarks: true },
         orderedList: { keepMarks: true },
+        link: { openOnClick: false, autolink: true },
       }),
-      Underline,
       TextStyle,
       Color,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Placeholder.configure({ placeholder }),
-      Link.configure({ openOnClick: false, autolink: true }),
       Image.configure({ allowBase64: false }),
     ],
+    enableInputRules: false,
     content: toInitialContent(value),
     editable: !disabled,
     editorProps: {
