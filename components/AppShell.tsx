@@ -1,11 +1,12 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { IDLE_LOGOUT_MS, IDLE_WARNING_MS } from '@/lib/session-idle'
 import Sidebar from '@/components/Sidebar'
-import Header from '@/components/Header'
-import CurrentUserBanner from '@/components/CurrentUserBanner'
+import AppTopChrome from '@/components/AppTopChrome'
+import { IdleSessionProvider } from '@/components/IdleSessionContext'
 
 type Props = {
   children: React.ReactNode
@@ -13,7 +14,6 @@ type Props = {
 
 const HEARTBEAT_MS = 60_000
 /** Wall-clock since last user input (pointer/key/wheel anywhere in the app). */
-const IDLE_LOGOUT_MS = 10 * 60 * 1000
 const IDLE_CHECK_MS = 5_000
 
 export default function AppShell({ children }: Props) {
@@ -24,9 +24,19 @@ export default function AppShell({ children }: Props) {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [sessionId, setSessionId] = useState<string>('')
+  const [lastActivityAt, setLastActivityAt] = useState(() => Date.now())
+  const [now, setNow] = useState(() => Date.now())
 
   const lastInputAtRef = useRef(0)
   const hadInputSinceLastBeatRef = useRef(true)
+
+  const resetIdleActivity = useCallback(() => {
+    const ts = Date.now()
+    lastInputAtRef.current = ts
+    hadInputSinceLastBeatRef.current = true
+    setLastActivityAt(ts)
+    setNow(ts)
+  }, [])
 
   const getOrCreateSessionId = (userId: string) => {
     const key = `erp-active-session:${userId}`
@@ -92,14 +102,17 @@ export default function AppShell({ children }: Props) {
   }, [pathname])
 
   useEffect(() => {
-    const mark = () => {
-      lastInputAtRef.current = Date.now()
-      hadInputSinceLastBeatRef.current = true
-    }
+    const mark = () => resetIdleActivity()
     const events: (keyof DocumentEventMap)[] = ['pointerdown', 'keydown', 'wheel']
     events.forEach((ev) => document.addEventListener(ev, mark as EventListener, { passive: true }))
     return () => events.forEach((ev) => document.removeEventListener(ev, mark as EventListener))
-  }, [])
+  }, [resetIdleActivity])
+
+  useEffect(() => {
+    if (!isLoggedIn) return
+    const tick = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(tick)
+  }, [isLoggedIn])
 
   useEffect(() => {
     if (isLoading) return
@@ -123,8 +136,7 @@ export default function AppShell({ children }: Props) {
 
     // 로그인 페이지에서 오래 머문 뒤 로그인하면 lastInputAtRef가 마운트 시각에 머물러
     // 유휴 10분 판정이 즉시 참이 되어 로그아웃되는 문제를 막기 위해, 세션 활성화 시점에 리셋
-    lastInputAtRef.current = Date.now()
-    hadInputSinceLastBeatRef.current = true
+    resetIdleActivity()
 
     let disposed = false
     let idleSignOutStarted = false
@@ -203,7 +215,18 @@ export default function AppShell({ children }: Props) {
       window.removeEventListener('pagehide', onPageHide)
       window.removeEventListener('beforeunload', onPageHide)
     }
-  }, [isLoading, isLoggedIn, sessionId])
+  }, [isLoading, isLoggedIn, sessionId, resetIdleActivity])
+
+  const remainingMs = Math.max(0, IDLE_LOGOUT_MS - (now - lastActivityAt))
+  const idleSessionValue = useMemo(
+    () => ({
+      remainingMs,
+      idleLimitMs: IDLE_LOGOUT_MS,
+      extendSession: resetIdleActivity,
+      isWarning: remainingMs <= IDLE_WARNING_MS,
+    }),
+    [remainingMs, resetIdleActivity]
+  )
 
   if (pathname === '/login') {
     return <>{children}</>
@@ -230,39 +253,39 @@ export default function AppShell({ children }: Props) {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="flex min-h-screen">
-        {/* 데스크톱 전용 사이드바 */}
-        <div className="hidden lg:block">
-          <Sidebar />
-        </div>
+    <IdleSessionProvider value={idleSessionValue}>
+      <div className="min-h-screen bg-gray-50">
+        <div className="flex min-h-screen">
+          {/* 데스크톱 전용 사이드바 */}
+          <div className="hidden lg:block">
+            <Sidebar />
+          </div>
 
-        {/* 모바일 오버레이 메뉴 */}
-        {mobileMenuOpen && (
-          <>
-            <button
-              type="button"
-              className="fixed inset-0 z-40 bg-black/30 lg:hidden"
-              onClick={() => setMobileMenuOpen(false)}
-              aria-label="메뉴 닫기"
-            />
-            <div className="fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] lg:hidden">
-              <Sidebar />
-            </div>
-          </>
-        )}
+          {/* 모바일 오버레이 메뉴 */}
+          {mobileMenuOpen && (
+            <>
+              <button
+                type="button"
+                className="fixed inset-0 z-40 bg-black/30 lg:hidden"
+                onClick={() => setMobileMenuOpen(false)}
+                aria-label="메뉴 닫기"
+              />
+              <div className="fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] lg:hidden">
+                <Sidebar />
+              </div>
+            </>
+          )}
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          <Header onMenuClick={() => setMobileMenuOpen(true)} />
-
-          <main className="flex-1">
-            <div className="mx-auto w-full max-w-[1800px] px-3 py-3 sm:px-5 sm:py-5">
-              <CurrentUserBanner />
-              {children}
-            </div>
-          </main>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <main className="flex-1">
+              <div className="w-full px-2 py-3 sm:px-4 sm:py-5 lg:px-5 xl:px-6">
+                <AppTopChrome onMenuClick={() => setMobileMenuOpen(true)} />
+                {children}
+              </div>
+            </main>
+          </div>
         </div>
       </div>
-    </div>
+    </IdleSessionProvider>
   )
 }

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { seoulDateString } from '@/lib/seoul-date'
+import { IDLE_LOGOUT_MS } from '@/lib/session-idle'
 
-const IDLE_MS = 10 * 60 * 1000
 const MAX_DWELL_CHUNK_SEC = 120
 
 export async function POST(request: NextRequest) {
@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
     let deltaSec = 0
     if (hadRecentInteraction && existingSession?.last_seen_at) {
       const gapMs = now.getTime() - new Date(existingSession.last_seen_at).getTime()
-      if (gapMs > 0 && gapMs <= IDLE_MS) {
+      if (gapMs > 0 && gapMs <= IDLE_LOGOUT_MS) {
         deltaSec = Math.min(Math.floor(gapMs / 1000), MAX_DWELL_CHUNK_SEC)
       }
     }

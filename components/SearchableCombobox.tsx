@@ -29,6 +29,8 @@ type Props = {
   showClearOption?: boolean
   /** auto: open upward if viewport space below the trigger is tight (e.g. table footers). */
   dropdownPlacement?: 'auto' | 'below' | 'above'
+  /** Pressing Enter in search input applies current query text as value. */
+  enterToApplyQuery?: boolean
 }
 
 export default function SearchableCombobox({
@@ -45,6 +47,7 @@ export default function SearchableCombobox({
   creatable = false,
   showClearOption = true,
   dropdownPlacement = 'below',
+  enterToApplyQuery = true,
 }: Props) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const buttonRef = useRef<HTMLButtonElement | null>(null)
@@ -138,6 +141,12 @@ export default function SearchableCombobox({
   const placementAbove =
     dropdownPlacement === 'above' || (dropdownPlacement === 'auto' && openUpward)
 
+  const commitValue = (nextValue: string) => {
+    onChange(nextValue)
+    setOpen(false)
+    setQuery('')
+  }
+
   return (
     <div ref={wrapperRef} className={`relative ${className}`}>
       <button
@@ -159,6 +168,27 @@ export default function SearchableCombobox({
             autoFocus
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                setOpen(false)
+                setQuery('')
+                return
+              }
+              if (e.key !== 'Enter') return
+              e.preventDefault()
+              const typed = query.trim()
+              if (!typed) return
+
+              const exact = options.find((opt) => !opt.disabled && (opt.value === typed || opt.label === typed))
+              if (exact) {
+                commitValue(exact.value)
+                return
+              }
+              if (creatable || enterToApplyQuery) {
+                commitValue(typed)
+              }
+            }}
             placeholder={placeholder}
             className="w-full border-b border-gray-100 px-3 py-2 text-sm outline-none"
           />
@@ -173,9 +203,7 @@ export default function SearchableCombobox({
                   type="button"
                   className="w-full px-3 py-2 text-left text-sm text-gray-600 hover:bg-gray-50"
                   onClick={() => {
-                    onChange('')
-                    setOpen(false)
-                    setQuery('')
+                    commitValue('')
                   }}
                 >
                   선택 안 함
@@ -188,9 +216,7 @@ export default function SearchableCombobox({
                   type="button"
                   className="w-full px-3 py-2 text-left text-sm font-bold text-blue-700 hover:bg-blue-50"
                   onClick={() => {
-                    onChange(query.trim())
-                    setOpen(false)
-                    setQuery('')
+                    commitValue(query.trim())
                   }}
                 >
                   「{query.trim()}」로 적용
@@ -208,9 +234,7 @@ export default function SearchableCombobox({
                     className="w-full px-3 py-2 text-left text-sm text-gray-800 hover:bg-blue-50 disabled:cursor-not-allowed disabled:text-gray-400 disabled:hover:bg-transparent"
                     onClick={() => {
                       if (opt.disabled) return
-                      onChange(opt.value)
-                      setOpen(false)
-                      setQuery('')
+                      commitValue(opt.value)
                     }}
                   >
                     {opt.label}

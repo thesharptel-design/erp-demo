@@ -442,7 +442,7 @@ export default function ApprovalsPage() {
   }, [docs]);
 
   return (
-    <div className="mx-auto flex max-w-[1600px] min-h-[calc(100dvh-10.5rem)] flex-col space-y-6 p-6">
+    <div className="flex w-full min-h-[calc(100dvh-10.5rem)] flex-col space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between mb-8">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-3">

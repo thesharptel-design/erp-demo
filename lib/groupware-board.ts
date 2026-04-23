@@ -23,8 +23,8 @@ export type BoardCategoryValue =
 /** 글쓰기·수정 분류 순서: 일반 → 자유 → 사내소식 → Q&A → 익명 */
 export const BOARD_CATEGORY_OPTIONS: { value: BoardCategoryValue; label: string }[] = [
   { value: BOARD_CATEGORY_VALUE_GENERAL, label: '일반' },
-  { value: BOARD_CATEGORY_VALUE_FREE, label: '자유' },
-  { value: BOARD_CATEGORY_VALUE_INFO, label: '사내소식' },
+  { value: BOARD_CATEGORY_VALUE_FREE, label: 'Bio News' },
+  { value: BOARD_CATEGORY_VALUE_INFO, label: '교육 스케줄 안내' },
   { value: BOARD_CATEGORY_VALUE_QNA, label: 'Q&A' },
   { value: BOARD_CATEGORY_VALUE_ANONYMOUS, label: '익명' },
 ]

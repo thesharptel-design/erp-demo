@@ -2,7 +2,7 @@
 
 import * as XLSX from 'xlsx'
 import Link from 'next/link'
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import {
@@ -28,10 +28,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import SearchableCombobox from '@/components/SearchableCombobox'
-import { ItemProcessDetailGrid } from '@/components/items/ItemProcessDetailGrid'
-import { pruneProcessMetadataToMaster, type ItemProcessCategories, type ProcessMetadata } from '@/lib/item-config'
+import { type ProcessMetadata } from '@/lib/item-config'
 import { cn } from '@/lib/utils'
-import { fetchItemProcessCategories } from '@/lib/item-process-config'
 import { deleteSopFilesForItem } from '@/lib/item-sop-storage'
 import { canEditItemsMaster, getCurrentUserPermissions, type CurrentUserPermissions } from '@/lib/permissions'
 import { supabase } from '@/lib/supabase'
@@ -49,22 +47,6 @@ type ItemRow = {
   manufacturer: string | null
   remarks: string | null
   process_metadata: ProcessMetadata | Record<string, unknown> | null
-}
-
-function getCategory(meta: ItemRow['process_metadata']): string | null {
-  if (!meta || typeof meta !== 'object') return null
-  const c = (meta as ProcessMetadata).category
-  if (c == null || String(c).trim() === '') return null
-  return String(c).trim()
-}
-
-function hasProcessDetail(meta: ItemRow['process_metadata']): boolean {
-  const m = meta as ProcessMetadata | null | undefined
-  if (!m || typeof m !== 'object') return false
-  if (m.category != null && String(m.category).trim() !== '') return true
-  if (m.checks && Object.keys(m.checks).length > 0) return true
-  if (m.sopFiles && m.sopFiles.length > 0) return true
-  return false
 }
 
 function parseBoolCell(v: unknown): boolean {
@@ -92,9 +74,6 @@ function downloadExcelTemplate() {
   XLSX.utils.book_append_sheet(wb, ws, '품목')
   XLSX.writeFile(wb, '품목_일괄업로드_템플릿.xlsx')
 }
-
-/** Header filter: process_metadata.category empty */
-const FILTER_CATEGORY_UNSET = '__unset__'
 
 const PAGE_SIZE = 25
 
@@ -130,18 +109,8 @@ function PeekableTruncated({
   )
 }
 
-async function openSignedSopDownload(path: string) {
-  const { data, error } = await supabase.storage.from('sop-files').createSignedUrl(path, 300)
-  if (error || !data?.signedUrl) {
-    toast.error('다운로드 링크를 만들지 못했습니다.', { description: error?.message })
-    return
-  }
-  window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
-}
-
 export default function ItemsList() {
   const [items, setItems] = useState<ItemRow[]>([])
-  const [categories, setCategories] = useState<ItemProcessCategories>({})
   const [loading, setLoading] = useState(true)
   const [permUser, setPermUser] = useState<CurrentUserPermissions | null>(null)
   const [permLoading, setPermLoading] = useState(true)
@@ -149,11 +118,9 @@ export default function ItemsList() {
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [confirmBulkOpen, setConfirmBulkOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [expandedId, setExpandedId] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [filterItemCode, setFilterItemCode] = useState('')
-  const [filterCategory, setFilterCategory] = useState('')
   const [filterItemName, setFilterItemName] = useState('')
   const [filterManufacturer, setFilterManufacturer] = useState('')
   const [filterRemarks, setFilterRemarks] = useState('')
@@ -173,17 +140,12 @@ export default function ItemsList() {
 
   const loadItems = useCallback(async () => {
     setLoading(true)
-    const [itemsRes, cat] = await Promise.all([
-      supabase
-        .from('items')
-        .select(
-          'id, item_code, item_name, item_spec, unit, is_active, is_lot_managed, is_exp_managed, is_sn_managed, manufacturer, remarks, process_metadata'
-        )
-        .order('id', { ascending: true }),
-      fetchItemProcessCategories(supabase),
-    ])
-
-    setCategories(cat)
+    const itemsRes = await supabase
+      .from('items')
+      .select(
+        'id, item_code, item_name, item_spec, unit, is_active, is_lot_managed, is_exp_managed, is_sn_managed, manufacturer, remarks, process_metadata'
+      )
+      .order('id', { ascending: true })
 
     if (itemsRes.error) {
       toast.error('품목 목록을 불러오지 못했습니다.', { description: itemsRes.error.message })
@@ -197,27 +159,6 @@ export default function ItemsList() {
   useEffect(() => {
     void loadItems()
   }, [loadItems])
-
-  const categoryKeys = useMemo(() => Object.keys(categories), [categories])
-
-  const orphanCategories = useMemo(() => {
-    const s = new Set<string>()
-    for (const r of items) {
-      const c = getCategory(r.process_metadata)
-      if (c && !categoryKeys.includes(c)) s.add(c)
-    }
-    return [...s].sort()
-  }, [items, categoryKeys])
-
-  const filterCategoryOptions = useMemo(
-    () => [
-      { value: '', label: '전체', keywords: ['전체'] },
-      { value: FILTER_CATEGORY_UNSET, label: '공정명 미지정', keywords: ['미지정', '공정'] },
-      ...orphanCategories.map((k) => ({ value: k, label: `${k} (마스터 외 공정명)`, keywords: [k] })),
-      ...categoryKeys.map((k) => ({ value: k, label: k, keywords: [k] })),
-    ],
-    [categoryKeys, orphanCategories]
-  )
 
   const itemCodeOptions = useMemo(() => {
     const s = new Set<string>()
@@ -257,23 +198,23 @@ export default function ItemsList() {
 
   useEffect(() => {
     setPage(1)
-  }, [filterItemCode, filterCategory, filterItemName, filterManufacturer, filterRemarks])
+  }, [filterItemCode, filterItemName, filterManufacturer, filterRemarks])
 
   const filteredItems = useMemo(() => {
+    const codeQuery = filterItemCode.trim().toLowerCase()
+    const nameQuery = filterItemName.trim().toLowerCase()
+    const manufacturerQuery = filterManufacturer.trim().toLowerCase()
+    const remarksQuery = filterRemarks.trim().toLowerCase()
+
     return items.filter((r) => {
-      if (filterItemCode.trim() && r.item_code !== filterItemCode.trim()) return false
-      const c = getCategory(r.process_metadata)
-      if (filterCategory === FILTER_CATEGORY_UNSET) {
-        if (c != null) return false
-      } else if (filterCategory.trim()) {
-        if (c !== filterCategory.trim()) return false
-      }
-      if (filterItemName.trim() && r.item_name !== filterItemName.trim()) return false
-      if (filterManufacturer.trim() && (r.manufacturer ?? '').trim() !== filterManufacturer.trim()) return false
-      if (filterRemarks.trim() && (r.remarks ?? '').trim() !== filterRemarks.trim()) return false
+      if (codeQuery && !r.item_code.toLowerCase().includes(codeQuery)) return false
+
+      if (nameQuery && !r.item_name.toLowerCase().includes(nameQuery)) return false
+      if (manufacturerQuery && !(r.manufacturer ?? '').trim().toLowerCase().includes(manufacturerQuery)) return false
+      if (remarksQuery && !(r.remarks ?? '').trim().toLowerCase().includes(remarksQuery)) return false
       return true
     })
-  }, [items, filterItemCode, filterCategory, filterItemName, filterManufacturer, filterRemarks])
+  }, [items, filterItemCode, filterItemName, filterManufacturer, filterRemarks])
 
   const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE))
 
@@ -420,21 +361,21 @@ export default function ItemsList() {
     }
   }
 
-  const colCount = 11
+  const colCount = 9
 
   return (
-    <div className="w-full space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <div className="flex w-full flex-col space-y-6">
+      <div className="mb-2 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-3xl font-black tracking-tight">품목 관리</h1>
-          <p className="mt-0.5 font-bold text-muted-foreground">
+          <h1 className="text-3xl font-black tracking-tighter text-gray-900">품목 관리</h1>
+          <p className="mt-1 text-sm font-bold text-gray-500">
             품목 목록과 추적/이력 관리 여부를 조회합니다.
             {!permLoading && !canEdit ? (
               <span className="mt-1 block text-amber-700">시스템 관리자 이상만 등록·수정·삭제할 수 있습니다.</span>
             ) : null}
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap gap-3">
           <input
             ref={fileInputRef}
             type="file"
@@ -445,13 +386,30 @@ export default function ItemsList() {
               if (f) void handleExcelFile(f)
             }}
           />
-          <Button type="button" variant="outline" size="sm" onClick={downloadExcelTemplate}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-xs font-black text-gray-800 hover:bg-gray-50"
+            disabled={loading}
+            onClick={() => void loadItems()}
+          >
+            새로고침
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-xs font-black text-gray-800 hover:bg-gray-50"
+            onClick={downloadExcelTemplate}
+          >
             템플릿 다운로드
           </Button>
           <Button
             type="button"
             variant="outline"
             size="sm"
+            className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-xs font-black text-gray-800 hover:bg-gray-50"
             disabled={uploading || !canEdit}
             onClick={() => fileInputRef.current?.click()}
           >
@@ -459,44 +417,60 @@ export default function ItemsList() {
           </Button>
           <Button
             type="button"
-            variant="destructive"
+            variant="outline"
             size="sm"
+            className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-black bg-white px-4 text-xs font-black text-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-gray-50 active:translate-y-1 active:shadow-none"
             disabled={selectedIds.size === 0 || bulkDeleting || !canEdit}
             onClick={() => setConfirmBulkOpen(true)}
           >
             일괄 삭제 ({selectedIds.size})
           </Button>
           {canEdit ? (
-            <Button asChild variant="outline" size="sm">
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-xs font-black text-gray-800 hover:bg-gray-50"
+            >
               <Link href="/items/process-config">공정 상세 설정</Link>
             </Button>
           ) : null}
           {canEdit ? (
-            <Button asChild size="sm">
+            <Button
+              asChild
+              size="sm"
+              className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-black bg-blue-600 px-4 text-xs font-black text-white shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-blue-700 active:translate-y-1 active:shadow-none"
+            >
               <Link href="/items/new">품목 개별 등록</Link>
             </Button>
           ) : (
-            <Button type="button" size="sm" disabled title="시스템 관리자 이상만 등록할 수 있습니다.">
+            <Button
+              type="button"
+              size="sm"
+              disabled
+              title="시스템 관리자 이상만 등록할 수 있습니다."
+              className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-100 px-4 text-xs font-black text-gray-400"
+            >
               품목 개별 등록
             </Button>
           )}
         </div>
       </div>
 
-      <Card size="sm" className="shadow-sm">
-        <CardHeader className="border-b pb-2">
+      <Card size="sm" className="rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+        <CardHeader className="border-b-2 border-black pb-3">
           <div>
-            <CardTitle className="text-base">품목 목록</CardTitle>
-            <CardDescription>맨 위 콤보로 목록을 좁힐 수 있습니다. 수정은 「정보 수정」에서 진행합니다.</CardDescription>
+            <CardTitle className="text-xl font-black tracking-tight text-gray-900">품목 목록</CardTitle>
+            <CardDescription className="text-sm font-bold text-gray-500">맨 위 필터로 목록을 좁힐 수 있습니다.</CardDescription>
           </div>
         </CardHeader>
-        <CardContent className="space-y-2 pt-2">
+        <CardContent className="space-y-2 pt-3">
           {loading ? (
             <p className="py-8 text-center text-sm text-muted-foreground">불러오는 중…</p>
           ) : (
-            <div className="overflow-x-auto">
-              <Table className="table-fixed min-w-[1000px]">
-                <TableHeader>
+            <div className="min-h-[min(68vh,calc(100dvh-15rem))] overflow-x-auto rounded-t-2xl bg-white">
+              <Table className="w-full min-w-[960px] table-fixed text-sm">
+                <TableHeader className="sticky top-0 z-20 border-b-2 border-black bg-gray-50 text-left text-xs font-black uppercase tracking-wider text-gray-400">
                   <TableRow>
                     <TableHead className="w-10 px-1">
                       <Checkbox
@@ -506,69 +480,68 @@ export default function ItemsList() {
                         aria-label="현재 목록 전체 선택"
                       />
                     </TableHead>
-                    <TableHead className="w-[10%] min-w-0 px-1">품목코드</TableHead>
-                    <TableHead className="w-[8%] min-w-0 px-1">공정명</TableHead>
-                    <TableHead className="w-[16%] min-w-0 px-1">품목명</TableHead>
-                    <TableHead className="w-[10%] min-w-0 px-1">제조사</TableHead>
-                    <TableHead className="w-[5.5rem] shrink-0 px-1 text-center">공정상세</TableHead>
-                    <TableHead className="w-[18%] min-w-0 px-1">규격</TableHead>
-                    <TableHead className="w-[4rem] shrink-0 px-1">단위</TableHead>
-                    <TableHead className="w-[12%] min-w-0 px-1">비고</TableHead>
-                    <TableHead className="w-[6rem] shrink-0 px-1">상태</TableHead>
-                    <TableHead className="w-[5.5rem] shrink-0 px-1 text-center">관리</TableHead>
+                    <TableHead className="w-[12%] min-w-0 px-2 py-4">품목코드</TableHead>
+                    <TableHead className="w-[20%] min-w-0 px-3 py-4">품목명</TableHead>
+                    <TableHead className="w-[12%] min-w-0 px-3 py-4">제조사</TableHead>
+                    <TableHead className="w-[18%] min-w-0 px-3 py-4">규격</TableHead>
+                    <TableHead className="w-[4rem] shrink-0 px-2 py-4">단위</TableHead>
+                    <TableHead className="w-[16%] min-w-0 px-3 py-4">비고</TableHead>
+                    <TableHead className="w-[6rem] shrink-0 px-2 py-4 text-center">상태</TableHead>
+                    <TableHead className="w-[5.5rem] shrink-0 px-2 py-4 text-center">관리</TableHead>
                   </TableRow>
-                  <TableRow className="border-b bg-muted/30 hover:bg-muted/30">
-                    <TableHead className="py-1.5 text-[10px] font-bold text-muted-foreground">필터</TableHead>
-                    <TableHead className="py-1.5">
+                  <TableRow className="border-b border-gray-200 bg-gray-100/80 text-[11px] font-bold normal-case tracking-normal text-gray-600 hover:bg-gray-100/80">
+                    <TableHead className="py-2 text-[10px] font-semibold text-gray-500">필터</TableHead>
+                    <TableHead className="relative z-30 px-2 py-2 align-middle font-semibold">
                       <SearchableCombobox
                         className="min-w-[7rem] text-xs"
                         value={filterItemCode}
                         onChange={setFilterItemCode}
                         options={itemCodeOptions}
                         placeholder="품목코드"
+                        creatable
+                        dropdownPlacement="auto"
+                        showClearOption={false}
                         listMaxHeightClass="max-h-[min(14rem,45vh)] overflow-y-auto"
                       />
                     </TableHead>
-                    <TableHead className="py-1.5">
-                      <SearchableCombobox
-                        className="min-w-[6rem] text-xs"
-                        value={filterCategory}
-                        onChange={setFilterCategory}
-                        options={filterCategoryOptions}
-                        placeholder="공정명"
-                        listMaxHeightClass="max-h-[min(14rem,45vh)] overflow-y-auto"
-                      />
-                    </TableHead>
-                    <TableHead className="py-1.5">
+                    <TableHead className="relative z-30 px-2 py-2 align-middle font-semibold">
                       <SearchableCombobox
                         className="min-w-[8rem] text-xs"
                         value={filterItemName}
                         onChange={setFilterItemName}
                         options={nameOptions}
                         placeholder="품목명"
+                        creatable
+                        dropdownPlacement="auto"
+                        showClearOption={false}
                         listMaxHeightClass="max-h-[min(14rem,45vh)] overflow-y-auto"
                       />
                     </TableHead>
-                    <TableHead className="py-1.5">
+                    <TableHead className="relative z-30 px-2 py-2 align-middle font-semibold">
                       <SearchableCombobox
                         className="min-w-[6rem] text-xs"
                         value={filterManufacturer}
                         onChange={setFilterManufacturer}
                         options={manufacturerOptions}
                         placeholder="제조사"
+                        creatable
+                        dropdownPlacement="auto"
+                        showClearOption={false}
                         listMaxHeightClass="max-h-[min(14rem,45vh)] overflow-y-auto"
                       />
                     </TableHead>
                     <TableHead className="py-1.5" />
                     <TableHead className="py-1.5" />
-                    <TableHead className="py-1.5" />
-                    <TableHead className="py-1.5">
+                    <TableHead className="relative z-30 px-2 py-2 align-middle font-semibold">
                       <SearchableCombobox
                         className="min-w-[6rem] text-xs"
                         value={filterRemarks}
                         onChange={setFilterRemarks}
                         options={remarksOptions}
                         placeholder="비고"
+                        creatable
+                        dropdownPlacement="auto"
+                        showClearOption={false}
                         listMaxHeightClass="max-h-[min(14rem,45vh)] overflow-y-auto"
                       />
                     </TableHead>
@@ -576,29 +549,26 @@ export default function ItemsList() {
                     <TableHead className="py-1.5" />
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody className="divide-y divide-gray-100 bg-white">
                   {items.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={colCount} className="py-10 text-center text-muted-foreground">
+                      <TableCell colSpan={colCount} className="min-h-[48vh] align-middle p-12 text-center text-sm font-bold text-gray-400">
                         표시할 품목이 없습니다.
                       </TableCell>
                     </TableRow>
                   ) : filteredItems.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={colCount} className="py-10 text-center text-muted-foreground">
+                      <TableCell colSpan={colCount} className="min-h-[48vh] align-middle p-12 text-center text-sm font-bold text-gray-400">
                         조건에 맞는 품목이 없습니다. 필터를 바꿔 보세요.
                       </TableCell>
                     </TableRow>
                   ) : (
-                    pageSlice.map((item) => {
-                      const meta = (item.process_metadata ?? {}) as ProcessMetadata
-                      const displayMeta = pruneProcessMetadataToMaster(meta, categories)
-                      const sopFiles = meta.sopFiles ?? []
-                      const detailEnabled = hasProcessDetail(item.process_metadata)
-
-                      return (
-                        <Fragment key={item.id}>
-                          <TableRow data-state={selectedIds.has(item.id) ? 'selected' : undefined} className="[&_td]:min-w-0 [&_td]:py-2">
+                    pageSlice.map((item) => (
+                      <TableRow
+                        key={item.id}
+                        data-state={selectedIds.has(item.id) ? 'selected' : undefined}
+                        className="[&_td]:min-w-0 [&_td]:py-2 transition-colors hover:bg-gray-50"
+                      >
                             <TableCell className="px-1">
                               <Checkbox
                                 checked={selectedIds.has(item.id)}
@@ -609,9 +579,6 @@ export default function ItemsList() {
                             </TableCell>
                             <TableCell className="px-1 font-semibold">
                               <PeekableTruncated text={item.item_code} onPeek={setPeekText} />
-                            </TableCell>
-                            <TableCell className="px-1 text-sm text-muted-foreground">
-                              <PeekableTruncated text={getCategory(item.process_metadata) ?? ''} onPeek={setPeekText} />
                             </TableCell>
                             <TableCell className="px-1">
                               <div className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -636,18 +603,6 @@ export default function ItemsList() {
                             <TableCell className="px-1 text-sm text-muted-foreground">
                               <PeekableTruncated text={item.manufacturer} onPeek={setPeekText} />
                             </TableCell>
-                            <TableCell className="px-1 text-center">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="h-8 px-2 text-[11px] font-black"
-                                disabled={!detailEnabled}
-                                onClick={() => setExpandedId((prev) => (prev === item.id ? null : item.id))}
-                              >
-                                공정상세
-                              </Button>
-                            </TableCell>
                             <TableCell className="px-1">
                               <PeekableTruncated text={item.item_spec} className="font-medium text-foreground" onPeek={setPeekText} />
                             </TableCell>
@@ -658,13 +613,26 @@ export default function ItemsList() {
                               <PeekableTruncated text={item.remarks} onPeek={setPeekText} />
                             </TableCell>
                             <TableCell className="px-1 text-center">
-                              <Badge variant={item.is_active ? 'secondary' : 'destructive'} className="font-black">
+                              <Badge
+                                variant="outline"
+                                className={
+                                  item.is_active
+                                    ? 'border-emerald-300 bg-emerald-50 font-black text-emerald-700'
+                                    : 'border-red-300 bg-red-50 font-black text-red-700'
+                                }
+                              >
                                 {item.is_active ? '사용중' : '중단'}
                               </Badge>
                             </TableCell>
                             <TableCell className="text-center">
                               {canEdit ? (
-                                <Button variant="link" size="sm" className="h-auto p-0 font-black" asChild>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 rounded-lg border border-gray-300 bg-white px-2 text-[11px] font-black text-gray-700 hover:bg-gray-50"
+                                  asChild
+                                >
                                   <Link href={`/items/${item.id}`}>정보 수정</Link>
                                 </Button>
                               ) : (
@@ -672,64 +640,14 @@ export default function ItemsList() {
                               )}
                             </TableCell>
                           </TableRow>
-                          {expandedId === item.id ? (
-                            <TableRow className="bg-muted/40 hover:bg-muted/40">
-                              <TableCell colSpan={colCount} className="p-3">
-                                <ItemProcessDetailGrid
-                                  meta={displayMeta}
-                                  categories={categories}
-                                  className="w-full"
-                                  equalStepWidths
-                                  sopCell={
-                                    sopFiles.length === 0 ? (
-                                      <Button type="button" variant="secondary" size="sm" className="h-7 px-2 text-[10px] font-black" disabled>
-                                        다운
-                                      </Button>
-                                    ) : sopFiles.length === 1 ? (
-                                      <Button
-                                        type="button"
-                                        variant="secondary"
-                                        size="sm"
-                                        className="h-7 px-2 text-[10px] font-black"
-                                        onClick={() => void openSignedSopDownload(sopFiles[0].path)}
-                                      >
-                                        다운
-                                      </Button>
-                                    ) : (
-                                      <div className="flex flex-col items-stretch gap-0.5">
-                                        {sopFiles.map((f) => (
-                                          <Button
-                                            key={f.path}
-                                            type="button"
-                                            variant="secondary"
-                                            size="sm"
-                                            className="h-6 truncate px-1 text-[9px] font-black"
-                                            title={f.name}
-                                            onClick={() => void openSignedSopDownload(f.path)}
-                                          >
-                                            다운
-                                          </Button>
-                                        ))}
-                                      </div>
-                                    )
-                                  }
-                                />
-                                <p className="mt-2 text-center text-[10px] font-bold text-muted-foreground">
-                                  공정 단계 정의는 「공정 상세 설정」(시스템 관리자)에서 하고, 각 품목에는 「정보 수정」에서 공정명·체크를 적용합니다.
-                                </p>
-                              </TableCell>
-                            </TableRow>
-                          ) : null}
-                        </Fragment>
-                      )
-                    })
+                    ))
                   )}
                 </TableBody>
               </Table>
             </div>
           )}
           {!loading && filteredItems.length > 0 ? (
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2 text-[11px] font-bold text-muted-foreground">
+            <div className="flex flex-col gap-3 border-t-2 border-black bg-gray-50 px-4 py-3 text-[11px] font-bold text-gray-600 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
               <span>
                 조건 일치 {filteredItems.length}건
                 {totalPages > 1
@@ -737,18 +655,25 @@ export default function ItemsList() {
                   : null}
               </span>
               {totalPages > 1 ? (
-                <div className="flex items-center gap-1.5">
-                  <Button type="button" variant="outline" size="sm" className="h-8 text-xs font-black" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 rounded-lg border-2 border-black bg-white px-3 text-xs font-black text-gray-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-gray-100 disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:shadow-none"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => p - 1)}
+                  >
                     이전
                   </Button>
-                  <span className="min-w-[3.5rem] text-center font-black text-foreground">
+                  <span className="min-w-[4.5rem] text-center font-black text-gray-700">
                     {page} / {totalPages}
                   </span>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
-                    className="h-8 text-xs font-black"
+                    className="h-8 rounded-lg border-2 border-black bg-white px-3 text-xs font-black text-gray-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-gray-100 disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:shadow-none"
                     disabled={page >= totalPages}
                     onClick={() => setPage((p) => p + 1)}
                   >
