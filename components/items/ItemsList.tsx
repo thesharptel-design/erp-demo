@@ -49,6 +49,63 @@ type ItemRow = {
   process_metadata: ProcessMetadata | Record<string, unknown> | null
 }
 
+type UploadConflictPolicy = 'skip' | 'overwrite' | 'rename_add'
+
+type ExcelUploadRow = {
+  item_code: string
+  item_name: string
+  item_spec: string | null
+  unit: string
+  manufacturer: string | null
+  remarks: string | null
+  is_lot_managed: boolean
+  is_exp_managed: boolean
+  is_sn_managed: boolean
+}
+
+type PendingExcelUpload = {
+  fileName: string
+  rows: ExcelUploadRow[]
+  conflictCodeCount: number
+  conflictNameCount: number
+  duplicateInFileCount: number
+  skippedInvalidCount: number
+  conflictRows: Array<{
+    rowNo: number
+    item_code: string
+    item_name: string
+    codeConflict: boolean
+    nameConflict: boolean
+  }>
+}
+
+type UploadSummary = {
+  requested: number
+  inserted: number
+  skipped: number
+  overwritten: number
+  renamedInserted: number
+  failed: number
+}
+
+function normalizeText(v: string | null | undefined) {
+  return String(v ?? '')
+    .trim()
+    .toLowerCase()
+}
+
+function buildRenamedValue(base: string, used: Set<string>, suffixLabel: string) {
+  const seed = base.trim() || suffixLabel
+  let attempt = 1
+  while (attempt <= 9999) {
+    const candidate = `${seed}-${suffixLabel}${String(attempt).padStart(2, '0')}`
+    const key = normalizeText(candidate)
+    if (!used.has(key)) return candidate
+    attempt += 1
+  }
+  return `${seed}-${suffixLabel}${Date.now()}`
+}
+
 function parseBoolCell(v: unknown): boolean {
   const s = String(v ?? '')
     .trim()
@@ -118,6 +175,10 @@ export default function ItemsList() {
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [confirmBulkOpen, setConfirmBulkOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [uploadPolicy, setUploadPolicy] = useState<UploadConflictPolicy>('skip')
+  const [confirmUploadOpen, setConfirmUploadOpen] = useState(false)
+  const [pendingUpload, setPendingUpload] = useState<PendingExcelUpload | null>(null)
+  const [uploadOverrides, setUploadOverrides] = useState<Record<number, UploadConflictPolicy>>({})
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [filterItemCode, setFilterItemCode] = useState('')
@@ -299,7 +360,7 @@ export default function ItemsList() {
       toast.message('엑셀 업로드 권한이 없습니다.')
       return
     }
-    setUploading(true)
+
     try {
       const buf = await file.arrayBuffer()
       const wb = XLSX.read(buf, { type: 'array' })
@@ -308,56 +369,259 @@ export default function ItemsList() {
         toast.error('시트를 찾을 수 없습니다.')
         return
       }
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
-      let ok = 0
-      const rowErrors: string[] = []
 
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i]
+      const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '' })
+      const parsedRows: ExcelUploadRow[] = []
+      const fileCodeSeen = new Set<string>()
+      const fileNameSeen = new Set<string>()
+      let duplicateInFileCount = 0
+      let skippedInvalidCount = 0
+
+      for (const row of rawRows) {
         const itemCode = rowString(row, '품목코드', 'item_code', '코드')
         const itemName = rowString(row, '품목명', 'item_name', '이름')
-        if (!itemCode || !itemName) continue
+        if (!itemCode || !itemName) {
+          skippedInvalidCount += 1
+          continue
+        }
         if (itemCode.toUpperCase() === 'SAMPLE-001') continue
 
-        const payload = {
+        const codeKey = normalizeText(itemCode)
+        const nameKey = normalizeText(itemName)
+        if (fileCodeSeen.has(codeKey) || fileNameSeen.has(nameKey)) {
+          duplicateInFileCount += 1
+        }
+        fileCodeSeen.add(codeKey)
+        fileNameSeen.add(nameKey)
+
+        parsedRows.push({
           item_code: itemCode,
           item_name: itemName,
           item_spec: rowString(row, '규격', 'item_spec') || null,
           unit: rowString(row, '단위', 'unit') || 'EA',
-          item_type: 'finished',
           manufacturer: rowString(row, '제조사', 'manufacturer') || null,
           remarks: rowString(row, '비고', 'remarks') || null,
-          sales_price: 0,
-          purchase_price: 0,
-          is_active: true,
           is_lot_managed: parseBoolCell(row['LOT관리'] ?? row['is_lot_managed']),
           is_exp_managed: parseBoolCell(row['EXP관리'] ?? row['is_exp_managed']),
           is_sn_managed: parseBoolCell(row['SN관리'] ?? row['is_sn_managed']),
+        })
+      }
+
+      if (parsedRows.length === 0) {
+        toast.message('처리할 유효 행이 없습니다. 품목코드·품목명을 확인하세요.')
+        return
+      }
+
+      const codes = Array.from(new Set(parsedRows.map((r) => r.item_code.trim())))
+      const names = Array.from(new Set(parsedRows.map((r) => r.item_name.trim())))
+
+      const [codeConflictRes, nameConflictRes] = await Promise.all([
+        supabase.from('items').select('id,item_code').in('item_code', codes),
+        supabase.from('items').select('id,item_name').in('item_name', names),
+      ])
+
+      const conflictCodeCount = (codeConflictRes.data ?? []).length
+      const conflictNameCount = (nameConflictRes.data ?? []).length
+      const codeConflictSet = new Set((codeConflictRes.data ?? []).map((r) => normalizeText(r.item_code)))
+      const nameConflictSet = new Set((nameConflictRes.data ?? []).map((r) => normalizeText(r.item_name)))
+
+      const conflictRows = parsedRows
+        .map((row, index) => {
+          const codeConflict = codeConflictSet.has(normalizeText(row.item_code))
+          const nameConflict = nameConflictSet.has(normalizeText(row.item_name))
+          return {
+            rowNo: index + 1,
+            item_code: row.item_code,
+            item_name: row.item_name,
+            codeConflict,
+            nameConflict,
+          }
+        })
+        .filter((r) => r.codeConflict || r.nameConflict)
+
+      setPendingUpload({
+        fileName: file.name,
+        rows: parsedRows,
+        conflictCodeCount,
+        conflictNameCount,
+        duplicateInFileCount,
+        skippedInvalidCount,
+        conflictRows,
+      })
+      setUploadOverrides({})
+      setConfirmUploadOpen(true)
+    } catch (e) {
+      toast.error('엑셀 분석 중 오류', {
+        description: e instanceof Error ? e.message : String(e),
+      })
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
+
+  const runExcelUploadWithPolicy = async () => {
+    if (!pendingUpload) return
+
+    setUploading(true)
+    setConfirmUploadOpen(false)
+
+    const summary: UploadSummary = {
+      requested: pendingUpload.rows.length,
+      inserted: 0,
+      skipped: 0,
+      overwritten: 0,
+      renamedInserted: 0,
+      failed: 0,
+    }
+    const rowErrors: string[] = []
+
+    try {
+      const codeSet = new Set(pendingUpload.rows.map((r) => r.item_code.trim()))
+      const nameSet = new Set(pendingUpload.rows.map((r) => r.item_name.trim()))
+      const [codeRes, nameRes] = await Promise.all([
+        supabase
+          .from('items')
+          .select('id,item_code,item_name')
+          .in('item_code', Array.from(codeSet)),
+        supabase
+          .from('items')
+          .select('id,item_code,item_name')
+          .in('item_name', Array.from(nameSet)),
+      ])
+
+      const existingByCode = new Map<string, { id: number; item_code: string; item_name: string | null }>()
+      const existingByName = new Map<string, { id: number; item_code: string; item_name: string | null }>()
+      const usedCodeKeys = new Set<string>()
+      const usedNameKeys = new Set<string>()
+
+      for (const row of (codeRes.data ?? []) as { id: number; item_code: string; item_name: string | null }[]) {
+        const key = normalizeText(row.item_code)
+        existingByCode.set(key, row)
+        usedCodeKeys.add(key)
+        if (row.item_name) usedNameKeys.add(normalizeText(row.item_name))
+      }
+      for (const row of (nameRes.data ?? []) as { id: number; item_code: string; item_name: string | null }[]) {
+        const key = normalizeText(row.item_name)
+        existingByName.set(key, row)
+        usedCodeKeys.add(normalizeText(row.item_code))
+        if (row.item_name) usedNameKeys.add(key)
+      }
+
+      for (const [idx, row] of pendingUpload.rows.entries()) {
+        const basePayload = {
+          item_code: row.item_code.trim(),
+          item_name: row.item_name.trim(),
+          item_spec: row.item_spec,
+          unit: row.unit.trim() || 'EA',
+          item_type: 'finished',
+          manufacturer: row.manufacturer,
+          remarks: row.remarks,
+          sales_price: 0,
+          purchase_price: 0,
+          is_active: true,
+          is_lot_managed: row.is_lot_managed,
+          is_exp_managed: row.is_exp_managed,
+          is_sn_managed: row.is_sn_managed,
+        }
+
+        const codeKey = normalizeText(basePayload.item_code)
+        const nameKey = normalizeText(basePayload.item_name)
+        const hasCodeConflict = existingByCode.has(codeKey)
+        const hasNameConflict = existingByName.has(nameKey)
+        const hasConflict = hasCodeConflict || hasNameConflict
+        const effectivePolicy = hasConflict ? (uploadOverrides[idx] ?? uploadPolicy) : uploadPolicy
+
+        if (hasConflict && effectivePolicy === 'skip') {
+          summary.skipped += 1
+          continue
+        }
+
+        if (hasConflict && effectivePolicy === 'overwrite') {
+          const target = existingByCode.get(codeKey) ?? existingByName.get(nameKey)
+          if (!target) {
+            summary.failed += 1
+            rowErrors.push(`${basePayload.item_code}: 덮어쓰기 대상 행을 찾지 못했습니다.`)
+            continue
+          }
+
+          const { error } = await supabase.from('items').update(basePayload).eq('id', target.id)
+          if (error) {
+            summary.failed += 1
+            rowErrors.push(`${basePayload.item_code}: ${error.message}`)
+            continue
+          }
+
+          summary.overwritten += 1
+          existingByCode.set(normalizeText(basePayload.item_code), {
+            id: target.id,
+            item_code: basePayload.item_code,
+            item_name: basePayload.item_name,
+          })
+          existingByName.set(normalizeText(basePayload.item_name), {
+            id: target.id,
+            item_code: basePayload.item_code,
+            item_name: basePayload.item_name,
+          })
+          usedCodeKeys.add(normalizeText(basePayload.item_code))
+          usedNameKeys.add(normalizeText(basePayload.item_name))
+          continue
+        }
+
+        const payload = { ...basePayload }
+        let isRenamedInsert = false
+
+        if (hasConflict && effectivePolicy === 'rename_add') {
+          if (hasCodeConflict) {
+            payload.item_code = buildRenamedValue(payload.item_code, usedCodeKeys, 'COPY')
+          }
+          if (hasNameConflict) {
+            payload.item_name = buildRenamedValue(payload.item_name, usedNameKeys, 'NEW')
+          }
+          isRenamedInsert = true
         }
 
         const { error } = await supabase.from('items').insert(payload)
         if (error) {
-          rowErrors.push(`${itemCode}: ${error.message}`)
-        } else {
-          ok += 1
+          summary.failed += 1
+          rowErrors.push(`${basePayload.item_code}: ${error.message}`)
+          continue
         }
+
+        if (isRenamedInsert) summary.renamedInserted += 1
+        else summary.inserted += 1
+
+        usedCodeKeys.add(normalizeText(payload.item_code))
+        usedNameKeys.add(normalizeText(payload.item_name))
+        existingByCode.set(normalizeText(payload.item_code), { id: -1, item_code: payload.item_code, item_name: payload.item_name })
+        existingByName.set(normalizeText(payload.item_name), { id: -1, item_code: payload.item_code, item_name: payload.item_name })
       }
 
-      if (ok > 0) toast.success(`${ok}건 등록 완료`)
-      if (rowErrors.length > 0) {
-        toast.error('일부 행에서 오류', { description: rowErrors.slice(0, 8).join('\n') })
-      }
-      if (ok === 0 && rowErrors.length === 0) {
-        toast.message('처리할 유효 행이 없습니다. 품목코드·품목명을 확인하세요.')
-      }
       await loadItems()
+
+      toast.success(`엑셀 업로드 완료 (${summary.requested}건 요청)`, {
+        description: [
+          `신규 등록 ${summary.inserted}건`,
+          `건너뛰기 ${summary.skipped}건`,
+          `덮어쓰기 ${summary.overwritten}건`,
+          `이름/코드 변경 추가 ${summary.renamedInserted}건`,
+          `실패 ${summary.failed}건`,
+        ].join('\n'),
+      })
+
+      if (pendingUpload.skippedInvalidCount > 0) {
+        toast.message(`빈 코드/이름 등 유효하지 않은 ${pendingUpload.skippedInvalidCount}행은 자동 제외했습니다.`)
+      }
+      if (rowErrors.length > 0) {
+        toast.error('일부 행 처리 실패', { description: rowErrors.slice(0, 8).join('\n') })
+      }
     } catch (e) {
-      toast.error('엑셀 처리 중 오류', {
+      toast.error('엑셀 업로드 처리 중 오류', {
         description: e instanceof Error ? e.message : String(e),
       })
     } finally {
       setUploading(false)
-      if (fileInputRef.current) fileInputRef.current.value = ''
+      setPendingUpload(null)
+      setUploadOverrides({})
     }
   }
 
@@ -375,7 +639,7 @@ export default function ItemsList() {
             ) : null}
           </p>
         </div>
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-wrap gap-2">
           <input
             ref={fileInputRef}
             type="file"
@@ -390,7 +654,7 @@ export default function ItemsList() {
             type="button"
             variant="outline"
             size="sm"
-            className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-xs font-black text-gray-800 hover:bg-gray-50"
+            className="inline-flex h-9 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-3 text-[11px] font-black text-gray-800 hover:bg-gray-50"
             disabled={loading}
             onClick={() => void loadItems()}
           >
@@ -400,26 +664,26 @@ export default function ItemsList() {
             type="button"
             variant="outline"
             size="sm"
-            className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-xs font-black text-gray-800 hover:bg-gray-50"
+            className="inline-flex h-9 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-3 text-[11px] font-black text-gray-800 hover:bg-gray-50"
             onClick={downloadExcelTemplate}
           >
-            템플릿 다운로드
+            템플릿
           </Button>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-xs font-black text-gray-800 hover:bg-gray-50"
+            className="inline-flex h-9 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-3 text-[11px] font-black text-gray-800 hover:bg-gray-50"
             disabled={uploading || !canEdit}
             onClick={() => fileInputRef.current?.click()}
           >
-            {uploading ? '업로드 중…' : '엑셀 일괄 업로드'}
+            {uploading ? '업로드 중…' : '엑셀 업로드'}
           </Button>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-black bg-white px-4 text-xs font-black text-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-gray-50 active:translate-y-1 active:shadow-none"
+            className="inline-flex h-9 items-center justify-center rounded-xl border-2 border-black bg-white px-3 text-[11px] font-black text-black shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-gray-50 active:translate-y-1 active:shadow-none"
             disabled={selectedIds.size === 0 || bulkDeleting || !canEdit}
             onClick={() => setConfirmBulkOpen(true)}
           >
@@ -430,18 +694,18 @@ export default function ItemsList() {
               asChild
               variant="outline"
               size="sm"
-              className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-xs font-black text-gray-800 hover:bg-gray-50"
+              className="inline-flex h-9 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-3 text-[11px] font-black text-gray-800 hover:bg-gray-50"
             >
-              <Link href="/items/process-config">공정 상세 설정</Link>
+              <Link href="/items/process-config">공정 설정</Link>
             </Button>
           ) : null}
           {canEdit ? (
             <Button
               asChild
               size="sm"
-              className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-black bg-blue-600 px-4 text-xs font-black text-white shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-blue-700 active:translate-y-1 active:shadow-none"
+              className="inline-flex h-9 items-center justify-center rounded-xl border-2 border-black bg-blue-600 px-3 text-[11px] font-black text-white shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-blue-700 active:translate-y-1 active:shadow-none"
             >
-              <Link href="/items/new">품목 개별 등록</Link>
+              <Link href="/items/new">개별 등록</Link>
             </Button>
           ) : (
             <Button
@@ -449,9 +713,9 @@ export default function ItemsList() {
               size="sm"
               disabled
               title="시스템 관리자 이상만 등록할 수 있습니다."
-              className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-100 px-4 text-xs font-black text-gray-400"
+              className="inline-flex h-9 items-center justify-center rounded-xl border-2 border-gray-200 bg-gray-100 px-3 text-[11px] font-black text-gray-400"
             >
-              품목 개별 등록
+              개별 등록
             </Button>
           )}
         </div>
@@ -695,6 +959,123 @@ export default function ItemsList() {
           <p className="max-h-[min(60vh,24rem)] overflow-y-auto whitespace-pre-wrap break-words text-sm font-medium text-foreground">{peekText}</p>
           <AlertDialogFooter>
             <AlertDialogAction>닫기</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={confirmUploadOpen}
+        onOpenChange={(open) => {
+          setConfirmUploadOpen(open)
+          if (!open) {
+            setPendingUpload(null)
+            setUploadOverrides({})
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>엑셀 업로드 충돌 처리 옵션</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingUpload
+                ? [
+                    `파일: ${pendingUpload.fileName}`,
+                    `요청 ${pendingUpload.rows.length}건`,
+                    `코드 충돌 ${pendingUpload.conflictCodeCount}건`,
+                    `이름 충돌 ${pendingUpload.conflictNameCount}건`,
+                    `파일 내 중복 ${pendingUpload.duplicateInFileCount}건`,
+                  ].join(' · ')
+                : '충돌 처리 방식을 선택하세요.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="grid gap-2">
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm">
+              <input
+                type="radio"
+                name="upload-policy"
+                checked={uploadPolicy === 'skip'}
+                onChange={() => setUploadPolicy('skip')}
+              />
+              <span className="font-bold text-gray-800">건너뛰기 (중복 행은 제외)</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm">
+              <input
+                type="radio"
+                name="upload-policy"
+                checked={uploadPolicy === 'overwrite'}
+                onChange={() => setUploadPolicy('overwrite')}
+              />
+              <span className="font-bold text-gray-800">덮어쓰기 (기존 품목 수정)</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm">
+              <input
+                type="radio"
+                name="upload-policy"
+                checked={uploadPolicy === 'rename_add'}
+                onChange={() => setUploadPolicy('rename_add')}
+              />
+              <span className="font-bold text-gray-800">이름/코드 변경 후 추가</span>
+            </label>
+          </div>
+          {pendingUpload && pendingUpload.conflictRows.length > 0 ? (
+            <div className="mt-2 space-y-2">
+              <p className="text-xs font-black text-gray-600">
+                예외 행 지정 ({pendingUpload.conflictRows.length}건 충돌, 기본 정책: {uploadPolicy})
+              </p>
+              <div className="max-h-56 space-y-2 overflow-y-auto rounded-lg border border-gray-200 p-2">
+                {pendingUpload.conflictRows.slice(0, 20).map((row) => {
+                  const rowIdx = row.rowNo - 1
+                  const rowPolicy = uploadOverrides[rowIdx] ?? uploadPolicy
+                  return (
+                    <div key={`${row.rowNo}-${row.item_code}`} className="flex flex-col gap-1 rounded-md border border-gray-100 bg-gray-50 px-2 py-2">
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="font-black text-gray-700">#{row.rowNo}</span>
+                        <span className="font-bold text-gray-800">{row.item_code}</span>
+                        <span className="text-gray-600">{row.item_name}</span>
+                      </div>
+                      <div className="text-[11px] font-bold text-amber-700">
+                        {row.codeConflict ? '코드 중복' : ''}{row.codeConflict && row.nameConflict ? ' · ' : ''}
+                        {row.nameConflict ? '이름 중복' : ''}
+                      </div>
+                      <select
+                        value={rowPolicy}
+                        onChange={(e) => {
+                          const next = e.target.value as UploadConflictPolicy
+                          setUploadOverrides((prev) => {
+                            const base = { ...prev }
+                            if (next === uploadPolicy) delete base[rowIdx]
+                            else base[rowIdx] = next
+                            return base
+                          })
+                        }}
+                        className="rounded-md border border-gray-300 bg-white px-2 py-1 text-xs font-bold text-gray-800"
+                      >
+                        <option value="skip">건너뛰기</option>
+                        <option value="overwrite">덮어쓰기</option>
+                        <option value="rename_add">이름/코드 변경 추가</option>
+                      </select>
+                    </div>
+                  )
+                })}
+                {pendingUpload.conflictRows.length > 20 ? (
+                  <p className="px-1 text-[11px] font-bold text-gray-500">
+                    충돌이 많아 상위 20건만 표시됩니다. 표시되지 않은 행은 기본 정책을 따릅니다.
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={uploading}>취소</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={uploading || !pendingUpload}
+              onClick={(e) => {
+                e.preventDefault()
+                void runExcelUploadWithPolicy()
+              }}
+            >
+              {uploading ? '처리 중…' : '선택 방식으로 업로드'}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
