@@ -7,6 +7,8 @@ import { supabase } from '@/lib/supabase'
 import { formatWriterDepartmentLabel } from '@/lib/approval-draft'
 import { normalizeApprovalRole, type ApprovalRole } from '@/lib/approval-roles'
 import { buildApprovalLines, buildApprovalParticipantsRows, normalizeParticipants } from '@/lib/approval-participants'
+import { executionDateForDb, isCompleteValidExecutionDate } from '@/lib/execution-date-input'
+import ExecutionDateHybridInput from '@/components/approvals/ExecutionDateHybridInput'
 import SearchableCombobox, { type ComboboxOption } from '@/components/SearchableCombobox'
 import ApprovalLineDnD from '@/components/approvals/ApprovalLineDnD'
 import type { ApprovalOrderItem } from '@/components/approvals/ApprovalDraftPaper'
@@ -379,6 +381,14 @@ export default function EditApprovalPage({
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
 
+    if (canEdit) {
+      const form = e.currentTarget
+      if (!form.checkValidity()) {
+        form.reportValidity()
+        return
+      }
+    }
+
     setErrorMessage('')
     setSuccessMessage('')
 
@@ -402,6 +412,11 @@ export default function EditApprovalPage({
       return
     }
 
+    if (!isCompleteValidExecutionDate(executionStartDate) || !isCompleteValidExecutionDate(executionEndDate)) {
+      setErrorMessage('시행 시작일·종료일을 모두 입력하십시오.')
+      return
+    }
+
     if (!writerId) {
       setErrorMessage('작성자를 선택하십시오.')
       return
@@ -417,7 +432,9 @@ export default function EditApprovalPage({
       return
     }
 
-    if (executionStartDate && executionEndDate && executionEndDate < executionStartDate) {
+    const startIso = executionDateForDb(executionStartDate)
+    const endIso = executionDateForDb(executionEndDate)
+    if (startIso && endIso && endIso < startIso) {
       setErrorMessage('시행 종료일은 시작일 이후여야 합니다.')
       return
     }
@@ -430,8 +447,8 @@ export default function EditApprovalPage({
         doc_type: docType,
         title: title.trim(),
         content: content.trim(),
-        execution_start_date: executionStartDate || null,
-        execution_end_date: executionEndDate || null,
+        execution_start_date: startIso,
+        execution_end_date: endIso,
         cooperation_dept: cooperationDept.trim() || null,
         agreement_text: agreementText.trim() || null,
         writer_id: writerId,
@@ -567,24 +584,26 @@ export default function EditApprovalPage({
           </div>
 
           <div className="md:col-span-2">
-            <label className="mb-2 block text-sm font-medium text-gray-700">
-              시행일자
-            </label>
+            <label className="mb-2 block text-sm font-medium text-gray-700">시행일자</label>
             <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-              <input
-                type="date"
+              <ExecutionDateHybridInput
                 value={executionStartDate}
-                onChange={(e) => setExecutionStartDate(e.target.value)}
+                onChange={setExecutionStartDate}
                 disabled={!canEdit}
-                className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black disabled:bg-gray-100"
+                placeholder="시작일 (YYYYMMDD)"
+                calendarLabel="시작일 달력"
+                inputClassName="w-full min-w-0 flex-1 rounded-xl border border-gray-300 px-4 py-3 font-bold tracking-wide outline-none focus:border-black disabled:bg-gray-100"
+                buttonClassName="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
               />
               <span className="text-sm font-bold text-gray-500">~</span>
-              <input
-                type="date"
+              <ExecutionDateHybridInput
                 value={executionEndDate}
-                onChange={(e) => setExecutionEndDate(e.target.value)}
+                onChange={setExecutionEndDate}
                 disabled={!canEdit}
-                className="w-full rounded-xl border border-gray-300 px-4 py-3 outline-none focus:border-black disabled:bg-gray-100"
+                placeholder="종료일 (YYYYMMDD)"
+                calendarLabel="종료일 달력"
+                inputClassName="w-full min-w-0 flex-1 rounded-xl border border-gray-300 px-4 py-3 font-bold tracking-wide outline-none focus:border-black disabled:bg-gray-100"
+                buttonClassName="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
           </div>

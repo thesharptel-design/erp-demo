@@ -20,6 +20,14 @@ type ApprovalDraftRichEditorProps = {
   onChange: (html: string) => void
   disabled?: boolean
   placeholder?: string
+  /** Defaults to `/api/approvals/attachments/upload`. */
+  imageUploadUrl?: string
+  /** Shown in the image upload help line (e.g. `board_attachments`). */
+  attachmentStorageKey?: string
+  /** Appended to the editable surface class (e.g. larger `min-h-*` for board). */
+  editorSurfaceClassName?: string
+  /** Second toolbar row (e.g. board “FMKorea-style” chrome). */
+  splitToolbar?: boolean
 }
 
 function toInitialContent(raw: string): string {
@@ -52,11 +60,18 @@ function firstImageFromDataTransfer(dt: DataTransfer | null): File | null {
   return null
 }
 
+const DEFAULT_IMAGE_UPLOAD_URL = '/api/approvals/attachments/upload'
+const DEFAULT_ATTACHMENT_STORAGE_KEY = 'approval_attachments'
+
 export default function ApprovalDraftRichEditor({
   value,
   onChange,
   disabled,
   placeholder = '업무기안 내용을 입력하세요',
+  imageUploadUrl = DEFAULT_IMAGE_UPLOAD_URL,
+  attachmentStorageKey = DEFAULT_ATTACHMENT_STORAGE_KEY,
+  editorSurfaceClassName = '',
+  splitToolbar = false,
 }: ApprovalDraftRichEditorProps) {
   const [uploadErrorMessage, setUploadErrorMessage] = useState('')
   const [isUploadingImage, setIsUploadingImage] = useState(false)
@@ -76,7 +91,7 @@ export default function ApprovalDraftRichEditor({
     }
     const formData = new FormData()
     formData.append('file', file)
-    const response = await fetch('/api/approvals/attachments/upload', {
+    const response = await fetch(imageUploadUrl, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${session.access_token}`,
@@ -91,7 +106,7 @@ export default function ApprovalDraftRichEditor({
       throw new Error('업로드 URL을 확인할 수 없습니다.')
     }
     return payload.publicUrl as string
-  }, [])
+  }, [imageUploadUrl])
 
   const uploadAndInsertImage = useCallback(
     async (ed: Editor, file: File, dropPos?: number | null) => {
@@ -135,8 +150,14 @@ export default function ApprovalDraftRichEditor({
     editable: !disabled,
     editorProps: {
       attributes: {
-        class:
-          'focus:outline-none min-h-[200px] px-3 py-2 text-sm leading-relaxed text-gray-900 [&_img]:max-h-80 [&_img]:max-w-full [&_img]:rounded [&_img]:border [&_img]:border-gray-200 [&_li]:my-0.5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-6',
+        class: [
+          'focus:outline-none min-h-[200px] px-3 py-2 text-sm leading-relaxed text-gray-900',
+          '[&_img]:max-h-80 [&_img]:max-w-full [&_img]:rounded [&_img]:border [&_img]:border-gray-200',
+          '[&_li]:my-0.5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-6',
+          editorSurfaceClassName,
+        ]
+          .filter(Boolean)
+          .join(' '),
       },
       handlePaste(_view: EditorView, event: ClipboardEvent) {
         if (disabledRef.current) return false
@@ -239,118 +260,140 @@ export default function ApprovalDraftRichEditor({
   const btn =
     'rounded border border-gray-300 bg-white px-2 py-1 text-[11px] font-black text-gray-800 hover:bg-gray-50 disabled:opacity-40'
   const btnOn = 'rounded border border-blue-600 bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-800'
+  const sep = <span className="mx-1 text-gray-300">|</span>
+
+  const toolbarRowStyle = 'flex flex-wrap items-center gap-1 border-b border-gray-300 bg-gray-100 p-1.5'
+
+  const toolbarMarksAlignLists = (
+    <>
+      <button
+        type="button"
+        className={editor.isActive('bold') ? btnOn : btn}
+        onClick={() => editor.chain().focus().toggleBold().run()}
+      >
+        굵게
+      </button>
+      <button
+        type="button"
+        className={editor.isActive('italic') ? btnOn : btn}
+        onClick={() => editor.chain().focus().toggleItalic().run()}
+      >
+        기울임
+      </button>
+      <button
+        type="button"
+        className={editor.isActive('underline') ? btnOn : btn}
+        onClick={() => editor.chain().focus().toggleUnderline().run()}
+      >
+        밑줄
+      </button>
+      <button
+        type="button"
+        className={editor.isActive('strike') ? btnOn : btn}
+        onClick={() => editor.chain().focus().toggleStrike().run()}
+      >
+        취소선
+      </button>
+      {sep}
+      <button
+        type="button"
+        className={editor.isActive({ textAlign: 'left' }) ? btnOn : btn}
+        onClick={() => editor.chain().focus().setTextAlign('left').run()}
+      >
+        왼쪽
+      </button>
+      <button
+        type="button"
+        className={editor.isActive({ textAlign: 'center' }) ? btnOn : btn}
+        onClick={() => editor.chain().focus().setTextAlign('center').run()}
+      >
+        가운데
+      </button>
+      <button
+        type="button"
+        className={editor.isActive({ textAlign: 'right' }) ? btnOn : btn}
+        onClick={() => editor.chain().focus().setTextAlign('right').run()}
+      >
+        오른쪽
+      </button>
+      <button
+        type="button"
+        className={editor.isActive({ textAlign: 'justify' }) ? btnOn : btn}
+        onClick={() => editor.chain().focus().setTextAlign('justify').run()}
+      >
+        양쪽
+      </button>
+      {sep}
+      <button
+        type="button"
+        className={editor.isActive('bulletList') ? btnOn : btn}
+        onClick={() => editor.chain().focus().toggleBulletList().run()}
+      >
+        글머리
+      </button>
+      <button
+        type="button"
+        className={editor.isActive('orderedList') ? btnOn : btn}
+        onClick={() => editor.chain().focus().toggleOrderedList().run()}
+      >
+        번호
+      </button>
+    </>
+  )
+
+  const toolbarHeadingsColorMedia = (
+    <>
+      <button type="button" className={btn} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>
+        소제목
+      </button>
+      <button type="button" className={btn} onClick={() => editor.chain().focus().toggleBlockquote().run()}>
+        인용
+      </button>
+      {sep}
+      <label className={`${btn} inline-flex cursor-pointer items-center gap-1`}>
+        글자색
+        <input
+          type="color"
+          className="h-5 w-6 cursor-pointer border-0 bg-transparent p-0"
+          onInput={(e) => editor.chain().focus().setColor(e.currentTarget.value).run()}
+        />
+      </label>
+      <button type="button" className={btn} onClick={() => editor.chain().focus().unsetColor().run()}>
+        색 지우기
+      </button>
+      {sep}
+      <button type="button" className={btn} onClick={setLink}>
+        링크
+      </button>
+      <button type="button" className={btn} onClick={() => void insertImage()}>
+        이미지
+      </button>
+    </>
+  )
 
   return (
     <div className="space-y-1">
       <div
         className={`rounded border border-gray-300 bg-gray-50 ${disabled ? 'pointer-events-none opacity-60' : ''}`}
       >
-        <div className="flex flex-wrap items-center gap-1 border-b border-gray-300 bg-gray-100 p-1.5">
-          <button
-            type="button"
-            className={editor.isActive('bold') ? btnOn : btn}
-            onClick={() => editor.chain().focus().toggleBold().run()}
-          >
-            굵게
-          </button>
-          <button
-            type="button"
-            className={editor.isActive('italic') ? btnOn : btn}
-            onClick={() => editor.chain().focus().toggleItalic().run()}
-          >
-            기울임
-          </button>
-          <button
-            type="button"
-            className={editor.isActive('underline') ? btnOn : btn}
-            onClick={() => editor.chain().focus().toggleUnderline().run()}
-          >
-            밑줄
-          </button>
-          <button
-            type="button"
-            className={editor.isActive('strike') ? btnOn : btn}
-            onClick={() => editor.chain().focus().toggleStrike().run()}
-          >
-            취소선
-          </button>
-          <span className="mx-1 text-gray-300">|</span>
-          <button
-            type="button"
-            className={editor.isActive({ textAlign: 'left' }) ? btnOn : btn}
-            onClick={() => editor.chain().focus().setTextAlign('left').run()}
-          >
-            왼쪽
-          </button>
-          <button
-            type="button"
-            className={editor.isActive({ textAlign: 'center' }) ? btnOn : btn}
-            onClick={() => editor.chain().focus().setTextAlign('center').run()}
-          >
-            가운데
-          </button>
-          <button
-            type="button"
-            className={editor.isActive({ textAlign: 'right' }) ? btnOn : btn}
-            onClick={() => editor.chain().focus().setTextAlign('right').run()}
-          >
-            오른쪽
-          </button>
-          <button
-            type="button"
-            className={editor.isActive({ textAlign: 'justify' }) ? btnOn : btn}
-            onClick={() => editor.chain().focus().setTextAlign('justify').run()}
-          >
-            양쪽
-          </button>
-          <span className="mx-1 text-gray-300">|</span>
-          <button
-            type="button"
-            className={editor.isActive('bulletList') ? btnOn : btn}
-            onClick={() => editor.chain().focus().toggleBulletList().run()}
-          >
-            글머리
-          </button>
-          <button
-            type="button"
-            className={editor.isActive('orderedList') ? btnOn : btn}
-            onClick={() => editor.chain().focus().toggleOrderedList().run()}
-          >
-            번호
-          </button>
-          <span className="mx-1 text-gray-300">|</span>
-          <button type="button" className={btn} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>
-            소제목
-          </button>
-          <button type="button" className={btn} onClick={() => editor.chain().focus().toggleBlockquote().run()}>
-            인용
-          </button>
-          <span className="mx-1 text-gray-300">|</span>
-          <label className={`${btn} inline-flex cursor-pointer items-center gap-1`}>
-            글자색
-            <input
-              type="color"
-              className="h-5 w-6 cursor-pointer border-0 bg-transparent p-0"
-              onInput={(e) => editor.chain().focus().setColor(e.currentTarget.value).run()}
-            />
-          </label>
-          <button type="button" className={btn} onClick={() => editor.chain().focus().unsetColor().run()}>
-            색 지우기
-          </button>
-          <span className="mx-1 text-gray-300">|</span>
-          <button type="button" className={btn} onClick={setLink}>
-            링크
-          </button>
-          <button type="button" className={btn} onClick={() => void insertImage()}>
-            이미지
-          </button>
-        </div>
+        {splitToolbar ? (
+          <>
+            <div className={`${toolbarRowStyle} border-gray-200`}>{toolbarMarksAlignLists}</div>
+            <div className={toolbarRowStyle}>{toolbarHeadingsColorMedia}</div>
+          </>
+        ) : (
+          <div className={toolbarRowStyle}>
+            {toolbarMarksAlignLists}
+            {sep}
+            {toolbarHeadingsColorMedia}
+          </div>
+        )}
         <EditorContent editor={editor} className="approval-tiptap-editor bg-white" />
       </div>
       <p className="text-[11px] font-bold text-gray-500">
         이미지는 툴바의 &quot;이미지&quot;뿐 아니라 <strong className="text-gray-700">Ctrl+V 붙여넣기</strong>나{' '}
         <strong className="text-gray-700">에디터 안으로 드래그 앤 드롭</strong>해도{' '}
-        <code className="rounded bg-gray-200 px-1">approval_attachments</code> 저장소에 올린 뒤 본문에 URL이
+        <code className="rounded bg-gray-200 px-1">{attachmentStorageKey}</code> 저장소에 올린 뒤 본문에 URL이
         들어갑니다.
       </p>
       {isUploadingImage && <p className="text-[11px] font-bold text-blue-600">이미지 업로드 중...</p>}

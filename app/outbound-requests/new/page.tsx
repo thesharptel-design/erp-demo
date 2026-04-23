@@ -7,6 +7,7 @@ import { useCallback, useState } from 'react'
 import { toast } from 'sonner'
 import ApprovalDraftPaper from '@/components/approvals/ApprovalDraftPaper'
 import ApprovalDraftLoadDialog from '@/components/approvals/ApprovalDraftLoadDialog'
+import { DraftFormErrorBanner, DraftFormWarningBanner } from '@/components/approvals/DraftFormAlertBanners'
 import SearchableCombobox from '@/components/SearchableCombobox'
 import { useOutboundRequestDraftForm } from '@/components/outbound/useOutboundRequestDraftForm'
 import { listOutboundWebDrafts, WEB_OUTBOUND_DRAFT_REMARKS } from '@/lib/outbound-request-draft'
@@ -116,11 +117,15 @@ export default function NewOutboundPage() {
     [allowLeavingWithoutBeforeUnloadPrompt, hasDraftContent, router]
   )
 
-  async function handleSubmit(e: FormEvent) {
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    const form = e.currentTarget
+    if (!form.checkValidity()) {
+      form.reportValidity()
+      return
+    }
     const r = await submitForApproval()
     if (!r.ok) {
-      if (!r.validationFailed) toast.error('상신에 실패했습니다.')
       return
     }
     toast.success('출고요청을 상신했습니다.')
@@ -132,8 +137,6 @@ export default function NewOutboundPage() {
     const r = await saveDraftNow()
     if (r.ok) {
       toast.success(r.localOnly ? '브라우저에 임시저장했습니다.' : '임시저장했습니다. (서버·브라우저)')
-    } else {
-      toast.error('임시저장에 실패했습니다.')
     }
   }
 
@@ -142,8 +145,6 @@ export default function NewOutboundPage() {
     const r = await deleteDraftDocument()
     if (r.ok) {
       toast.success('삭제했습니다.')
-    } else {
-      toast.error('삭제에 실패했습니다.')
     }
   }
 
@@ -168,20 +169,16 @@ export default function NewOutboundPage() {
       />
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        {errorMessage ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-600">
-            {errorMessage}
-          </div>
-        ) : null}
+        <DraftFormErrorBanner message={errorMessage} />
         {!writerHasApprovalRight ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-700">
+          <DraftFormWarningBanner>
             작성자에게 결재권이 없어 저장·상신할 수 없습니다. 관리자에게 결재권 부여를 요청하세요.
-          </div>
+          </DraftFormWarningBanner>
         ) : null}
         {warehouses.length === 0 ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-800">
+          <DraftFormWarningBanner>
             선택 가능한 창고가 없습니다. 창고 권한을 확인하거나 관리자에게 문의하세요.
-          </div>
+          </DraftFormWarningBanner>
         ) : null}
 
         <ApprovalDraftPaper

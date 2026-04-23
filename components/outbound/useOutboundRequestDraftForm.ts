@@ -14,6 +14,8 @@ import {
 import type { ApprovalRole } from '@/lib/approval-roles'
 import type { ApprovalDraftAppUser, ApprovalOrderItem } from '@/components/approvals/ApprovalDraftPaper'
 import { isHtmlContentEffectivelyEmpty } from '@/lib/html-content'
+import { executionDateForDb, isCompleteValidExecutionDate } from '@/lib/execution-date-input'
+import { dismissDraftValidationToast, showDraftValidationError } from '@/lib/draft-form-feedback'
 import { getAllowedWarehouseIds } from '@/lib/permissions'
 
 type Department = {
@@ -357,6 +359,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       setWarehouseId(String(warehouses[0]?.id ?? ''))
       setSelectedItems([{ item_id: '', quantity: 1 }])
       setItemSearchKeyword('')
+      dismissDraftValidationToast()
       setErrorMessage('')
       setLastLocalSaveAt(null)
       setLastServerSaveAt(null)
@@ -413,19 +416,19 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
 
   const validateCommon = useCallback(() => {
     if (!title.trim() || isHtmlContentEffectivelyEmpty(content)) {
-      setErrorMessage('제목과 내용을 모두 입력하십시오.')
+      showDraftValidationError(setErrorMessage, '제목과 내용을 모두 입력하십시오.')
       return false
     }
     if (!writerId) {
-      setErrorMessage('작성자 정보가 없습니다.')
+      showDraftValidationError(setErrorMessage, '작성자 정보가 없습니다.')
       return false
     }
     if (!writerHasApprovalRight) {
-      setErrorMessage('작성자는 결재권이 있어야 저장·상신할 수 있습니다.')
+      showDraftValidationError(setErrorMessage, '작성자는 결재권이 있어야 저장·상신할 수 있습니다.')
       return false
     }
     if (!warehouseId) {
-      setErrorMessage('출고 창고를 선택하십시오.')
+      showDraftValidationError(setErrorMessage, '출고 창고를 선택하십시오.')
       return false
     }
     const lines = selectedItems
@@ -435,11 +438,17 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       }))
       .filter((r) => Number.isFinite(r.item_id) && r.item_id > 0 && Number.isFinite(r.qty) && r.qty >= 1)
     if (lines.length === 0) {
-      setErrorMessage('품목을 1개 이상, 수량 1 이상으로 지정하십시오.')
+      showDraftValidationError(setErrorMessage, '품목을 1개 이상, 수량 1 이상으로 지정하십시오.')
       return false
     }
-    if (executionStartDate && executionEndDate && executionEndDate < executionStartDate) {
-      setErrorMessage('시행 종료일은 시작일 이후여야 합니다.')
+    if (!isCompleteValidExecutionDate(executionStartDate) || !isCompleteValidExecutionDate(executionEndDate)) {
+      showDraftValidationError(setErrorMessage, '시행 시작일·종료일을 모두 입력하십시오.')
+      return false
+    }
+    const startIso = executionDateForDb(executionStartDate)!
+    const endIso = executionDateForDb(executionEndDate)!
+    if (endIso < startIso) {
+      showDraftValidationError(setErrorMessage, '시행 종료일은 시작일 이후여야 합니다.')
       return false
     }
     return true
@@ -455,12 +464,15 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
   ])
 
   const saveDraftNow = useCallback(async () => {
+    dismissDraftValidationToast()
     setErrorMessage('')
     persistLocalPayload()
     if (!enableServerDraft || !writerId) {
+      dismissDraftValidationToast()
       return { ok: true as const, localOnly: true as const }
     }
     if (!warehouseId) {
+      dismissDraftValidationToast()
       return { ok: true as const, localOnly: true as const }
     }
     setIsDraftSaving(true)
@@ -480,8 +492,8 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         warehouseId: Number(warehouseId),
         itemLines,
         approvalOrder,
-        executionStartDate,
-        executionEndDate,
+        executionStartDate: executionDateForDb(executionStartDate) ?? '',
+        executionEndDate: executionDateForDb(executionEndDate) ?? '',
         cooperationDept: referenceSummary,
         agreementText,
         remarksTag: webDraftRemarksTag,
@@ -505,10 +517,11 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         }
         localStorage.setItem(autosaveKey, JSON.stringify(payload))
       }
+      dismissDraftValidationToast()
       return { ok: true as const, localOnly: false as const }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '임시저장에 실패했습니다.'
-      setErrorMessage(msg)
+      showDraftValidationError(setErrorMessage, msg)
       return { ok: false as const, localOnly: false as const }
     } finally {
       setIsDraftSaving(false)
@@ -535,6 +548,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
   ])
 
   const deleteDraftDocument = useCallback(async () => {
+    dismissDraftValidationToast()
     setErrorMessage('')
     if (!writerId) {
       clearSavedDraft()
@@ -551,7 +565,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       return { ok: true as const }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '삭제에 실패했습니다.'
-      setErrorMessage(msg)
+      showDraftValidationError(setErrorMessage, msg)
       return { ok: false as const }
     } finally {
       setIsDraftDeleting(false)
@@ -560,9 +574,10 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
 
   const loadServerDraftById = useCallback(
     async (draftDocId: number) => {
+      dismissDraftValidationToast()
       setErrorMessage('')
       if (!writerId) {
-        setErrorMessage('작성자 정보가 없습니다.')
+        showDraftValidationError(setErrorMessage, '작성자 정보가 없습니다.')
         return false
       }
       try {
@@ -604,10 +619,12 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         }
         setItemSearchKeyword('')
         setLastLocalSaveAt(new Date().toISOString())
+        dismissDraftValidationToast()
+        setErrorMessage('')
         return true
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : '불러오기에 실패했습니다.'
-        setErrorMessage(msg)
+        showDraftValidationError(setErrorMessage, msg)
         return false
       }
     },
@@ -615,12 +632,13 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
   )
 
   const submitForApproval = useCallback(async () => {
+    dismissDraftValidationToast()
     setErrorMessage('')
     if (!validateCommon()) {
       return { ok: false as const, outboundRequestId: null as number | null, validationFailed: true as const }
     }
     if (!approvalOrder.some((line) => line.role === 'approver' && line.userId.trim())) {
-      setErrorMessage('결재자를 선택하십시오.')
+      showDraftValidationError(setErrorMessage, '결재자를 선택하십시오.')
       return { ok: false as const, outboundRequestId: null as number | null, validationFailed: true as const }
     }
     setIsSaving(true)
@@ -639,8 +657,8 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         warehouseId: Number(warehouseId),
         itemLines,
         approvalOrder,
-        executionStartDate,
-        executionEndDate,
+        executionStartDate: executionDateForDb(executionStartDate) ?? '',
+        executionEndDate: executionDateForDb(executionEndDate) ?? '',
         cooperationDept: referenceSummary,
         agreementText,
         mode: 'submit',
@@ -656,9 +674,13 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       setServerDraftDocId(null)
       setLastLocalSaveAt(null)
       setLastServerSaveAt(null)
+      dismissDraftValidationToast()
       return { ok: true as const, outboundRequestId, validationFailed: false as const }
     } catch (err: unknown) {
-      setErrorMessage(getOutboundApprovalCreateErrorMessage(err as { code?: string; message: string }))
+      showDraftValidationError(
+        setErrorMessage,
+        getOutboundApprovalCreateErrorMessage(err as { code?: string; message: string })
+      )
       return { ok: false as const, outboundRequestId: null as number | null, validationFailed: false as const }
     } finally {
       setIsSaving(false)

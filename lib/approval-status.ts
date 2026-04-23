@@ -38,6 +38,7 @@ export function getDeptName(departments: { dept_name?: string } | { dept_name?: 
 export const APPROVAL_INBOX_STATUS_FILTER_OPTIONS = [
   { value: '', label: '전체' },
   { value: 'draft', label: '임시저장', keywords: ['임시'] },
+  { value: '회수됨', label: '상신취소(기안회수)', keywords: ['회수', '상신취소'] },
   { value: 'submitted', label: '결재 진행중', keywords: ['진행', '상신'] },
   { value: 'in_review', label: '협조·결재 대기', keywords: ['검토', '대기', '협조'] },
   { value: 'approved', label: '최종 승인', keywords: ['승인'] },
@@ -89,6 +90,10 @@ export function getUnifiedApprovalWorkflowBadges(
   const L = [...(lines ?? [])].sort((a, b) => a.line_no - b.line_no)
   const one = (label: string, cls: string): ApprovalStatusBadge[] => [{ label, className: badge(cls) }]
 
+  const remarks = doc.remarks || ''
+  if (doc.status === 'draft' && remarks.includes('기안 회수됨')) {
+    return one('상신취소·작성복귀', 'bg-amber-50 text-amber-900 border-amber-400 font-black')
+  }
   if (doc.status === 'draft') return one('임시저장', 'bg-gray-100 text-gray-500 font-bold border-gray-200')
   if (doc.status === 'rejected') return one('반려', 'bg-red-50 text-red-700 border-red-300 font-black')
 
@@ -137,6 +142,7 @@ export function getApprovalDocDetailedStatusLabel(
   lines?: ApprovalWorkflowLineInput[] | null
 ): string {
   const remarks = doc.remarks || ''
+  if (doc.status === 'draft' && remarks.includes('기안 회수됨')) return '상신취소·작성복귀'
   if (remarks.includes('취소 요청 중')) return '기안자 취소요청'
   if (remarks.includes('취소완료') && !remarks.includes('재고환원')) return remarks
   if (remarks.includes('취소승인')) return remarks
@@ -155,6 +161,10 @@ export function getApprovalDocDetailedStatusPresentation(
   const one = (label: string, className: string): { badges: ApprovalStatusBadge[] } => ({
     badges: [{ label, className: badge(className) }],
   })
+
+  if (doc.status === 'draft' && remarks.includes('기안 회수됨')) {
+    return one('상신취소·작성복귀', 'bg-amber-50 text-amber-900 border-amber-400 font-black')
+  }
 
   if (remarks.includes('취소 요청 중')) {
     return one('기안자 취소요청', 'bg-red-100 text-red-600 animate-pulse border-red-200')
@@ -252,6 +262,18 @@ export function formatApproverLineNames(lines: ApprovalLineWithName[]): string {
     .map((l) => (l.user_name || '').trim())
     .filter(Boolean)
   return names.length > 0 ? names.join('-') : '-'
+}
+
+/** 통합 결재문서함 「결재라인」열: `기안자-결재1-결재2` (이름만 하이픈 연결) */
+export function formatInboxApproverLineDisplay(
+  writerName: string | null | undefined,
+  lines: ApprovalLineWithName[]
+): string {
+  const raw = (writerName ?? '').trim()
+  const w = raw === '' || raw === '-' ? '—' : raw
+  const approvers = formatApproverLineNames(lines)
+  if (approvers === '-' || !approvers.trim()) return w
+  return `${w}-${approvers}`
 }
 
 function progressRoleSuffix(role: string): string {

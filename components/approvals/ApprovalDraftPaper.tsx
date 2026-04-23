@@ -5,7 +5,9 @@ import SearchableCombobox, { type ComboboxOption } from '@/components/Searchable
 import { formatWriterDepartmentLabel } from '@/lib/approval-draft'
 import type { ApprovalRole } from '@/lib/approval-roles'
 import ApprovalLineDnD from '@/components/approvals/ApprovalLineDnD'
+import ExecutionDateHybridInput from '@/components/approvals/ExecutionDateHybridInput'
 import ApprovalDraftRichEditor from '@/components/approvals/ApprovalDraftRichEditor'
+import { isHtmlContentEffectivelyEmpty } from '@/lib/html-content'
 
 export type ApprovalDraftAppUser = {
   id: string
@@ -259,18 +261,20 @@ export default function ApprovalDraftPaper({
         <div className="grid grid-cols-1 border border-gray-200 text-sm sm:grid-cols-[120px_1fr] md:grid-cols-[150px_1fr]">
           <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">시행일자</div>
           <div className="grid grid-cols-1 items-center gap-2 border-b px-3 py-2 min-[430px]:grid-cols-[1fr_auto_1fr]">
-            <input
-              type="date"
+            <ExecutionDateHybridInput
               value={executionStartDate}
-              onChange={(e) => onExecutionStartDateChange(e.target.value)}
-              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+              onChange={onExecutionStartDateChange}
+              required
+              placeholder="시작일 (YYYYMMDD)"
+              calendarLabel="시작일 달력"
             />
             <span className="hidden text-xs font-bold text-gray-500 min-[430px]:inline">~</span>
-            <input
-              type="date"
+            <ExecutionDateHybridInput
               value={executionEndDate}
-              onChange={(e) => onExecutionEndDateChange(e.target.value)}
-              className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm"
+              onChange={onExecutionEndDateChange}
+              required
+              placeholder="종료일 (YYYYMMDD)"
+              calendarLabel="종료일 달력"
             />
           </div>
           <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">문서유형</div>
@@ -311,6 +315,7 @@ export default function ApprovalDraftPaper({
           <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">제목</div>
           <div className="border-b px-3 py-2">
             <input
+              name="draft_title"
               value={title}
               onChange={(e) => onTitleChange(e.target.value)}
               placeholder="기안 제목"
@@ -320,6 +325,17 @@ export default function ApprovalDraftPaper({
           </div>
           <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">본문</div>
           <div className="border-b px-3 py-2">
+            {/* TipTap은 폼 제약 검사 대상이 아니므로, 본문 비었을 때 브라우저 기본 검증(이 입력란을 작성하세요)용 게이트 */}
+            <input
+              type="text"
+              name="draft_body_gate"
+              required
+              aria-label="본문"
+              value={isHtmlContentEffectivelyEmpty(content) ? '' : 'OK'}
+              onChange={() => {}}
+              tabIndex={-1}
+              className="sr-only"
+            />
             <ApprovalDraftRichEditor value={content} onChange={onContentChange} />
           </div>
           {postBodyGridSlot ? (

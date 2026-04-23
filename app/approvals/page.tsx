@@ -8,10 +8,11 @@ import { APPROVAL_DRAFT_DOC_TYPE_OPTIONS } from '@/lib/approval-draft';
 import {
   APPROVAL_INBOX_STATUS_FILTER_OPTIONS,
   formatApprovalProgressChain,
-  formatApproverLineNames,
+  formatInboxApproverLineDisplay,
   getApprovalDocDetailedStatusPresentation,
   getDocDetailHref,
   getDocTypeLabel,
+  getWriterName,
 } from '@/lib/approval-status';
 import type { ApprovalDocLike, ApprovalLineWithName } from '@/lib/approval-status';
 
@@ -193,10 +194,13 @@ export default function ApprovalsPage() {
 
       const { data: profile } = await supabase
         .from('app_users')
-        .select('role_name')
+        .select('role_name, can_manage_permissions, can_admin_manage')
         .eq('id', user.id)
         .single();
-      const userIsAdmin = String(profile?.role_name || '').toLowerCase() === 'admin';
+      const userIsAdmin =
+        String(profile?.role_name || '').toLowerCase() === 'admin' ||
+        profile?.can_manage_permissions === true ||
+        profile?.can_admin_manage === true;
       setViewerIsAdmin(userIsAdmin);
 
       const draftDateRaw = filterDraftDate.trim();
@@ -314,8 +318,17 @@ export default function ApprovalsPage() {
       setDocs(
         loadedBase.map((doc) => {
           const lines = linesByDoc.get(doc.id) ?? [];
-          const fromLines = formatApproverLineNames(lines);
-          const rpcLine = rpcLineById.get(doc.id);
+          const writerLabel = getWriterName(doc.app_users);
+          const writerForLine = writerLabel === '-' ? null : writerLabel;
+          const rpcRaw = (rpcLineById.get(doc.id) ?? '').trim();
+          const rpcApprovers = rpcRaw && rpcRaw !== '-' ? rpcRaw : '';
+          const writerSeg = formatInboxApproverLineDisplay(writerForLine, []);
+          const approverLineNames =
+            lines.length > 0
+              ? formatInboxApproverLineDisplay(writerForLine, lines)
+              : rpcApprovers
+                ? `${writerSeg}-${rpcApprovers}`
+                : writerSeg;
           return {
             ...doc,
             recent_reject_comment: rejectCommentMap.get(doc.id) ?? null,
@@ -326,7 +339,7 @@ export default function ApprovalsPage() {
               status: l.status,
             })),
             progressLabel: formatApprovalProgressChain(doc as ApprovalsDocRow, lines),
-            approverLineNames: fromLines !== '-' ? fromLines : rpcLine ?? '-',
+            approverLineNames,
           };
         })
       );

@@ -38,21 +38,43 @@ export default function AppShell({ children }: Props) {
   }
 
   useEffect(() => {
+    // 로그인 화면에서는 세션 조회·자동 갱신을 건너뜀 (깨진 refresh 토큰으로 getSession이 반복 실패하는 것 방지).
+    if (pathname === '/login') {
+      setIsLoggedIn(false)
+      setIsLoading(false)
+      return
+    }
+
     let mounted = true
 
     async function loadSession() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
-
-      if (!mounted) return
-
-      setIsLoggedIn(!!session?.user)
-      if (session?.user?.id) setSessionId(getOrCreateSessionId(session.user.id))
-      setIsLoading(false)
+      try {
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession()
+        if (error) {
+          await supabase.auth.signOut()
+          if (!mounted) return
+          setIsLoggedIn(false)
+          setSessionId('')
+          setIsLoading(false)
+          return
+        }
+        if (!mounted) return
+        setIsLoggedIn(!!session?.user)
+        if (session?.user?.id) setSessionId(getOrCreateSessionId(session.user.id))
+        setIsLoading(false)
+      } catch {
+        await supabase.auth.signOut()
+        if (!mounted) return
+        setIsLoggedIn(false)
+        setSessionId('')
+        setIsLoading(false)
+      }
     }
 
-    loadSession()
+    void loadSession()
 
     const {
       data: { subscription },
@@ -67,7 +89,7 @@ export default function AppShell({ children }: Props) {
       mounted = false
       subscription.unsubscribe()
     }
-  }, [])
+  }, [pathname])
 
   useEffect(() => {
     const mark = () => {

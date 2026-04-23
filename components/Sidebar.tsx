@@ -11,6 +11,8 @@ type MenuItem = {
   name: string
   href: string
   perm: ManagePermissionKey | null
+  /** When true, item stays active for nested routes (e.g. /groupware/board/…). */
+  nestedActive?: boolean
 }
 type MenuGroup = {
   title: string
@@ -25,7 +27,7 @@ export default function Sidebar() {
   const [loading, setLoading] = useState(true);
   
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
-    '기안/결재': true,
+    '그룹웨어': true,
     '기초 조회': true,
     '영업/구매 관리': true,
     '품질관리 (QC)': true,
@@ -64,9 +66,10 @@ export default function Sidebar() {
 
   const menuGroups: MenuGroup[] = [
     {
-      title: '기안/결재',
+      title: '그룹웨어',
       items: [
         { name: '통합결재문서함', href: '/approvals', perm: null },
+        { name: '게시판', href: '/groupware/board', perm: null, nestedActive: true },
       ]
     },
     {
@@ -132,7 +135,7 @@ export default function Sidebar() {
       <div className="p-6 border-b border-gray-50 bg-gray-50/20 shrink-0">
         <Link href="/dashboard" className="group">
           <h1 className="text-2xl font-black tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors uppercase">
-            ERP-BIOGTP
+            ERP-<span className="text-blue-600">BIOGTP</span>
           </h1>
         </Link>
         {userData && (
@@ -183,7 +186,10 @@ export default function Sidebar() {
                 <div className="space-y-0.5 ml-1 border-l-2 border-gray-100">
                   {group.items.map((item) => {
                     const enabled = hasPermission(item.perm)
-                    const isCurrent = pathname === item.href;
+                    const isCurrent =
+                      pathname === item.href ||
+                      (item.nestedActive === true &&
+                        pathname.startsWith(`${item.href}/`));
 
                     return (
                       <div key={item.href}>

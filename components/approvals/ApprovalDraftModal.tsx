@@ -6,6 +6,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import ApprovalDraftPaper from '@/components/approvals/ApprovalDraftPaper'
 import ApprovalDraftLoadDialog from '@/components/approvals/ApprovalDraftLoadDialog'
 import {
+  DraftFormErrorBanner,
+  DraftFormInfoBanner,
+  DraftFormWarningBanner,
+} from '@/components/approvals/DraftFormAlertBanners'
+import {
   APPROVAL_DRAFT_DOC_TYPE_OPTIONS,
   formatWriterDepartmentLabel,
   WEB_MODAL_DRAFT_REMARKS,
@@ -85,6 +90,11 @@ export default function ApprovalDraftModal({ open, onOpenChange, onSubmitted }: 
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    const form = e.currentTarget
+    if (!form.checkValidity()) {
+      form.reportValidity()
+      return
+    }
     const ok = await submitDraft()
     if (!ok) return
     onSubmitted?.()
@@ -104,8 +114,6 @@ export default function ApprovalDraftModal({ open, onOpenChange, onSubmitted }: 
     const r = await saveDraftNow()
     if (r.ok) {
       toast.success(r.localOnly ? '브라우저에 임시저장했습니다.' : '임시저장했습니다. (서버·브라우저)')
-    } else {
-      toast.error('임시저장에 실패했습니다.')
     }
   }
 
@@ -113,7 +121,6 @@ export default function ApprovalDraftModal({ open, onOpenChange, onSubmitted }: 
     if (!confirm('작성 중인 내용과 임시저장을 모두 삭제할까요?')) return
     const r = await deleteDraftDocument()
     if (r.ok) toast.success('삭제했습니다.')
-    else toast.error('삭제에 실패했습니다.')
   }
 
   const handleDialogOpenChange = (next: boolean) => {
@@ -143,20 +150,16 @@ export default function ApprovalDraftModal({ open, onOpenChange, onSubmitted }: 
         <form onSubmit={handleSubmit} className="flex min-h-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3 sm:space-y-4 sm:px-6 sm:py-5">
             {hasDraftContent && (
-              <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-bold text-blue-700">
+              <DraftFormInfoBanner>
                 입력 내용은 자동으로 임시 저장되며, 창을 닫아도 다음에 복구됩니다.
-              </div>
+              </DraftFormInfoBanner>
             )}
             {!isLoading && !writerHasApprovalRight && (
-              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-700">
+              <DraftFormWarningBanner>
                 작성자에게 결재권이 없어 상신할 수 없습니다. 관리자에게 결재권 부여를 요청하세요.
-              </div>
+              </DraftFormWarningBanner>
             )}
-            {errorMessage && (
-              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-600">
-                {errorMessage}
-              </div>
-            )}
+            <DraftFormErrorBanner message={errorMessage} />
 
             {isLoading ? (
               <div className="py-12 text-center text-sm font-bold text-gray-500">기안 정보를 불러오는 중...</div>

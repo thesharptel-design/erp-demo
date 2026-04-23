@@ -5,6 +5,9 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import SearchableCombobox from '@/components/SearchableCombobox'
 
+/** Dev Strict Mode runs effects twice; a bad refresh token would otherwise trigger two failing getSession calls. */
+let loginSessionProbeInFlight = false
+
 export default function LoginPage() {
   const router = useRouter()
 
@@ -56,31 +59,54 @@ export default function LoginPage() {
   ]
 
   useEffect(() => {
+    if (loginSessionProbeInFlight) {
+      setIsChecking(false)
+      return
+    }
+    loginSessionProbeInFlight = true
+
     async function syncSession() {
       try {
-        const { data: { session }, error } = await supabase.auth.getSession()
+        const {
+          data: { session },
+          error,
+        } = await supabase.auth.getSession()
+
         if (error) {
           await supabase.auth.signOut()
           setIsChecking(false)
           return
         }
-        if (session) {
-          const { data: userData } = await supabase.from('app_users').select('role_name, is_active').eq('id', session.user.id).single()
-          
+
+        if (session?.user) {
+          const { data: userData } = await supabase
+            .from('app_users')
+            .select('role_name, is_active')
+            .eq('id', session.user.id)
+            .single()
+
           if (userData?.role_name === 'pending' || userData?.is_active === false) {
             await supabase.auth.signOut()
             setIsChecking(false)
             return
           }
           router.replace('/dashboard')
-        } else {
-          setIsChecking(false)
+          return
         }
-      } catch {
+
         setIsChecking(false)
+      } catch {
+        try {
+          await supabase.auth.signOut()
+        } catch {
+          // ignore
+        }
+        setIsChecking(false)
+      } finally {
+        loginSessionProbeInFlight = false
       }
     }
-    syncSession()
+    void syncSession()
   }, [router])
 
   const handlePrivacyScroll = (e: React.UIEvent<HTMLDivElement>) => {
@@ -224,7 +250,7 @@ export default function LoginPage() {
       <div className={`w-full ${isSignUp ? 'max-w-2xl' : 'max-w-md'} rounded-[2.5rem] border border-gray-200 bg-white p-10 shadow-2xl transition-all duration-300`}>
         <div className="mb-8 text-center">
           <h1 className="text-4xl font-black tracking-tighter text-gray-900 italic">
-            BIO<span className="text-blue-600">-ERP</span>
+            ERP-<span className="text-blue-600">BIOGTP</span>
           </h1>
           <p className="mt-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">
             {isSignUp ? 'New Employee Registration' : 'Integrated Management System'}

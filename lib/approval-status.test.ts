@@ -3,6 +3,7 @@ import {
   formatApprovalProgressChain,
   formatApproverLineNames,
   formatCancellationProgressChain,
+  formatInboxApproverLineDisplay,
   getApprovalDocDetailedStatusLabel,
   getApprovalDocDetailedStatusPresentation,
   getOutboundRequestRowPresentation,
@@ -19,6 +20,17 @@ describe('isApprovalCancellationRemarkProcess', () => {
 })
 
 describe('getApprovalDocDetailedStatusLabel', () => {
+  it('shows 상신취소·작성복귀 when draft was recalled', () => {
+    expect(
+      getApprovalDocDetailedStatusLabel({
+        status: 'draft',
+        remarks: '기안 회수됨',
+        current_line_no: null,
+        doc_type: 'outbound_request',
+      })
+    ).toBe('상신취소·작성복귀')
+  })
+
   it('prioritises cancellation remarks over status', () => {
     expect(
       getApprovalDocDetailedStatusLabel({
@@ -117,6 +129,14 @@ describe('getApprovalDocDetailedStatusPresentation', () => {
     )
     expect(pres.badges.map((b) => b.label)).toEqual(['결재완료/협조대기'])
   })
+
+  it('returns 상신취소·작성복귀 badge when draft with 기안 회수됨', () => {
+    const pres = getApprovalDocDetailedStatusPresentation(
+      { status: 'draft', remarks: '기안 회수됨', current_line_no: 1, doc_type: 'outbound_request' },
+      []
+    )
+    expect(pres.badges.map((b) => b.label)).toEqual(['상신취소·작성복귀'])
+  })
 })
 
 describe('formatApprovalProgressChain', () => {
@@ -151,6 +171,16 @@ describe('formatApprovalProgressChain', () => {
         { line_no: 3, status: 'waiting', approver_role: 'approver', user_name: '박형배' },
       ])
     ).toBe('김영태-박형배')
+  })
+
+  it('joins inbox 결재라인 as 기안자-결재(이름만)', () => {
+    expect(
+      formatInboxApproverLineDisplay('이기안', [
+        { line_no: 1, status: 'pending', approver_role: 'approver', user_name: '김영태' },
+      ])
+    ).toBe('이기안-김영태')
+    expect(formatInboxApproverLineDisplay('이기안', [])).toBe('이기안')
+    expect(formatInboxApproverLineDisplay(null, [])).toBe('—')
   })
 })
 

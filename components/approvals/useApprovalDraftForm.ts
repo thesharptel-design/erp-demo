@@ -14,6 +14,8 @@ import {
 import type { ApprovalRole } from '@/lib/approval-roles'
 import type { ApprovalDraftAppUser, ApprovalOrderItem } from '@/components/approvals/ApprovalDraftPaper'
 import { isHtmlContentEffectivelyEmpty } from '@/lib/html-content'
+import { executionDateForDb, isCompleteValidExecutionDate } from '@/lib/execution-date-input'
+import { dismissDraftValidationToast, showDraftValidationError } from '@/lib/draft-form-feedback'
 
 type Department = {
   id: number
@@ -273,6 +275,7 @@ export function useApprovalDraftForm({
       setAgreementText('')
       setApprovalOrder([makeEmptyApprovalLine()])
       setServerDraftDocId(null)
+      dismissDraftValidationToast()
       setErrorMessage('')
       setLastLocalSaveAt(null)
       setLastServerSaveAt(null)
@@ -304,9 +307,11 @@ export function useApprovalDraftForm({
   }, [applyPayloadToState, autosaveKey])
 
   const saveDraftNow = useCallback(async () => {
+    dismissDraftValidationToast()
     setErrorMessage('')
     persistLocalPayload()
     if (!enableServerDraft || !writerId) {
+      dismissDraftValidationToast()
       return { ok: true as const, localOnly: true as const }
     }
     setIsDraftSaving(true)
@@ -321,8 +326,8 @@ export function useApprovalDraftForm({
         writerId,
         writerDeptId: selectedWriter?.dept_id ?? null,
         approvalOrder,
-        executionStartDate,
-        executionEndDate,
+        executionStartDate: executionDateForDb(executionStartDate) ?? '',
+        executionEndDate: executionDateForDb(executionEndDate) ?? '',
         cooperationDept: referenceSummary,
         agreementText,
         remarksTag: webDraftRemarksTag,
@@ -344,10 +349,11 @@ export function useApprovalDraftForm({
         }
         localStorage.setItem(autosaveKey, JSON.stringify(payload))
       }
+      dismissDraftValidationToast()
       return { ok: true as const, localOnly: false as const }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '임시저장에 실패했습니다.'
-      setErrorMessage(msg)
+      showDraftValidationError(setErrorMessage, msg)
       return { ok: false as const, localOnly: false as const }
     } finally {
       setIsDraftSaving(false)
@@ -372,6 +378,7 @@ export function useApprovalDraftForm({
   ])
 
   const deleteDraftDocument = useCallback(async () => {
+    dismissDraftValidationToast()
     setErrorMessage('')
     if (!writerId) {
       clearSavedDraft()
@@ -388,7 +395,7 @@ export function useApprovalDraftForm({
       return { ok: true as const }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '삭제에 실패했습니다.'
-      setErrorMessage(msg)
+      showDraftValidationError(setErrorMessage, msg)
       return { ok: false as const }
     } finally {
       setIsDraftDeleting(false)
@@ -397,9 +404,10 @@ export function useApprovalDraftForm({
 
   const loadServerDraftById = useCallback(
     async (draftDocId: number) => {
+      dismissDraftValidationToast()
       setErrorMessage('')
       if (!writerId) {
-        setErrorMessage('작성자 정보가 없습니다.')
+        showDraftValidationError(setErrorMessage, '작성자 정보가 없습니다.')
         return false
       }
       try {
@@ -434,10 +442,12 @@ export function useApprovalDraftForm({
           localStorage.setItem(autosaveKey, JSON.stringify(payload))
         }
         setLastLocalSaveAt(new Date().toISOString())
+        dismissDraftValidationToast()
+        setErrorMessage('')
         return true
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : '불러오기에 실패했습니다.'
-        setErrorMessage(msg)
+        showDraftValidationError(setErrorMessage, msg)
         return false
       }
     },
@@ -445,25 +455,32 @@ export function useApprovalDraftForm({
   )
 
   const submitDraft = async () => {
+    dismissDraftValidationToast()
     setErrorMessage('')
     if (!title.trim() || isHtmlContentEffectivelyEmpty(content)) {
-      setErrorMessage('제목과 내용을 모두 입력하십시오.')
+      showDraftValidationError(setErrorMessage, '제목과 내용을 모두 입력하십시오.')
+      return false
+    }
+    if (!isCompleteValidExecutionDate(executionStartDate) || !isCompleteValidExecutionDate(executionEndDate)) {
+      showDraftValidationError(setErrorMessage, '시행 시작일·종료일을 모두 입력하십시오.')
       return false
     }
     if (!writerId) {
-      setErrorMessage('작성자 정보가 없습니다.')
+      showDraftValidationError(setErrorMessage, '작성자 정보가 없습니다.')
       return false
     }
     if (!writerHasApprovalRight) {
-      setErrorMessage('작성자는 결재권이 있어야 상신할 수 있습니다.')
+      showDraftValidationError(setErrorMessage, '작성자는 결재권이 있어야 상신할 수 있습니다.')
       return false
     }
     if (!approvalOrder.some((line) => line.role === 'approver' && line.userId.trim())) {
-      setErrorMessage('결재자를 선택하십시오.')
+      showDraftValidationError(setErrorMessage, '결재자를 선택하십시오.')
       return false
     }
-    if (executionStartDate && executionEndDate && executionEndDate < executionStartDate) {
-      setErrorMessage('시행 종료일은 시작일 이후여야 합니다.')
+    const startIso = executionDateForDb(executionStartDate)
+    const endIso = executionDateForDb(executionEndDate)
+    if (startIso && endIso && endIso < startIso) {
+      showDraftValidationError(setErrorMessage, '시행 종료일은 시작일 이후여야 합니다.')
       return false
     }
 
@@ -479,8 +496,8 @@ export function useApprovalDraftForm({
         writerId,
         writerDeptId: selectedWriter?.dept_id ?? null,
         approvalOrder,
-        executionStartDate,
-        executionEndDate,
+        executionStartDate: startIso ?? '',
+        executionEndDate: endIso ?? '',
         cooperationDept: referenceSummary,
         agreementText,
         remarks,
@@ -496,9 +513,11 @@ export function useApprovalDraftForm({
       setServerDraftDocId(null)
       setLastLocalSaveAt(null)
       setLastServerSaveAt(null)
+      dismissDraftValidationToast()
+      setErrorMessage('')
       return true
     } catch (err: any) {
-      setErrorMessage(getApprovalCreateErrorMessage(err))
+      showDraftValidationError(setErrorMessage, getApprovalCreateErrorMessage(err))
       return false
     } finally {
       setIsSaving(false)

@@ -10,6 +10,7 @@ import {
 } from '@/lib/approval-draft'
 import ApprovalDraftPaper from '@/components/approvals/ApprovalDraftPaper'
 import ApprovalDraftLoadDialog from '@/components/approvals/ApprovalDraftLoadDialog'
+import { DraftFormErrorBanner, DraftFormWarningBanner } from '@/components/approvals/DraftFormAlertBanners'
 import { useApprovalDraftForm } from '@/components/approvals/useApprovalDraftForm'
 
 const AUTOSAVE_KEY = 'approval-general-draft-v2'
@@ -109,6 +110,11 @@ export default function NewApprovalPage() {
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
+    const form = e.currentTarget
+    if (!form.checkValidity()) {
+      form.reportValidity()
+      return
+    }
     const ok = await submitDraft()
     if (!ok) return
     allowLeavingWithoutBeforeUnloadPrompt()
@@ -119,8 +125,6 @@ export default function NewApprovalPage() {
     const r = await saveDraftNow()
     if (r.ok) {
       toast.success(r.localOnly ? '브라우저에 임시저장했습니다.' : '임시저장했습니다. (서버·브라우저)')
-    } else {
-      toast.error('임시저장에 실패했습니다.')
     }
   }
 
@@ -129,8 +133,6 @@ export default function NewApprovalPage() {
     const r = await deleteDraftDocument()
     if (r.ok) {
       toast.success('삭제했습니다.')
-    } else {
-      toast.error('삭제에 실패했습니다.')
     }
   }
 
@@ -153,15 +155,11 @@ export default function NewApprovalPage() {
       />
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        {errorMessage && (
-          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-600">
-            {errorMessage}
-          </div>
-        )}
+        <DraftFormErrorBanner message={errorMessage} />
         {!writerHasApprovalRight && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-bold text-amber-700">
+          <DraftFormWarningBanner>
             작성자에게 결재권이 없어 상신할 수 없습니다. 관리자에게 결재권 부여를 요청하세요.
-          </div>
+          </DraftFormWarningBanner>
         )}
 
         <ApprovalDraftPaper
