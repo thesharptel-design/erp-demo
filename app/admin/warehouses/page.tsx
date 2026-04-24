@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { getCurrentUserPermissions, isErpRoleAdminUser } from '@/lib/permissions'
+import { getCurrentUserPermissions, isSystemAdminUser } from '@/lib/permissions'
 
 type WarehouseRow = {
   id: number
@@ -31,7 +31,7 @@ export default function WarehousesAdminPage() {
     void (async () => {
       const user = await getCurrentUserPermissions()
       if (!mounted) return
-      setCanManage(isErpRoleAdminUser(user))
+      setCanManage(isSystemAdminUser(user))
       setPermissionChecked(true)
     })()
     return () => {

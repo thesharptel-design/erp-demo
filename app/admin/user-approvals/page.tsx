@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase';
 import * as XLSX from 'xlsx';
 import SearchableCombobox from '@/components/SearchableCombobox';
 
-const VALID_DEPARTMENTS = ['영업', '자재', '생산', '구매', 'QC', '경영지원', '관리'];
+const VALID_DEPARTMENTS = ['영업', '자재', '생산', '구매', '품질', '품질팀', 'QC', '경영지원', '관리'];
 const VALID_RANKS = ['사원', '대리', '과장', '차장', '부장', '이사', '대표'];
 const ALLOWED_USER_KINDS = ['student', 'teacher', 'staff'] as const;
 const PAGE_SIZE = 25;
@@ -94,17 +94,17 @@ const EMPTY_NEW_USER_FORM: NewUserForm = {
 };
 
 const getDefaultPerms = (dept: string) => ({
-  can_manage_master: ['관리', '경영지원', '관리팀', '경영지원팀'].includes(dept),
+  can_manage_master: false,
   can_sales_manage: ['영업', '구매', '영업팀', '구매팀'].includes(dept),
   can_material_manage: ['자재', '자재팀'].includes(dept),
   can_production_manage: ['생산', '생산팀'].includes(dept),
-  can_qc_manage: ['QC', 'QC팀', '품질관리부'].includes(dept),
-  can_admin_manage: ['관리', '경영지원', '관리팀', '경영지원팀'].includes(dept),
+  can_qc_manage: ['품질', '품질팀', 'QC', 'QC팀', '품질관리부'].includes(dept),
+  can_admin_manage: false,
   can_po_create: ['영업', '구매', '영업팀', '구매팀'].includes(dept),
   can_quote_create: ['영업', '영업팀'].includes(dept),
   can_receive_stock: ['자재', '자재팀'].includes(dept),
   can_prod_complete: ['생산', '생산팀'].includes(dept),
-  can_approve: ['QC', 'QC팀', '품질관리부'].includes(dept),
+  can_approve: ['품질', '품질팀', 'QC', 'QC팀', '품질관리부'].includes(dept),
   can_manage_permissions: false,
 });
 

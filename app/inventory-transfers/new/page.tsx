@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import SearchableCombobox from '@/components/SearchableCombobox'
 import { supabase } from '@/lib/supabase'
-import { getAllowedWarehouseIds, getCurrentUserPermissions, hasManagePermission, isAdminRole } from '@/lib/permissions'
+import { getAllowedWarehouseIds, getCurrentUserPermissions, hasManagePermission } from '@/lib/permissions'
 
 type Warehouse = {
   id: number
@@ -56,7 +56,7 @@ export default function NewInventoryTransferPage() {
     const currentUser = await getCurrentUserPermissions()
     const canTransfer =
       !!currentUser &&
-      (isAdminRole(currentUser.role_name) || hasManagePermission(currentUser, 'can_manage_permissions'))
+      hasManagePermission(currentUser, 'can_material_manage')
     setIsTransferAllowed(canTransfer)
     if (!canTransfer) {
       setWarehouses([])
@@ -238,7 +238,7 @@ export default function NewInventoryTransferPage() {
     return (
       <div className="erp-card">
         <h1 className="erp-page-title">자재 이동</h1>
-        <p className="mt-2 text-sm text-gray-600">자재 이동은 시스템관리자만 사용할 수 있습니다.</p>
+        <p className="mt-2 text-sm text-gray-600">자재 이동 권한이 없습니다.</p>
       </div>
     )
   }

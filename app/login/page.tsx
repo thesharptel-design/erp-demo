@@ -39,6 +39,7 @@ export default function LoginPage() {
     { value: '자재', label: '자재팀' },
     { value: '생산', label: '생산팀' },
     { value: '구매', label: '구매팀' },
+    { value: '품질', label: '품질팀' },
     { value: 'QC', label: 'QC' },
     { value: '경영지원', label: '경영지원팀' },
     { value: '관리', label: '관리팀' },
@@ -142,18 +143,18 @@ export default function LoginPage() {
         
         if (data.user) {
           const getDefaultPerms = (dept: string) => ({
-            can_manage_master: ['관리', '경영지원', '관리팀', '경영지원팀'].includes(dept),
+            can_manage_master: false,
             can_sales_manage: ['영업', '구매', '영업팀', '구매팀'].includes(dept),
             can_material_manage: ['자재', '자재팀'].includes(dept),
             can_production_manage: ['생산', '생산팀'].includes(dept),
-            can_qc_manage: ['QC', 'QC팀', '품질관리부'].includes(dept),
-            can_admin_manage: ['관리', '경영지원', '관리팀', '경영지원팀'].includes(dept),
+            can_qc_manage: ['품질', '품질팀', 'QC', 'QC팀', '품질관리부'].includes(dept),
+            can_admin_manage: false,
             // legacy fallback columns
             can_po_create: ['영업', '구매', '영업팀', '구매팀'].includes(dept),
             can_quote_create: ['영업', '영업팀'].includes(dept),
             can_receive_stock: ['자재', '자재팀'].includes(dept),
             can_prod_complete: ['생산', '생산팀'].includes(dept),
-            can_approve: ['QC', 'QC팀', '품질관리부'].includes(dept),
+            can_approve: ['품질', '품질팀', 'QC', 'QC팀', '품질관리부'].includes(dept),
             can_manage_permissions: false
           });
 

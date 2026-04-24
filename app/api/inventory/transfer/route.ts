@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { hasManagePermission, isAdminRole } from '@/lib/permissions'
+import { hasManagePermission } from '@/lib/permissions'
 
 type RequestBody = {
   source_inventory_id: number
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
 
     const { data: currentAppUser, error: currentAppUserError } = await adminClient
       .from('app_users')
-      .select('id, role_name, can_manage_permissions, can_admin_manage')
+      .select('id, role_name, can_material_manage, can_receive_stock')
       .eq('email', currentUser.email)
       .single()
 
@@ -47,9 +47,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '권한 정보를 확인할 수 없습니다.' }, { status: 403 })
     }
 
-    const canTransfer =
-      isAdminRole(currentAppUser.role_name) ||
-      hasManagePermission(currentAppUser, 'can_manage_permissions')
+    const canTransfer = hasManagePermission(currentAppUser, 'can_material_manage')
 
     if (!canTransfer) {
       return NextResponse.json({ error: '자재 이동 권한이 없습니다.' }, { status: 403 })

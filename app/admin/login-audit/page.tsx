@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
+import { getCurrentUserPermissions, isSystemAdminUser } from '@/lib/permissions'
 
 type LoginAuditRow = {
   id: number
@@ -45,6 +46,8 @@ function sortActiveDescending(a: ActiveSessionRow, b: ActiveSessionRow) {
 }
 
 export default function LoginAuditPage() {
+  const [allowed, setAllowed] = useState(false)
+  const [permissionChecked, setPermissionChecked] = useState(false)
   const [rows, setRows] = useState<LoginAuditRow[]>([])
   const [activeSessions, setActiveSessions] = useState<ActiveSessionRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -95,6 +98,15 @@ export default function LoginAuditPage() {
   )
 
   useEffect(() => {
+    void (async () => {
+      const user = await getCurrentUserPermissions()
+      setAllowed(isSystemAdminUser(user))
+      setPermissionChecked(true)
+    })()
+  }, [])
+
+  useEffect(() => {
+    if (!permissionChecked || !allowed) return
     let cancelled = false
 
     const fetchInitial = async () => {
@@ -153,7 +165,7 @@ export default function LoginAuditPage() {
       cancelled = true
       void supabase.removeChannel(channel)
     }
-  }, [mergeActiveFromPayload, normalizeRows, normalizeSessionRow])
+  }, [allowed, permissionChecked, mergeActiveFromPayload, normalizeRows, normalizeSessionRow])
 
   useEffect(() => {
     const onlineTimer = setInterval(() => setNowMs(Date.now()), 30_000)
@@ -179,6 +191,26 @@ export default function LoginAuditPage() {
       })
       .sort(sortActiveDescending)
   }, [activeSessions, nowMs])
+
+  if (!permissionChecked) {
+    return (
+      <div className="p-6 max-w-[1400px] mx-auto">
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-sm font-bold text-slate-500">
+          권한 확인 중...
+        </div>
+      </div>
+    )
+  }
+
+  if (!allowed) {
+    return (
+      <div className="p-6 max-w-[1400px] mx-auto">
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-6 text-sm font-bold text-red-700">
+          시스템 관리자만 로그인 모니터 화면을 볼 수 있습니다.
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto space-y-5">

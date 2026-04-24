@@ -3,8 +3,11 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import Image from 'next/image';
+import { getCurrentUserPermissions, isSystemAdminUser } from '@/lib/permissions'
 
 export default function CompanySettingsPage() {
+  const [allowed, setAllowed] = useState(false)
+  const [permissionChecked, setPermissionChecked] = useState(false)
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -24,8 +27,17 @@ export default function CompanySettingsPage() {
   });
 
   useEffect(() => {
+    void (async () => {
+      const user = await getCurrentUserPermissions()
+      setAllowed(isSystemAdminUser(user))
+      setPermissionChecked(true)
+    })()
+  }, [])
+
+  useEffect(() => {
+    if (!permissionChecked || !allowed) return
     fetchCompanyInfo();
-  }, []);
+  }, [allowed, permissionChecked]);
 
   const fetchCompanyInfo = async () => {
     setLoading(true);
@@ -86,6 +98,14 @@ export default function CompanySettingsPage() {
     }
     setIsSaving(false);
   };
+
+  if (!permissionChecked) {
+    return <div className="p-10 text-center font-bold text-gray-400">권한 확인 중...</div>
+  }
+
+  if (!allowed) {
+    return <div className="p-10 text-center font-bold text-red-600">시스템 관리자만 기업정보 설정 화면을 볼 수 있습니다.</div>
+  }
 
   if (loading) return <div className="p-10 text-center font-bold text-gray-400">기업 정보를 불러오는 중...</div>;
 

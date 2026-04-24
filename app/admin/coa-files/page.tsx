@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import SearchableCombobox from '@/components/SearchableCombobox'
+import { getCurrentUserPermissions, isSystemAdminUser } from '@/lib/permissions'
 
 type ItemRow = { id: number; item_code: string; item_name: string }
 type WarehouseRow = { id: number; name: string }
@@ -18,6 +19,8 @@ type CoaRow = {
 }
 
 export default function CoaFilesPage() {
+  const [allowed, setAllowed] = useState(false)
+  const [permissionChecked, setPermissionChecked] = useState(false)
   const [items, setItems] = useState<ItemRow[]>([])
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([])
   const [rows, setRows] = useState<CoaRow[]>([])
@@ -38,14 +41,43 @@ export default function CoaFilesPage() {
   }
 
   useEffect(() => {
+    void (async () => {
+      const user = await getCurrentUserPermissions()
+      setAllowed(isSystemAdminUser(user))
+      setPermissionChecked(true)
+    })()
+  }, [])
+
+  useEffect(() => {
+    if (!permissionChecked || !allowed) return
     const timer = setTimeout(() => {
       void fetchAll()
     }, 0)
     return () => clearTimeout(timer)
-  }, [])
+  }, [allowed, permissionChecked])
 
   const itemMap = useMemo(() => new Map(items.map((i) => [i.id, `[${i.item_code}] ${i.item_name}`])), [items])
   const warehouseMap = useMemo(() => new Map(warehouses.map((w) => [w.id, w.name])), [warehouses])
+
+  if (!permissionChecked) {
+    return (
+      <div className="p-6 max-w-[1300px] mx-auto">
+        <div className="rounded-2xl border border-slate-200 bg-white px-4 py-6 text-sm font-bold text-slate-500">
+          권한 확인 중...
+        </div>
+      </div>
+    )
+  }
+
+  if (!allowed) {
+    return (
+      <div className="p-6 max-w-[1300px] mx-auto">
+        <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-6 text-sm font-bold text-red-700">
+          시스템 관리자만 CoA 파일 관리 화면을 볼 수 있습니다.
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="p-6 max-w-[1300px] mx-auto space-y-5">

@@ -1,11 +1,12 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { openApprovalDocFromInbox } from '@/lib/approval-popup';
 import { getApprovalDocDetailedStatusPresentation, getDocDetailOpenHref } from '@/lib/approval-status';
 import type { ApprovalDocLike } from '@/lib/approval-status';
+import { isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions';
 
 // --- 타입 정의 ---
 type InventoryRow = { item_id: number; current_qty: number; available_qty?: number | null; quarantine_qty?: number | null; };
@@ -28,7 +29,23 @@ type QcRequestRow = { id: number; qc_type: 'raw_material' | 'sample' | 'final_pr
 type WarehouseRow = { id: number; is_active: boolean; };
 type CoaFileRow = { id: number; is_active: boolean; };
 type LoginAuditRow = { success: boolean; login_at: string; };
-type CalendarCell = { day: number; isCurrentMonth: boolean; isToday: boolean; };
+type CalendarCell = {
+  day: number;
+  isCurrentMonth: boolean;
+  isToday: boolean;
+  dateKey: string;
+};
+type DashboardScheduleRow = {
+  id: number;
+  schedule_date: string;
+  start_time: string | null;
+  end_time: string | null;
+  title: string;
+  description: string | null;
+  location: string | null;
+  created_by: string;
+  priority: 'high' | 'normal' | 'low';
+};
 
 // --- 뱃지(상태) 스타일 헬퍼 ---
 const getBadgeStyle = (type: 'gray' | 'blue' | 'green' | 'red' | 'orange') => {
@@ -76,6 +93,60 @@ export default function DashboardPage() {
   });
   const [loading, setLoading] = useState(true);
   const [dashboardUserId, setDashboardUserId] = useState<string | null>(null);
+  const [canManageSchedules, setCanManageSchedules] = useState(false);
+  const [schedules, setSchedules] = useState<DashboardScheduleRow[]>([]);
+  const [scheduleTitle, setScheduleTitle] = useState('');
+  const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleStartTime, setScheduleStartTime] = useState('');
+  const [scheduleEndTime, setScheduleEndTime] = useState('');
+  const [scheduleDescription, setScheduleDescription] = useState('');
+  const [scheduleLocation, setScheduleLocation] = useState('');
+  const [schedulePriority, setSchedulePriority] = useState<'high' | 'normal' | 'low'>('normal');
+  const [editingScheduleId, setEditingScheduleId] = useState<number | null>(null);
+  const [scheduleSaving, setScheduleSaving] = useState(false);
+  const [viewedMonthDate, setViewedMonthDate] = useState<Date | null>(null);
+  const [selectedCalendarDate, setSelectedCalendarDate] = useState<string | null>(null);
+  const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [scheduleListVisibleCount, setScheduleListVisibleCount] = useState(4);
+  const [scheduleFormPosition, setScheduleFormPosition] = useState<{ top: number; left: number }>({ top: 120, left: 260 });
+  const DASHBOARD_CALENDAR_MONTH_STORAGE_KEY = 'dashboardCalendarMonth';
+  const calendarFormRef = useRef<HTMLDivElement | null>(null);
+  const calendarPanelRef = useRef<HTMLDivElement | null>(null);
+
+  const getKstToday = () => new Date(new Date().getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+  const getStoredCalendarMonth = (): Date | null => {
+    if (typeof window === 'undefined') return null;
+    const raw = window.localStorage.getItem(DASHBOARD_CALENDAR_MONTH_STORAGE_KEY);
+    if (!raw) return null;
+    const matched = raw.match(/^(\d{4})-(\d{2})$/);
+    if (!matched) return null;
+    const year = Number(matched[1]);
+    const month = Number(matched[2]);
+    if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) return null;
+    return new Date(Date.UTC(year, month - 1, 1));
+  };
+
+  const persistCalendarMonth = (date: Date) => {
+    if (typeof window === 'undefined') return;
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    window.localStorage.setItem(DASHBOARD_CALENDAR_MONTH_STORAGE_KEY, `${year}-${month}`);
+  };
+
+  const loadSchedules = async () => {
+    const { data: scheduleData, error } = await supabase
+      .from('dashboard_schedules')
+      .select('id, schedule_date, start_time, end_time, title, description, location, created_by, priority')
+      .eq('is_deleted', false)
+      .order('schedule_date', { ascending: true })
+      .order('start_time', { ascending: true, nullsFirst: false });
+    if (error) {
+      console.error('Schedule load error:', error);
+      return;
+    }
+    setSchedules((scheduleData as DashboardScheduleRow[]) || []);
+  };
 
   useEffect(() => {
     async function loadData() {
@@ -83,7 +154,28 @@ export default function DashboardPage() {
         const {
           data: { user },
         } = await supabase.auth.getUser();
+        const nowKst = new Date(new Date().getTime() + 9 * 60 * 60 * 1000);
+        const initialCalendarBase = getStoredCalendarMonth() ?? nowKst;
         setDashboardUserId(user?.id ?? null);
+        const today = getKstToday();
+        setScheduleDate(today);
+        setSelectedCalendarDate(today);
+        setViewedMonthDate(initialCalendarBase);
+
+        if (user?.id) {
+          const { data: profile } = await supabase
+            .from('app_users')
+            .select('role_name, can_manage_permissions, can_admin_manage')
+            .eq('id', user.id)
+            .single();
+          setCanManageSchedules(
+            isSystemAdminUser(
+              profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
+            )
+          );
+        } else {
+          setCanManageSchedules(false);
+        }
 
         const [
           { data: inventoryData }, { data: approvalsData },
@@ -105,6 +197,7 @@ export default function DashboardPage() {
           supabase.from('coa_files').select('id, is_active'),
           supabase.from('login_audit_logs').select('success, login_at').order('login_at', { ascending: false }).limit(100),
         ]);
+        await loadSchedules();
 
         setData({
           inventory: (inventoryData as InventoryRow[]) || [],
@@ -126,29 +219,157 @@ export default function DashboardPage() {
     loadData();
   }, []);
 
+  useEffect(() => {
+    setScheduleListVisibleCount(4);
+  }, [viewedMonthDate]);
+
+  useEffect(() => {
+    if (!showScheduleForm) return;
+    calendarFormRef.current?.focus();
+  }, [showScheduleForm]);
+
+  const resetScheduleForm = () => {
+    setEditingScheduleId(null);
+    setScheduleTitle('');
+    setScheduleStartTime('');
+    setScheduleEndTime('');
+    setScheduleDescription('');
+    setScheduleLocation('');
+    setSchedulePriority('normal');
+    setScheduleDate(selectedCalendarDate ?? getKstToday());
+    setShowScheduleForm(false);
+  };
+
+  const handleScheduleSubmit = async () => {
+    if (!canManageSchedules || scheduleSaving) return;
+    const trimmedTitle = scheduleTitle.trim();
+    if (!trimmedTitle || !scheduleDate || !dashboardUserId) return;
+    setScheduleSaving(true);
+    try {
+      if (editingScheduleId) {
+        const { error } = await supabase
+          .from('dashboard_schedules')
+          .update({
+            title: trimmedTitle,
+            schedule_date: scheduleDate,
+            start_time: scheduleStartTime || null,
+            end_time: scheduleEndTime || null,
+            description: scheduleDescription.trim() || null,
+            location: scheduleLocation.trim() || null,
+            priority: schedulePriority,
+          })
+          .eq('id', editingScheduleId);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('dashboard_schedules')
+          .insert({
+            schedule_date: scheduleDate,
+            start_time: scheduleStartTime || null,
+            end_time: scheduleEndTime || null,
+            title: trimmedTitle,
+            description: scheduleDescription.trim() || null,
+            location: scheduleLocation.trim() || null,
+            priority: schedulePriority,
+            created_by: dashboardUserId,
+          });
+        if (error) throw error;
+      }
+      await loadSchedules();
+      resetScheduleForm();
+    } catch (error) {
+      console.error('Schedule save error:', error);
+    } finally {
+      setScheduleSaving(false);
+    }
+  };
+
+  const handleScheduleEdit = (schedule: DashboardScheduleRow) => {
+    if (!canManageSchedules) return;
+    setEditingScheduleId(schedule.id);
+    setScheduleTitle(schedule.title);
+    setScheduleDate(schedule.schedule_date);
+    setScheduleStartTime(schedule.start_time ?? '');
+    setScheduleEndTime(schedule.end_time ?? '');
+    setScheduleDescription(schedule.description ?? '');
+    setScheduleLocation(schedule.location ?? '');
+    setSchedulePriority(schedule.priority ?? 'normal');
+    if (calendarPanelRef.current) {
+      const panelRect = calendarPanelRef.current.getBoundingClientRect();
+      setScheduleFormPosition({
+        top: Math.max(120, panelRect.height * 0.45),
+        left: Math.max(180, panelRect.width * 0.5),
+      });
+    }
+    setShowScheduleForm(true);
+  };
+
+  const handleScheduleDelete = async (scheduleId: number) => {
+    if (!canManageSchedules || scheduleSaving) return;
+    setScheduleSaving(true);
+    try {
+      const { error } = await supabase
+        .from('dashboard_schedules')
+        .update({ is_deleted: true })
+        .eq('id', scheduleId);
+      if (error) throw error;
+      await loadSchedules();
+      if (editingScheduleId === scheduleId) {
+        resetScheduleForm();
+      }
+    } catch (error) {
+      console.error('Schedule delete error:', error);
+    } finally {
+      setScheduleSaving(false);
+    }
+  };
+
   if (loading) return <div className="flex min-h-screen items-center justify-center bg-gray-50"><div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>;
 
-  // --- 데이터 집계 로직 ---
-  const pendingApprovalCount = data.approvals.filter((doc) => ['submitted', 'in_review'].includes(doc.status)).length;
-  const pendingQcCount = data.qcRequests.filter((qc) => ['requested', 'received', 'testing', 'hold'].includes(qc.qc_status)).length;
-
   // 한국 시간(KST) 기준으로 오늘 날짜 구하기
-  const today = new Date(new Date().getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  const todayLoginFailCount = data.loginAudits.filter((log) => !log.success && log.login_at.slice(0, 10) === today).length;
-  const monthKorean = new Intl.DateTimeFormat('ko-KR', { month: 'long' }).format(new Date(`${today}T00:00:00`));
-  const [currentYear, currentMonth, currentDate] = today.split('-').map(Number);
+  const today = getKstToday();
+  const baseMonthDate = viewedMonthDate ?? new Date(new Date().getTime() + 9 * 60 * 60 * 1000);
+  const monthKorean = new Intl.DateTimeFormat('ko-KR', { month: 'long' }).format(baseMonthDate);
+  const currentYear = baseMonthDate.getUTCFullYear();
+  const currentMonth = baseMonthDate.getUTCMonth() + 1;
+  const [todayYear, todayMonth, todayDate] = today.split('-').map(Number);
   const firstDayOfMonth = new Date(currentYear, currentMonth - 1, 1).getDay();
   const daysInMonth = new Date(currentYear, currentMonth, 0).getDate();
   const prevMonthDays = new Date(currentYear, currentMonth - 1, 0).getDate();
   const weekdayLabels = ['일', '월', '화', '수', '목', '금', '토'];
   const calendarCells: CalendarCell[] = [];
+  const schedulesByDay = schedules.reduce<Record<number, { count: number; maxPriority: 'high' | 'normal' | 'low' }>>((acc, schedule) => {
+    const viewedMonthKey = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+    if (!schedule.schedule_date.startsWith(`${viewedMonthKey}-`)) return acc;
+    const day = Number(schedule.schedule_date.slice(8, 10));
+    if (!Number.isInteger(day) || day <= 0) return acc;
+    const current = acc[day] ?? { count: 0, maxPriority: 'low' as const };
+    const priorityRank = { low: 1, normal: 2, high: 3 };
+    const nextPriority =
+      priorityRank[schedule.priority] > priorityRank[current.maxPriority] ? schedule.priority : current.maxPriority;
+    acc[day] = { count: current.count + 1, maxPriority: nextPriority };
+    return acc;
+  }, {});
+  const combinedSchedules = [...schedules].sort((a, b) => {
+    const dateOrder = a.schedule_date.localeCompare(b.schedule_date);
+    if (dateOrder !== 0) return dateOrder;
+    if (!a.start_time && !b.start_time) return 0;
+    if (!a.start_time) return 1;
+    if (!b.start_time) return -1;
+    return a.start_time.localeCompare(b.start_time);
+  });
+  const visibleScheduleItems = combinedSchedules.slice(0, scheduleListVisibleCount);
 
   for (let idx = 0; idx < 42; idx += 1) {
     if (idx < firstDayOfMonth) {
+      const prevMonthYear = currentMonth === 1 ? currentYear - 1 : currentYear;
+      const prevMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+      const prevMonthDay = prevMonthDays - firstDayOfMonth + idx + 1;
       calendarCells.push({
-        day: prevMonthDays - firstDayOfMonth + idx + 1,
+        day: prevMonthDay,
         isCurrentMonth: false,
         isToday: false,
+        dateKey: `${prevMonthYear}-${String(prevMonth).padStart(2, '0')}-${String(prevMonthDay).padStart(2, '0')}`,
       });
       continue;
     }
@@ -158,17 +379,70 @@ export default function DashboardPage() {
       calendarCells.push({
         day,
         isCurrentMonth: true,
-        isToday: day === currentDate,
+        isToday: currentYear === todayYear && currentMonth === todayMonth && day === todayDate,
+        dateKey: `${currentYear}-${String(currentMonth).padStart(2, '0')}-${String(day).padStart(2, '0')}`,
       });
       continue;
     }
 
+    const nextMonthYear = currentMonth === 12 ? currentYear + 1 : currentYear;
+    const nextMonth = currentMonth === 12 ? 1 : currentMonth + 1;
+    const nextMonthDay = day - daysInMonth;
     calendarCells.push({
-      day: day - daysInMonth,
+      day: nextMonthDay,
       isCurrentMonth: false,
       isToday: false,
+      dateKey: `${nextMonthYear}-${String(nextMonth).padStart(2, '0')}-${String(nextMonthDay).padStart(2, '0')}`,
     });
   }
+
+  const moveCalendarMonth = async (offset: number) => {
+    const nextBase = new Date(Date.UTC(currentYear, currentMonth - 1 + offset, 1));
+    setViewedMonthDate(nextBase);
+    setSelectedCalendarDate(null);
+    persistCalendarMonth(nextBase);
+  };
+
+  const moveCalendarToToday = async () => {
+    const nowKst = new Date(new Date().getTime() + 9 * 60 * 60 * 1000);
+    const todayBase = new Date(Date.UTC(nowKst.getUTCFullYear(), nowKst.getUTCMonth(), 1));
+    setViewedMonthDate(todayBase);
+    setSelectedCalendarDate(getKstToday());
+    setScheduleDate(getKstToday());
+    persistCalendarMonth(todayBase);
+  };
+
+  const moveCalendarToYearMonth = async (year: number, month: number) => {
+    const nextBase = new Date(Date.UTC(year, month - 1, 1));
+    setViewedMonthDate(nextBase);
+    setSelectedCalendarDate(null);
+    persistCalendarMonth(nextBase);
+  };
+
+  const selectableYears = Array.from({ length: 7 }, (_, idx) => currentYear - 3 + idx);
+
+  const handleCalendarDateClick = async (
+    cell: CalendarCell,
+    event: React.MouseEvent<HTMLButtonElement> | React.TouchEvent<HTMLButtonElement>
+  ) => {
+    const targetRect = event.currentTarget.getBoundingClientRect();
+    const panelRect = calendarPanelRef.current?.getBoundingClientRect();
+    if (panelRect) {
+      const rawLeft = targetRect.left + targetRect.width / 2 - panelRect.left;
+      const rawTop = targetRect.top - panelRect.top - 12;
+      const clampedLeft = Math.min(Math.max(rawLeft, 170), panelRect.width - 170);
+      const clampedTop = Math.max(rawTop, 100);
+      setScheduleFormPosition({ top: clampedTop, left: clampedLeft });
+    }
+    setSelectedCalendarDate(cell.dateKey);
+    setScheduleDate(cell.dateKey);
+    setShowScheduleForm(true);
+    if (cell.isCurrentMonth) return;
+    const clickedYear = Number(cell.dateKey.slice(0, 4));
+    const clickedMonth = Number(cell.dateKey.slice(5, 7));
+    if (!Number.isInteger(clickedYear) || !Number.isInteger(clickedMonth)) return;
+    await moveCalendarToYearMonth(clickedYear, clickedMonth);
+  };
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto font-sans bg-gray-50 min-h-screen space-y-6">
@@ -185,10 +459,54 @@ export default function DashboardPage() {
 
       {/* 임시 대시보드 위젯: 달력 + 오늘 브리핑 */}
       <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div className="xl:col-span-2 bg-white border-2 border-black rounded-2xl p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+        <div ref={calendarPanelRef} className="relative xl:col-span-2 bg-white border-2 border-black rounded-2xl p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
           <div className="flex items-end justify-between mb-4">
             <h2 className="text-base font-black">📅 {currentYear}년 {monthKorean} 캘린더</h2>
-            <p className="text-[11px] font-bold text-gray-400">임시 위젯</p>
+            <div className="flex items-center gap-2">
+              <select
+                value={currentYear}
+                onChange={(e) => void moveCalendarToYearMonth(Number(e.target.value), currentMonth)}
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-[11px] font-black text-gray-700"
+              >
+                {selectableYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year}년
+                  </option>
+                ))}
+              </select>
+              <select
+                value={currentMonth}
+                onChange={(e) => void moveCalendarToYearMonth(currentYear, Number(e.target.value))}
+                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-[11px] font-black text-gray-700"
+              >
+                {Array.from({ length: 12 }, (_, idx) => idx + 1).map((month) => (
+                  <option key={month} value={month}>
+                    {month}월
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => void moveCalendarMonth(-1)}
+                className="rounded-lg border border-gray-300 px-2 py-1 text-[11px] font-black text-gray-600 hover:bg-gray-100"
+              >
+                이전달
+              </button>
+              <button
+                type="button"
+                onClick={() => void moveCalendarToToday()}
+                className="rounded-lg border border-blue-300 bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700 hover:bg-blue-100"
+              >
+                오늘
+              </button>
+              <button
+                type="button"
+                onClick={() => void moveCalendarMonth(1)}
+                className="rounded-lg border border-gray-300 px-2 py-1 text-[11px] font-black text-gray-600 hover:bg-gray-100"
+              >
+                다음달
+              </button>
+            </div>
           </div>
           <div className="grid grid-cols-7 gap-2 text-center mb-2">
             {weekdayLabels.map((label) => (
@@ -197,49 +515,244 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
+          <div className="mb-3 flex items-center gap-2 text-[10px] font-bold text-gray-500">
+            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-blue-500"></span>일정 있음</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-black"></span>선택 날짜</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-rose-500"></span>높은 우선순위</span>
+          </div>
           <div className="grid grid-cols-7 gap-2">
             {calendarCells.map((cell, index) => (
-              <div
+              <button
+                type="button"
                 key={`${cell.day}-${index}`}
-                className={`h-12 rounded-xl border text-sm font-bold flex items-center justify-center transition-colors ${
+                onClick={(e) => void handleCalendarDateClick(cell, e)}
+                className={`relative h-14 rounded-xl border text-sm font-bold flex items-center justify-center transition-colors ${
+                  selectedCalendarDate &&
+                  selectedCalendarDate === cell.dateKey
+                    ? 'ring-2 ring-black shadow-[0_0_0_1px_rgba(0,0,0,1)]'
+                    : ''
+                } ${
                   cell.isToday
-                    ? 'bg-blue-600 border-blue-600 text-white'
+                    ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
                     : cell.isCurrentMonth
-                      ? 'bg-gray-50 border-gray-200 text-gray-800'
+                      ? 'bg-gray-50 border-gray-200 text-gray-800 hover:bg-blue-50'
                       : 'bg-white border-gray-100 text-gray-300'
                 }`}
               >
-                {cell.day}
-              </div>
+                <div className="flex flex-col items-center justify-center leading-tight">
+                  <span className={cell.isToday ? 'text-base' : ''}>{cell.day}</span>
+                  {cell.isCurrentMonth && (schedulesByDay[cell.day]?.count ?? 0) > 0 ? (
+                    <span
+                      className={`mt-0.5 rounded-full px-1.5 py-0.5 text-[9px] font-black ${
+                        schedulesByDay[cell.day]?.maxPriority === 'high'
+                          ? 'bg-rose-600 text-white'
+                          : schedulesByDay[cell.day]?.maxPriority === 'normal'
+                            ? cell.isToday ? 'bg-white text-blue-700' : 'bg-blue-600 text-white'
+                            : 'bg-gray-500 text-white'
+                      }`}
+                    >
+                      {schedulesByDay[cell.day]?.count ?? 0}건
+                    </span>
+                  ) : null}
+                </div>
+                {selectedCalendarDate === cell.dateKey ? (
+                  <span className={`absolute right-1 top-1 h-2 w-2 rounded-full ${cell.isToday ? 'bg-white' : 'bg-black'}`} />
+                ) : null}
+              </button>
             ))}
           </div>
+          {canManageSchedules ? (
+            <div
+              ref={calendarFormRef}
+              className={`absolute z-20 w-[340px] -translate-x-1/2 -translate-y-full rounded-xl border border-gray-300 bg-white p-3 shadow-xl transition-all duration-300 ease-out ${showScheduleForm ? 'pointer-events-auto opacity-100 scale-100' : 'pointer-events-none opacity-0 scale-95'}`}
+              style={{ top: scheduleFormPosition.top, left: scheduleFormPosition.left }}
+              tabIndex={-1}
+            >
+              <div className="mb-1 flex items-center justify-between">
+                <p className="text-[11px] font-black text-gray-800">
+                  {editingScheduleId ? '일정 수정' : '일정 등록'}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowScheduleForm(false)}
+                  className="rounded-md px-2 py-1 text-[10px] font-black text-gray-500 hover:bg-gray-100"
+                >
+                  닫기
+                </button>
+              </div>
+              <p className="text-[11px] font-black text-gray-800">
+                선택 날짜: {scheduleDate || '-'}
+              </p>
+              <div className="mt-2 space-y-2">
+                <input
+                  value={scheduleTitle}
+                  onChange={(e) => setScheduleTitle(e.target.value)}
+                  placeholder="일정 제목"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 placeholder:text-gray-400 focus:border-blue-300 focus:outline-none"
+                />
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <input
+                    type="date"
+                    value={scheduleDate}
+                    onChange={(e) => setScheduleDate(e.target.value)}
+                    className="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 focus:border-blue-300 focus:outline-none"
+                  />
+                  <input
+                    type="time"
+                    value={scheduleStartTime}
+                    onChange={(e) => setScheduleStartTime(e.target.value)}
+                    className="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 focus:border-blue-300 focus:outline-none"
+                  />
+                  <input
+                    type="time"
+                    value={scheduleEndTime}
+                    onChange={(e) => setScheduleEndTime(e.target.value)}
+                    className="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 focus:border-blue-300 focus:outline-none"
+                  />
+                </div>
+                <input
+                  value={scheduleLocation}
+                  onChange={(e) => setScheduleLocation(e.target.value)}
+                  placeholder="장소 (선택)"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 placeholder:text-gray-400 focus:border-blue-300 focus:outline-none"
+                />
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { key: 'high', label: '높음' },
+                    { key: 'normal', label: '보통' },
+                    { key: 'low', label: '낮음' },
+                  ].map((priority) => (
+                    <button
+                      key={priority.key}
+                      type="button"
+                      onClick={() => setSchedulePriority(priority.key as 'high' | 'normal' | 'low')}
+                      className={`rounded-lg px-2.5 py-2 text-[11px] font-black ${
+                        schedulePriority === priority.key
+                          ? priority.key === 'high'
+                            ? 'bg-rose-500 text-white'
+                            : priority.key === 'normal'
+                              ? 'bg-blue-500 text-white'
+                              : 'bg-gray-700 text-white'
+                          : 'border border-gray-300 bg-white text-gray-600'
+                      }`}
+                    >
+                      {priority.label}
+                    </button>
+                  ))}
+                </div>
+                <textarea
+                  value={scheduleDescription}
+                  onChange={(e) => setScheduleDescription(e.target.value)}
+                  placeholder="메모 (선택)"
+                  rows={2}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 placeholder:text-gray-400 focus:border-blue-300 focus:outline-none"
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void handleScheduleSubmit()}
+                    disabled={scheduleSaving || !scheduleTitle.trim() || !scheduleDate}
+                    className="inline-flex items-center rounded-lg bg-blue-500 px-3 py-2 text-[11px] font-black text-white hover:bg-blue-400 disabled:opacity-60"
+                  >
+                    {scheduleSaving ? '저장 중…' : editingScheduleId ? '수정 저장' : '일정 등록'}
+                  </button>
+                  {editingScheduleId ? (
+                    <button
+                      type="button"
+                      onClick={resetScheduleForm}
+                      className="inline-flex items-center rounded-lg bg-gray-100 px-3 py-2 text-[11px] font-black text-gray-700 hover:bg-gray-200"
+                    >
+                      취소
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
 
-        <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl p-6 border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-          <h2 className="text-base font-black">✨ 오늘 브리핑</h2>
-          <p className="mt-1 text-[11px] font-bold text-slate-300">사진 대신 넣은 임시 요약 카드</p>
-          <div className="mt-5 space-y-3">
-            <div className="flex items-center justify-between rounded-xl bg-white/10 px-3 py-2">
-              <span className="text-xs font-bold text-slate-200">결재 대기</span>
-              <span className="text-lg font-black text-amber-300">{pendingApprovalCount}</span>
+        <div className="rounded-2xl border-2 border-black bg-white p-6 text-gray-900 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+          <h2 className="text-base font-black">✨ 일정</h2>
+          <p className="mt-1 text-[11px] font-bold text-gray-400">등록된 일정 목록 (현재 선택 월)</p>
+          <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-xs font-black text-gray-800">등록 일정 (전체)</span>
+              <span className="text-[10px] font-bold text-gray-500">{combinedSchedules.length}건</span>
             </div>
-            <div className="flex items-center justify-between rounded-xl bg-white/10 px-3 py-2">
-              <span className="text-xs font-bold text-slate-200">QC 이슈</span>
-              <span className="text-lg font-black text-purple-300">{pendingQcCount}</span>
+            <div className="space-y-2">
+              {visibleScheduleItems.length === 0 ? (
+                <p className="text-[11px] font-bold text-gray-500">등록된 일정이 없습니다.</p>
+              ) : (
+                visibleScheduleItems.map((schedule) => (
+                  <div key={schedule.id} className="rounded-lg border border-gray-200 bg-white px-2.5 py-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-xs font-black text-gray-900">{schedule.title}</p>
+                        <p className="mt-0.5 text-[10px] font-bold text-gray-500">
+                          {schedule.schedule_date}
+                          {' · '}
+                          {schedule.start_time ? schedule.start_time.slice(0, 5) : '종일'}
+                          {schedule.end_time ? ` ~ ${schedule.end_time.slice(0, 5)}` : ''}
+                          {schedule.location ? ` · ${schedule.location}` : ''}
+                        </p>
+                        <span
+                          className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[9px] font-black ${
+                            schedule.priority === 'high'
+                              ? 'bg-rose-100 text-rose-700'
+                              : schedule.priority === 'normal'
+                                ? 'bg-blue-100 text-blue-700'
+                                : 'bg-gray-200 text-gray-700'
+                          }`}
+                        >
+                          {schedule.priority === 'high' ? '높음' : schedule.priority === 'normal' ? '보통' : '낮음'}
+                        </span>
+                      </div>
+                      {canManageSchedules ? (
+                        <div className="flex flex-shrink-0 items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => handleScheduleEdit(schedule)}
+                            className="rounded-md bg-gray-100 px-2 py-1 text-[10px] font-black text-gray-700 hover:bg-gray-200"
+                          >
+                            수정
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleScheduleDelete(schedule.id)}
+                            disabled={scheduleSaving}
+                            className="rounded-md bg-rose-500/70 px-2 py-1 text-[10px] font-black text-white hover:bg-rose-500 disabled:opacity-60"
+                          >
+                            삭제
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                    {schedule.description ? (
+                      <p className="mt-1 text-[10px] font-bold text-gray-500">{schedule.description}</p>
+                    ) : null}
+                  </div>
+                ))
+              )}
             </div>
-            <div className="flex items-center justify-between rounded-xl bg-white/10 px-3 py-2">
-              <span className="text-xs font-bold text-slate-200">로그인 실패</span>
-              <span className={`text-lg font-black ${todayLoginFailCount > 0 ? 'text-rose-300' : 'text-emerald-300'}`}>
-                {todayLoginFailCount}
-              </span>
-            </div>
+            {combinedSchedules.length > scheduleListVisibleCount ? (
+              <button
+                type="button"
+                onClick={() => setScheduleListVisibleCount((prev) => prev + 4)}
+                className="mt-2 inline-flex items-center rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-black text-gray-600 border border-gray-300 hover:bg-gray-100"
+              >
+                ... 더보기
+              </button>
+            ) : null}
+            {combinedSchedules.length > 4 && scheduleListVisibleCount >= combinedSchedules.length ? (
+              <button
+                type="button"
+                onClick={() => setScheduleListVisibleCount(4)}
+                className="mt-2 ml-2 inline-flex items-center rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-black text-gray-600 border border-gray-300 hover:bg-gray-100"
+              >
+                접기
+              </button>
+            ) : null}
           </div>
-          <Link
-            href="/approvals"
-            className="mt-5 inline-flex items-center rounded-xl bg-blue-500 hover:bg-blue-400 px-3 py-2 text-xs font-black transition-colors"
-          >
-            결재함 바로가기 →
-          </Link>
         </div>
       </section>
 

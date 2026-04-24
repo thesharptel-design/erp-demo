@@ -35,7 +35,7 @@ export default function Sidebar() {
     '생산 관리': true,
     '자재 관리': true,
     '기준정보 (기초)': true,
-    'ADMIN ONLY': true,
+    '시스템 관리': true,
   });
 
   useEffect(() => {
@@ -119,7 +119,7 @@ export default function Sidebar() {
       title: '자재 관리',
       items: [
         { name: '입고 등록', href: '/inbound/new', perm: 'can_material_manage' }, 
-        { name: '자재 이동', href: '/inventory-transfers/new', perm: 'can_manage_permissions' },
+        { name: '자재 이동', href: '/inventory-transfers/new', perm: 'can_material_manage' },
         { name: '출고 지시 현황', href: '/outbound-instructions', perm: 'can_material_manage'},
         { name: '재고 실사/조정', href: '/inventory-adjustments', perm: 'can_material_manage' },
       ]
@@ -132,7 +132,7 @@ export default function Sidebar() {
       ]
     },
     {
-      title: 'ADMIN ONLY',
+      title: '시스템 관리',
       items: [
         { name: '사용자 가입 설정', href: '/admin/user-approvals', perm: 'can_manage_permissions'},
         { name: '사용자 조회 및 설정', href: '/admin/user-permissions', perm: 'can_manage_permissions' },
@@ -188,7 +188,7 @@ export default function Sidebar() {
 
         {/* 기존 메뉴 그룹 렌더링 */}
         {menuGroups.map((group) => {
-          if (group.title === 'ADMIN ONLY' && 
+          if (group.title === '시스템 관리' && 
               !isAdminRole(userData?.role_name) &&
               !hasManagePermission(userData, 'can_manage_permissions')) {
             return null;
@@ -200,7 +200,7 @@ export default function Sidebar() {
               <button 
                 onClick={() => toggleGroup(group.title)}
                 className={`w-full flex items-center justify-between px-2 py-2 text-[14px] font-black transition-colors uppercase tracking-tight ${
-                  group.title === 'ADMIN ONLY' ? 'text-blue-600' : 'text-gray-900'
+                  group.title === '시스템 관리' ? 'text-blue-600' : 'text-gray-900'
                 }`}
               >
                 {group.title}
