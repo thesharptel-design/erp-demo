@@ -27,7 +27,7 @@ export type BoardPostEditorProps = {
   onIsNoticeChange?: (value: boolean) => void
   /** 하단 버튼 줄(저장·취소 등) */
   footer?: ReactNode
-  /** role `admin` 전용: PDF 링크 추출 버튼 표시 */
+  /** 시스템 관리자 전용: PDF 업로드/링크 추출 버튼 표시 */
   canExtractPdfLinks?: boolean
   titlePlaceholder?: string
   bodyPlaceholder?: string
@@ -65,6 +65,7 @@ export default function BoardPostEditor({
   const titleId = 'board-post-title'
   const [isExtractingPdfLinks, setIsExtractingPdfLinks] = useState(false)
   const [pdfExtractMessage, setPdfExtractMessage] = useState('')
+  const [isUploadingPdf, setIsUploadingPdf] = useState(false)
 
   const handlePdfFilePick = useCallback(
     async (file: File | null) => {
@@ -139,6 +140,52 @@ export default function BoardPostEditor({
     [bodyHtml, canExtractPdfLinks, disabled, onBodyHtmlChange]
   )
 
+  const handlePdfUploadPick = useCallback(
+    async (file: File | null) => {
+      if (!file || disabled || !canExtractPdfLinks) return
+
+      setPdfExtractMessage('')
+      setIsUploadingPdf(true)
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+        if (!session?.access_token) {
+          throw new Error('로그인 세션이 만료되어 PDF 업로드를 진행할 수 없습니다.')
+        }
+
+        const formData = new FormData()
+        formData.append('file', file)
+        const response = await fetch(BOARD_IMAGE_UPLOAD_URL, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: formData,
+        })
+        const payload = await response.json().catch(() => null)
+        if (!response.ok) {
+          throw new Error(payload?.error ?? 'PDF 업로드에 실패했습니다.')
+        }
+
+        const publicUrl = typeof payload?.publicUrl === 'string' ? payload.publicUrl.trim() : ''
+        if (!publicUrl) throw new Error('PDF 업로드 URL을 확인할 수 없습니다.')
+
+        const escapedFileName = escapeHtmlText(file.name)
+        const safeUrl = escapeHtmlText(publicUrl)
+        const linkBlock = `<p><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">📄 ${escapedFileName}</a></p>`
+        onBodyHtmlChange(bodyHtml.trim() ? `${bodyHtml}${linkBlock}` : linkBlock)
+        setPdfExtractMessage('PDF 업로드 링크를 본문에 추가했습니다.')
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'PDF 업로드 중 오류가 발생했습니다.'
+        setPdfExtractMessage(msg)
+      } finally {
+        setIsUploadingPdf(false)
+      }
+    },
+    [bodyHtml, canExtractPdfLinks, disabled, onBodyHtmlChange]
+  )
+
   return (
     <div className="space-y-3 rounded-lg border border-gray-300 bg-white p-3 shadow-sm sm:p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-3">
@@ -200,24 +247,40 @@ export default function BoardPostEditor({
               링크가 걸린 텍스트를 붙여넣으면 링크도 함께 유지될 수 있습니다. 다만 PDF/이미지처럼 원본에서 링크
               정보를 주지 않으면 텍스트만 붙여넣어집니다.
             </p>
-            <p className="text-gray-500">별도 파일 첨부 UI는 다음 단계에서 연결할 수 있습니다.</p>
+            <p className="text-gray-500">별도 파일 첨부 UI는 다음 단계에서 확장할 수 있습니다.</p>
             {canExtractPdfLinks ? (
               <div className="pt-1">
-                <label className="inline-flex cursor-pointer items-center justify-center rounded border border-gray-300 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-100">
-                  {isExtractingPdfLinks ? 'PDF 링크 추출 중…' : 'PDF 업로드 후 링크 추출'}
-                  <input
-                    type="file"
-                    accept="application/pdf,.pdf"
-                    className="hidden"
-                    disabled={disabled || isExtractingPdfLinks}
-                    onChange={(e) => {
-                      const selected = e.target.files?.[0] ?? null
-                      void handlePdfFilePick(selected)
-                      e.currentTarget.value = ''
-                    }}
-                  />
-                </label>
-                <p className="mt-1 text-[11px] text-gray-500">관리자(role: admin)만 사용할 수 있습니다. PDF 최대 10MB.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="inline-flex cursor-pointer items-center justify-center rounded border border-gray-300 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-100">
+                    {isUploadingPdf ? 'PDF 업로드 중…' : 'PDF 업로드'}
+                    <input
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      className="hidden"
+                      disabled={disabled || isUploadingPdf || isExtractingPdfLinks}
+                      onChange={(e) => {
+                        const selected = e.target.files?.[0] ?? null
+                        void handlePdfUploadPick(selected)
+                        e.currentTarget.value = ''
+                      }}
+                    />
+                  </label>
+                  <label className="inline-flex cursor-pointer items-center justify-center rounded border border-gray-300 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-100">
+                    {isExtractingPdfLinks ? 'PDF 링크 추출 중…' : 'PDF 업로드 후 링크 추출'}
+                    <input
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      className="hidden"
+                      disabled={disabled || isExtractingPdfLinks || isUploadingPdf}
+                      onChange={(e) => {
+                        const selected = e.target.files?.[0] ?? null
+                        void handlePdfFilePick(selected)
+                        e.currentTarget.value = ''
+                      }}
+                    />
+                  </label>
+                </div>
+                <p className="mt-1 text-[11px] text-gray-500">시스템 관리자만 사용할 수 있습니다. PDF 최대 10MB.</p>
               </div>
             ) : null}
             {pdfExtractMessage ? (

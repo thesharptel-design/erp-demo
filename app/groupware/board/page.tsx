@@ -26,7 +26,48 @@ type BoardPostListRow = {
   author_id: string
 }
 
-type AppUserNameRow = { id: string; user_name: string | null }
+type AppUserProfileRow = {
+  id: string
+  user_name: string | null
+  user_kind: 'student' | 'teacher' | 'staff' | null
+  department: string | null
+  role_name: string | null
+  can_manage_permissions: boolean | null
+  can_admin_manage: boolean | null
+}
+
+type AuthorProfileMeta = {
+  name: string
+  icon: string
+}
+
+function resolveStaffIconByDepartment(department: string | null | undefined): string {
+  const dept = String(department ?? '').trim()
+  if (!dept) return '👔'
+  if (dept.includes('영업') || dept.includes('구매')) return '💼'
+  if (dept.includes('자재')) return '📦'
+  if (dept.includes('생산')) return '🏭'
+  if (dept.includes('품질') || dept.toUpperCase().includes('QC')) return '🧪'
+  return '👔'
+}
+
+function resolveAuthorMeta(profile: AppUserProfileRow): AuthorProfileMeta {
+  const isSystemAdmin = Boolean(profile.can_manage_permissions)
+
+  if (isSystemAdmin) {
+    return { name: profile.user_name?.trim() || '—', icon: '🛡️' }
+  }
+
+  if (profile.user_kind === 'student') {
+    return { name: profile.user_name?.trim() || '—', icon: '🎓' }
+  }
+
+  if (profile.user_kind === 'teacher') {
+    return { name: profile.user_name?.trim() || '—', icon: '🧑‍🏫' }
+  }
+
+  return { name: profile.user_name?.trim() || '—', icon: resolveStaffIconByDepartment(profile.department) }
+}
 
 function formatListDate(iso: string): string {
   try {
@@ -37,6 +78,7 @@ function formatListDate(iso: string): string {
       day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
+      hour12: false,
     }).format(d)
   } catch {
     return iso
@@ -46,7 +88,7 @@ function formatListDate(iso: string): string {
 export default function GroupwareBoardListPage() {
   const [tab, setTab] = useState<string>('')
   const [rows, setRows] = useState<BoardPostListRow[]>([])
-  const [authorNameById, setAuthorNameById] = useState<Record<string, string>>({})
+  const [authorMetaById, setAuthorMetaById] = useState<Record<string, AuthorProfileMeta>>({})
   const [loading, setLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
   const [hasSession, setHasSession] = useState<boolean | null>(null)
@@ -63,7 +105,7 @@ export default function GroupwareBoardListPage() {
       setHasSession(Boolean(session))
       if (!session) {
         setRows([])
-        setAuthorNameById({})
+        setAuthorMetaById({})
         setIsRoleAdmin(false)
         setLoading(false)
         return
@@ -93,27 +135,27 @@ export default function GroupwareBoardListPage() {
 
       const ids = [...new Set(list.map((p) => p.author_id).filter(Boolean))]
       if (ids.length === 0) {
-        setAuthorNameById({})
+        setAuthorMetaById({})
         return
       }
 
       const { data: users, error: usersError } = await supabase
         .from('app_users')
-        .select('id, user_name')
+        .select('id, user_name, user_kind, department, role_name, can_manage_permissions, can_admin_manage')
         .in('id', ids)
 
       if (usersError) throw usersError
 
-      const map: Record<string, string> = {}
-      for (const u of (users ?? []) as AppUserNameRow[]) {
-        map[u.id] = u.user_name?.trim() || '—'
+      const map: Record<string, AuthorProfileMeta> = {}
+      for (const u of (users ?? []) as AppUserProfileRow[]) {
+        map[u.id] = resolveAuthorMeta(u)
       }
-      setAuthorNameById(map)
+      setAuthorMetaById(map)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '목록을 불러오지 못했습니다.'
       setErrorMessage(msg)
       setRows([])
-      setAuthorNameById({})
+      setAuthorMetaById({})
     } finally {
       setLoading(false)
     }
@@ -204,13 +246,13 @@ export default function GroupwareBoardListPage() {
       ) : null}
 
       <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-[640px] w-full border-collapse text-left text-xs sm:text-sm">
+        <table className="min-w-[760px] w-full border-collapse text-left text-xs sm:text-sm">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50 text-gray-600">
               <th scope="col" className="whitespace-nowrap px-2 py-2 font-bold sm:px-3">
                 분류
               </th>
-              <th scope="col" className="min-w-[200px] px-2 py-2 font-bold sm:px-3">
+              <th scope="col" className="w-full min-w-[360px] px-2 py-2 font-bold sm:px-3">
                 제목
               </th>
               <th scope="col" className="whitespace-nowrap px-2 py-2 font-bold sm:px-3">
@@ -218,7 +260,7 @@ export default function GroupwareBoardListPage() {
               </th>
               <th
                 scope="col"
-                className="whitespace-nowrap px-2 py-2 font-bold sm:px-3"
+                className="whitespace-nowrap px-2 py-2 text-right font-bold sm:px-3"
                 aria-sort="descending"
                 title="작성일 기준 내림차순(최신순) 정렬"
               >
@@ -254,9 +296,10 @@ export default function GroupwareBoardListPage() {
               displayRows.map((row) => {
                 const notice = row.is_notice
                 const catLabel = getBoardCategoryLabel(row.category)
+                const authorMeta = authorMetaById[row.author_id] ?? { name: '—', icon: '👤' }
                 const author = isAnonymousBoardCategory(row.category)
                   ? boardAnonymousDisplayName(row.author_id, row.id)
-                  : authorNameById[row.author_id] ?? '—'
+                  : `${authorMeta.icon} ${authorMeta.name}`
                 return (
                   <tr key={row.id} className="hover:bg-gray-50/80">
                     <td className="whitespace-nowrap px-2 py-2 sm:px-3">
@@ -290,7 +333,7 @@ export default function GroupwareBoardListPage() {
                       </Link>
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 text-gray-600 sm:px-3">{author}</td>
-                    <td className="whitespace-nowrap px-2 py-2 text-gray-600 sm:px-3">
+                    <td className="whitespace-nowrap px-2 py-2 text-right text-gray-600 sm:px-3">
                       {formatListDate(row.created_at)}
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-gray-600 sm:px-3">

@@ -6,7 +6,7 @@ import {
   BOARD_CATEGORY_VALUE_GENERAL,
   boardBodyHasImages,
 } from '@/lib/groupware-board'
-import { isErpRoleAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
+import { isErpRoleAdminUser, isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
@@ -20,6 +20,7 @@ export default function NewBoardPostPage() {
   const [bodyHtml, setBodyHtml] = useState('')
   const [isNotice, setIsNotice] = useState(false)
   const [canWriteNotice, setCanWriteNotice] = useState(false)
+  const [canUsePdfTools, setCanUsePdfTools] = useState(false)
   const [ready, setReady] = useState(false)
   const [hasUser, setHasUser] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -36,8 +37,17 @@ export default function NewBoardPostPage() {
         return
       }
       setHasUser(true)
-      const { data: profile } = await supabase.from('app_users').select('role_name').eq('id', user.id).single()
+      const { data: profile } = await supabase
+        .from('app_users')
+        .select('role_name, can_manage_permissions, can_admin_manage')
+        .eq('id', user.id)
+        .single()
       setCanWriteNotice(isErpRoleAdminUser(profile as Pick<CurrentUserPermissions, 'role_name'> | null))
+      setCanUsePdfTools(
+        isSystemAdminUser(
+          profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
+        )
+      )
       setReady(true)
     })()
   }, [])
@@ -134,7 +144,7 @@ export default function NewBoardPostPage() {
         onBodyHtmlChange={setBodyHtml}
         disabled={saving}
         canWriteNotice={canWriteNotice}
-        canExtractPdfLinks={canWriteNotice}
+        canExtractPdfLinks={canUsePdfTools}
         isNotice={isNotice}
         onIsNoticeChange={setIsNotice}
         footer={

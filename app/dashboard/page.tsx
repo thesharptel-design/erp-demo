@@ -45,6 +45,13 @@ type DashboardScheduleRow = {
   location: string | null;
   created_by: string;
   priority: 'high' | 'normal' | 'low';
+  created_at?: string;
+};
+
+type ScheduleListGroup = {
+  startDate: string;
+  endDate: string;
+  rows: DashboardScheduleRow[];
 };
 
 // --- 뱃지(상태) 스타일 헬퍼 ---
@@ -97,6 +104,7 @@ export default function DashboardPage() {
   const [schedules, setSchedules] = useState<DashboardScheduleRow[]>([]);
   const [scheduleTitle, setScheduleTitle] = useState('');
   const [scheduleDate, setScheduleDate] = useState('');
+  const [scheduleEndDate, setScheduleEndDate] = useState('');
   const [scheduleStartTime, setScheduleStartTime] = useState('');
   const [scheduleEndTime, setScheduleEndTime] = useState('');
   const [scheduleDescription, setScheduleDescription] = useState('');
@@ -114,6 +122,19 @@ export default function DashboardPage() {
   const calendarPanelRef = useRef<HTMLDivElement | null>(null);
 
   const getKstToday = () => new Date(new Date().getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const enumerateDateRange = (startDate: string, endDate: string): string[] => {
+    const range: string[] = [];
+    const [sy, sm, sd] = startDate.split('-').map(Number);
+    const [ey, em, ed] = endDate.split('-').map(Number);
+    if (!sy || !sm || !sd || !ey || !em || !ed) return range;
+    let cursor = new Date(Date.UTC(sy, sm - 1, sd));
+    const end = new Date(Date.UTC(ey, em - 1, ed));
+    while (cursor <= end) {
+      range.push(cursor.toISOString().slice(0, 10));
+      cursor = new Date(Date.UTC(cursor.getUTCFullYear(), cursor.getUTCMonth(), cursor.getUTCDate() + 1));
+    }
+    return range;
+  };
 
   const getStoredCalendarMonth = (): Date | null => {
     if (typeof window === 'undefined') return null;
@@ -137,7 +158,7 @@ export default function DashboardPage() {
   const loadSchedules = async () => {
     const { data: scheduleData, error } = await supabase
       .from('dashboard_schedules')
-      .select('id, schedule_date, start_time, end_time, title, description, location, created_by, priority')
+      .select('id, schedule_date, start_time, end_time, title, description, location, created_by, priority, created_at')
       .eq('is_deleted', false)
       .order('schedule_date', { ascending: true })
       .order('start_time', { ascending: true, nullsFirst: false });
@@ -159,6 +180,7 @@ export default function DashboardPage() {
         setDashboardUserId(user?.id ?? null);
         const today = getKstToday();
         setScheduleDate(today);
+        setScheduleEndDate(today);
         setSelectedCalendarDate(today);
         setViewedMonthDate(initialCalendarBase);
 
@@ -236,7 +258,9 @@ export default function DashboardPage() {
     setScheduleDescription('');
     setScheduleLocation('');
     setSchedulePriority('normal');
-    setScheduleDate(selectedCalendarDate ?? getKstToday());
+    const baseDate = selectedCalendarDate ?? getKstToday();
+    setScheduleDate(baseDate);
+    setScheduleEndDate(baseDate);
     setShowScheduleForm(false);
   };
 
@@ -244,6 +268,11 @@ export default function DashboardPage() {
     if (!canManageSchedules || scheduleSaving) return;
     const trimmedTitle = scheduleTitle.trim();
     if (!trimmedTitle || !scheduleDate || !dashboardUserId) return;
+    const rangeEndDate = scheduleEndDate || scheduleDate;
+    if (rangeEndDate < scheduleDate) {
+      console.error('Schedule range error: end date before start date');
+      return;
+    }
     setScheduleSaving(true);
     try {
       if (editingScheduleId) {
@@ -261,18 +290,20 @@ export default function DashboardPage() {
           .eq('id', editingScheduleId);
         if (error) throw error;
       } else {
+        const dateRange = enumerateDateRange(scheduleDate, rangeEndDate);
+        const payload = dateRange.map((dateValue) => ({
+          schedule_date: dateValue,
+          start_time: scheduleStartTime || null,
+          end_time: scheduleEndTime || null,
+          title: trimmedTitle,
+          description: scheduleDescription.trim() || null,
+          location: scheduleLocation.trim() || null,
+          priority: schedulePriority,
+          created_by: dashboardUserId,
+        }));
         const { error } = await supabase
           .from('dashboard_schedules')
-          .insert({
-            schedule_date: scheduleDate,
-            start_time: scheduleStartTime || null,
-            end_time: scheduleEndTime || null,
-            title: trimmedTitle,
-            description: scheduleDescription.trim() || null,
-            location: scheduleLocation.trim() || null,
-            priority: schedulePriority,
-            created_by: dashboardUserId,
-          });
+          .insert(payload);
         if (error) throw error;
       }
       await loadSchedules();
@@ -289,6 +320,7 @@ export default function DashboardPage() {
     setEditingScheduleId(schedule.id);
     setScheduleTitle(schedule.title);
     setScheduleDate(schedule.schedule_date);
+    setScheduleEndDate(schedule.schedule_date);
     setScheduleStartTime(schedule.start_time ?? '');
     setScheduleEndTime(schedule.end_time ?? '');
     setScheduleDescription(schedule.description ?? '');
@@ -306,11 +338,13 @@ export default function DashboardPage() {
 
   const handleScheduleDelete = async (scheduleId: number) => {
     if (!canManageSchedules || scheduleSaving) return;
+    const confirmed = window.confirm('정말 삭제하시겠습니까?');
+    if (!confirmed) return;
     setScheduleSaving(true);
     try {
       const { error } = await supabase
         .from('dashboard_schedules')
-        .update({ is_deleted: true })
+        .delete()
         .eq('id', scheduleId);
       if (error) throw error;
       await loadSchedules();
@@ -318,7 +352,17 @@ export default function DashboardPage() {
         resetScheduleForm();
       }
     } catch (error) {
-      console.error('Schedule delete error:', error);
+      if (error && typeof error === 'object') {
+        const e = error as { message?: string; code?: string; details?: string; hint?: string };
+        console.error('Schedule delete error:', {
+          message: e.message ?? 'unknown error',
+          code: e.code ?? null,
+          details: e.details ?? null,
+          hint: e.hint ?? null,
+        });
+      } else {
+        console.error('Schedule delete error:', String(error));
+      }
     } finally {
       setScheduleSaving(false);
     }
@@ -358,7 +402,40 @@ export default function DashboardPage() {
     if (!b.start_time) return -1;
     return a.start_time.localeCompare(b.start_time);
   });
-  const visibleScheduleItems = combinedSchedules.slice(0, scheduleListVisibleCount);
+  const groupedSchedules = combinedSchedules.reduce<ScheduleListGroup[]>((acc, row) => {
+    const lastGroup = acc[acc.length - 1];
+    if (!lastGroup) {
+      acc.push({ startDate: row.schedule_date, endDate: row.schedule_date, rows: [row] });
+      return acc;
+    }
+
+    const lastRow = lastGroup.rows[lastGroup.rows.length - 1];
+    const sameMeta =
+      lastRow.title === row.title &&
+      (lastRow.start_time ?? '') === (row.start_time ?? '') &&
+      (lastRow.end_time ?? '') === (row.end_time ?? '') &&
+      (lastRow.location ?? '') === (row.location ?? '') &&
+      (lastRow.description ?? '') === (row.description ?? '') &&
+      lastRow.priority === row.priority &&
+      lastRow.created_by === row.created_by &&
+      (lastRow.created_at ?? '') === (row.created_at ?? '');
+
+    const [ly, lm, ld] = lastGroup.endDate.split('-').map(Number);
+    const [ry, rm, rd] = row.schedule_date.split('-').map(Number);
+    const nextDate = new Date(Date.UTC(ly, lm - 1, ld + 1)).toISOString().slice(0, 10);
+    const isContiguous = `${ry}-${String(rm).padStart(2, '0')}-${String(rd).padStart(2, '0')}` === nextDate;
+
+    if (sameMeta && isContiguous) {
+      lastGroup.endDate = row.schedule_date;
+      lastGroup.rows.push(row);
+      return acc;
+    }
+
+    acc.push({ startDate: row.schedule_date, endDate: row.schedule_date, rows: [row] });
+    return acc;
+  }, []);
+
+  const visibleScheduleItems = groupedSchedules.slice(0, scheduleListVisibleCount);
 
   for (let idx = 0; idx < 42; idx += 1) {
     if (idx < firstDayOfMonth) {
@@ -409,6 +486,7 @@ export default function DashboardPage() {
     setViewedMonthDate(todayBase);
     setSelectedCalendarDate(getKstToday());
     setScheduleDate(getKstToday());
+    setScheduleEndDate(getKstToday());
     persistCalendarMonth(todayBase);
   };
 
@@ -436,6 +514,7 @@ export default function DashboardPage() {
     }
     setSelectedCalendarDate(cell.dateKey);
     setScheduleDate(cell.dateKey);
+    setScheduleEndDate(cell.dateKey);
     setShowScheduleForm(true);
     if (cell.isCurrentMonth) return;
     const clickedYear = Number(cell.dateKey.slice(0, 4));
@@ -583,6 +662,9 @@ export default function DashboardPage() {
               <p className="text-[11px] font-black text-gray-800">
                 선택 날짜: {scheduleDate || '-'}
               </p>
+              <p className="mt-1 text-[10px] font-bold text-gray-500">
+                {editingScheduleId ? '수정은 단일 날짜 일정만 변경됩니다.' : '범위 등록: 시작일~종료일까지 동일 일정이 생성됩니다.'}
+              </p>
               <div className="mt-2 space-y-2">
                 <input
                   value={scheduleTitle}
@@ -590,13 +672,22 @@ export default function DashboardPage() {
                   placeholder="일정 제목"
                   className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 placeholder:text-gray-400 focus:border-blue-300 focus:outline-none"
                 />
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <input
                     type="date"
                     value={scheduleDate}
                     onChange={(e) => setScheduleDate(e.target.value)}
                     className="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 focus:border-blue-300 focus:outline-none"
                   />
+                  <input
+                    type="date"
+                    value={scheduleEndDate}
+                    onChange={(e) => setScheduleEndDate(e.target.value)}
+                    disabled={editingScheduleId !== null}
+                    className="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 focus:border-blue-300 focus:outline-none disabled:bg-gray-100 disabled:text-gray-400"
+                  />
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <input
                     type="time"
                     value={scheduleStartTime}
@@ -651,7 +742,7 @@ export default function DashboardPage() {
                   <button
                     type="button"
                     onClick={() => void handleScheduleSubmit()}
-                    disabled={scheduleSaving || !scheduleTitle.trim() || !scheduleDate}
+                    disabled={scheduleSaving || !scheduleTitle.trim() || !scheduleDate || !scheduleEndDate || scheduleEndDate < scheduleDate}
                     className="inline-flex items-center rounded-lg bg-blue-500 px-3 py-2 text-[11px] font-black text-white hover:bg-blue-400 disabled:opacity-60"
                   >
                     {scheduleSaving ? '저장 중…' : editingScheduleId ? '수정 저장' : '일정 등록'}
@@ -677,19 +768,23 @@ export default function DashboardPage() {
           <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
             <div className="mb-2 flex items-center justify-between">
               <span className="text-xs font-black text-gray-800">등록 일정 (전체)</span>
-              <span className="text-[10px] font-bold text-gray-500">{combinedSchedules.length}건</span>
+              <span className="text-[10px] font-bold text-gray-500">{groupedSchedules.length}건</span>
             </div>
             <div className="space-y-2">
               {visibleScheduleItems.length === 0 ? (
                 <p className="text-[11px] font-bold text-gray-500">등록된 일정이 없습니다.</p>
               ) : (
-                visibleScheduleItems.map((schedule) => (
-                  <div key={schedule.id} className="rounded-lg border border-gray-200 bg-white px-2.5 py-2">
+                visibleScheduleItems.map((group) => {
+                  const schedule = group.rows[0];
+                  const dateLabel =
+                    group.startDate === group.endDate ? group.startDate : `${group.startDate} ~ ${group.endDate}`;
+                  return (
+                  <div key={`${schedule.id}-${group.startDate}-${group.endDate}`} className="rounded-lg border border-gray-200 bg-white px-2.5 py-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <p className="truncate text-xs font-black text-gray-900">{schedule.title}</p>
                         <p className="mt-0.5 text-[10px] font-bold text-gray-500">
-                          {schedule.schedule_date}
+                          {dateLabel}
                           {' · '}
                           {schedule.start_time ? schedule.start_time.slice(0, 5) : '종일'}
                           {schedule.end_time ? ` ~ ${schedule.end_time.slice(0, 5)}` : ''}
@@ -731,10 +826,10 @@ export default function DashboardPage() {
                       <p className="mt-1 text-[10px] font-bold text-gray-500">{schedule.description}</p>
                     ) : null}
                   </div>
-                ))
+                )})
               )}
             </div>
-            {combinedSchedules.length > scheduleListVisibleCount ? (
+            {groupedSchedules.length > scheduleListVisibleCount ? (
               <button
                 type="button"
                 onClick={() => setScheduleListVisibleCount((prev) => prev + 4)}
@@ -743,7 +838,7 @@ export default function DashboardPage() {
                 ... 더보기
               </button>
             ) : null}
-            {combinedSchedules.length > 4 && scheduleListVisibleCount >= combinedSchedules.length ? (
+            {groupedSchedules.length > 4 && scheduleListVisibleCount >= groupedSchedules.length ? (
               <button
                 type="button"
                 onClick={() => setScheduleListVisibleCount(4)}

@@ -10,11 +10,14 @@ const FETCH_TITLE_TIMEOUT_MS = 5000
 
 type AdminProfile = {
   role_name: string | null
+  can_manage_permissions?: boolean | null
+  can_admin_manage?: boolean | null
 }
 
-function isRoleAdminProfile(profile: AdminProfile | null): boolean {
+function isSystemAdminProfile(profile: AdminProfile | null): boolean {
   if (!profile) return false
-  return String(profile.role_name ?? '').toLowerCase() === 'admin'
+  if (String(profile.role_name ?? '').toLowerCase() === 'admin') return true
+  return Boolean(profile.can_manage_permissions) || Boolean(profile.can_admin_manage)
 }
 
 function isHttpUrl(value: unknown): value is string {
@@ -154,11 +157,11 @@ export async function POST(request: NextRequest) {
 
     const { data: profile, error: profileError } = await adminClient
       .from('app_users')
-      .select('role_name')
+      .select('role_name, can_manage_permissions, can_admin_manage')
       .eq('id', user.id)
       .single()
-    if (profileError || !isRoleAdminProfile((profile ?? null) as AdminProfile | null)) {
-      return NextResponse.json({ error: 'PDF 링크 추출은 관리자(role: admin)만 사용할 수 있습니다.' }, { status: 403 })
+    if (profileError || !isSystemAdminProfile((profile ?? null) as AdminProfile | null)) {
+      return NextResponse.json({ error: 'PDF 링크 추출은 시스템 관리자만 사용할 수 있습니다.' }, { status: 403 })
     }
 
     const formData = await request.formData()
