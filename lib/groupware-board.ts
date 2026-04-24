@@ -10,6 +10,7 @@
 export const BOARD_CATEGORY_VALUE_GENERAL = 'general'
 export const BOARD_CATEGORY_VALUE_FREE = 'free'
 export const BOARD_CATEGORY_VALUE_INFO = 'info'
+export const BOARD_CATEGORY_VALUE_ERP = 'erp'
 export const BOARD_CATEGORY_VALUE_QNA = 'qna'
 export const BOARD_CATEGORY_VALUE_ANONYMOUS = 'anonymous'
 
@@ -17,14 +18,16 @@ export type BoardCategoryValue =
   | typeof BOARD_CATEGORY_VALUE_GENERAL
   | typeof BOARD_CATEGORY_VALUE_FREE
   | typeof BOARD_CATEGORY_VALUE_INFO
+  | typeof BOARD_CATEGORY_VALUE_ERP
   | typeof BOARD_CATEGORY_VALUE_QNA
   | typeof BOARD_CATEGORY_VALUE_ANONYMOUS
 
-/** 글쓰기·수정 분류 순서: 일반 → 자유 → 사내소식 → Q&A → 익명 */
+/** 글쓰기·수정 분류 순서: 일반 → 자유 → 사내소식 → ERP → Q&A → 익명 */
 export const BOARD_CATEGORY_OPTIONS: { value: BoardCategoryValue; label: string }[] = [
   { value: BOARD_CATEGORY_VALUE_GENERAL, label: '일반' },
   { value: BOARD_CATEGORY_VALUE_FREE, label: 'Bio News' },
   { value: BOARD_CATEGORY_VALUE_INFO, label: '교육 스케줄 안내' },
+  { value: BOARD_CATEGORY_VALUE_ERP, label: 'ERP' },
   { value: BOARD_CATEGORY_VALUE_QNA, label: 'Q&A' },
   { value: BOARD_CATEGORY_VALUE_ANONYMOUS, label: '익명' },
 ]

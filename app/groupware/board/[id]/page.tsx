@@ -6,7 +6,7 @@ import {
   getBoardCategoryLabel,
   isAnonymousBoardCategory,
 } from '@/lib/groupware-board'
-import { isErpRoleAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
+import { isErpRoleAdminUser, isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
 import { ThumbsUp } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -56,6 +56,8 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   /** 글/댓글 삭제: role `admin`만 */
   const [isRoleAdmin, setIsRoleAdmin] = useState(false)
+  /** 타인 글 분류(탭) 변경: 시스템 관리자 */
+  const [canMoveBoardTab, setCanMoveBoardTab] = useState(false)
   const [likedPost, setLikedPost] = useState(false)
 
   const resolveId = useCallback(async () => {
@@ -99,6 +101,8 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
       setErrorMessage('')
       setPost(null)
       setAuthorName('—')
+      setIsRoleAdmin(false)
+      setCanMoveBoardTab(false)
 
       const id = await resolveId()
       if (cancelled) return
@@ -116,10 +120,15 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
 
         const { data: profile } = await supabase
           .from('app_users')
-          .select('role_name')
+          .select('role_name, can_manage_permissions, can_admin_manage')
           .eq('id', session.user.id)
           .single()
         setIsRoleAdmin(isErpRoleAdminUser(profile as Pick<CurrentUserPermissions, 'role_name'> | null))
+        setCanMoveBoardTab(
+          isSystemAdminUser(
+            profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
+          )
+        )
 
         const { data: row, error: fetchError } = await supabase
           .from('board_posts')
@@ -316,7 +325,7 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
           ) : null}
         </div>
 
-        {isAuthor || isRoleAdmin ? (
+        {isAuthor || isRoleAdmin || canMoveBoardTab ? (
           <div className="mt-4 flex justify-end gap-3 border-b border-gray-100 pb-4 text-sm">
             {isAuthor ? (
               <Link
@@ -324,6 +333,14 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
                 className="font-bold text-gray-600 hover:text-blue-600 hover:underline"
               >
                 수정
+              </Link>
+            ) : null}
+            {canMoveBoardTab && !isAuthor ? (
+              <Link
+                href={`/groupware/board/${post.id}/edit`}
+                className="font-bold text-gray-600 hover:text-blue-600 hover:underline"
+              >
+                탭 이동
               </Link>
             ) : null}
             {isRoleAdmin ? (

@@ -29,6 +29,8 @@ export type BoardPostEditorProps = {
   footer?: ReactNode
   /** 시스템 관리자 전용: PDF 업로드/링크 추출 버튼 표시 */
   canExtractPdfLinks?: boolean
+  /** 시스템 관리자가 타인 글 분류만 바꿀 때: 제목·본문·첨부 안내 잠금 */
+  categoryMoveOnly?: boolean
   titlePlaceholder?: string
   bodyPlaceholder?: string
   categoryLabel?: string
@@ -57,12 +59,15 @@ export default function BoardPostEditor({
   onIsNoticeChange,
   footer,
   canExtractPdfLinks = false,
+  categoryMoveOnly = false,
   titlePlaceholder = '제목을 입력하세요',
   bodyPlaceholder = '내용을 입력하세요',
   categoryLabel = '분류',
 }: BoardPostEditorProps) {
   const categoryId = 'board-post-category'
   const titleId = 'board-post-title'
+  const contentLocked = categoryMoveOnly
+  const showPdfTools = canExtractPdfLinks && !contentLocked
   const [isExtractingPdfLinks, setIsExtractingPdfLinks] = useState(false)
   const [pdfExtractMessage, setPdfExtractMessage] = useState('')
   const [isUploadingPdf, setIsUploadingPdf] = useState(false)
@@ -188,6 +193,12 @@ export default function BoardPostEditor({
 
   return (
     <div className="space-y-3 rounded-lg border border-gray-300 bg-white p-3 shadow-sm sm:p-4">
+      {contentLocked ? (
+        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          시스템 관리자 권한으로 <span className="font-black">게시판 분류(탭)만</span> 변경할 수 있습니다. 제목·본문은
+          작성자만 수정할 수 있습니다.
+        </div>
+      ) : null}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-3">
         <div className="flex w-full flex-col gap-1 sm:w-44 sm:flex-shrink-0">
           <label htmlFor={categoryId} className="text-xs font-bold text-gray-600">
@@ -215,10 +226,11 @@ export default function BoardPostEditor({
             id={titleId}
             type="text"
             value={title}
-            disabled={disabled}
+            disabled={disabled || contentLocked}
+            readOnly={contentLocked}
             placeholder={titlePlaceholder}
             onChange={(e) => onTitleChange(e.target.value)}
-            className="h-10 w-full min-w-0 rounded border border-gray-300 px-3 text-sm font-semibold text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-60"
+            className={`h-10 w-full min-w-0 rounded border border-gray-300 px-3 text-sm font-semibold text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-60 ${contentLocked ? 'cursor-not-allowed bg-gray-100' : ''}`}
           />
         </div>
       </div>
@@ -226,7 +238,7 @@ export default function BoardPostEditor({
       <ApprovalDraftRichEditor
         value={bodyHtml}
         onChange={onBodyHtmlChange}
-        disabled={disabled}
+        disabled={disabled || contentLocked}
         placeholder={bodyPlaceholder}
         imageUploadUrl={BOARD_IMAGE_UPLOAD_URL}
         attachmentStorageKey="board_attachments"
@@ -234,6 +246,7 @@ export default function BoardPostEditor({
         editorSurfaceClassName="min-h-[280px] sm:min-h-[360px]"
       />
 
+      {!contentLocked ? (
       <div className="rounded-md border border-dashed border-gray-300 bg-gray-50 px-3 py-2.5">
         <div className="flex items-start gap-2">
           <Paperclip className="mt-0.5 h-4 w-4 flex-shrink-0 text-gray-500" aria-hidden />
@@ -248,7 +261,7 @@ export default function BoardPostEditor({
               정보를 주지 않으면 텍스트만 붙여넣어집니다.
             </p>
             <p className="text-gray-500">별도 파일 첨부 UI는 다음 단계에서 확장할 수 있습니다.</p>
-            {canExtractPdfLinks ? (
+            {showPdfTools ? (
               <div className="pt-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <label className="inline-flex cursor-pointer items-center justify-center rounded border border-gray-300 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-100">
@@ -293,6 +306,7 @@ export default function BoardPostEditor({
           </div>
         </div>
       </div>
+      ) : null}
 
       {(canWriteNotice && onIsNoticeChange) || footer ? (
         <div className="flex flex-col gap-3 border-t border-gray-200 pt-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
