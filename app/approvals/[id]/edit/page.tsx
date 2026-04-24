@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { formatWriterDepartmentLabel } from '@/lib/approval-draft'
 import { canWriterDeleteApprovalDoc } from '@/lib/approval-status'
 import { normalizeApprovalRole, type ApprovalRole } from '@/lib/approval-roles'
+import { isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
 import { buildApprovalLines, buildApprovalParticipantsRows, normalizeParticipants } from '@/lib/approval-participants'
 import { executionDateForDb, isCompleteValidExecutionDate } from '@/lib/execution-date-input'
 import ExecutionDateHybridInput from '@/components/approvals/ExecutionDateHybridInput'
@@ -43,6 +44,8 @@ type AppUser = {
   teacher_subject?: string | null
   role_name: string
   can_approval_participate: boolean
+  can_manage_permissions?: boolean | null
+  can_admin_manage?: boolean | null
 }
 
 type Department = {
@@ -272,7 +275,7 @@ export default function EditApprovalPage({
         supabase
           .from('app_users')
           .select(
-            'id, login_id, user_name, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate'
+            'id, login_id, user_name, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate, can_manage_permissions, can_admin_manage'
           )
           .order('user_name'),
         supabase.from('departments').select('id, dept_name').order('id'),
@@ -308,7 +311,9 @@ export default function EditApprovalPage({
       const typedLines = lines as ApprovalLine[]
       const currentUserId = sessionData.user?.id
       const currentUser = (usersData as AppUser[] | null)?.find((u) => u.id === currentUserId)
-      const isAdmin = String(currentUser?.role_name || '').toLowerCase() === 'admin'
+      const isAdmin = isSystemAdminUser(
+        currentUser as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
+      )
       const isWriter = typedDoc.writer_id === currentUserId
       const isLineApprover = typedLines.some((line) => line.approver_id === currentUserId)
       const isParticipant = (participantRows || []).some((row: any) => row.user_id === currentUserId)

@@ -628,7 +628,10 @@ export default function UserPermissionsPage() {
                 const profile = getProfileColumns(user);
                 const isSaving = savingUserId === user.id;
                 const assignedWarehouseIds = userWarehouseMap[user.id] ?? [];
-                const isSystemAdmin = user.role_name?.toLowerCase() === 'admin' || user.can_manage_permissions === true;
+                const isSystemAdmin =
+                  user.role_name?.toLowerCase() === 'admin' ||
+                  user.can_manage_permissions === true ||
+                  user.can_admin_manage === true;
                 return (
                   <tr key={user.id} className={`align-top hover:bg-blue-50/40 ${!user.is_active ? 'bg-gray-50 opacity-70' : ''}`}>
                     <td className="px-3 py-3 text-center">

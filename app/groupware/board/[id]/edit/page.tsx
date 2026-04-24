@@ -61,7 +61,11 @@ export default function EditBoardPostPage({ params }: { params: Promise<{ id: st
       const sysAdmin = isSystemAdminUser(
         profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
       )
-      setCanWriteNotice(isErpRoleAdminUser(profile as Pick<CurrentUserPermissions, 'role_name'> | null))
+      setCanWriteNotice(
+        isErpRoleAdminUser(
+          profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
+        )
+      )
       setCanUsePdfTools(sysAdmin)
 
       const { data: row, error } = await supabase

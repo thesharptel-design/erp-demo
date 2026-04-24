@@ -4,7 +4,12 @@ import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { hasManagePermission, isAdminRole, type CurrentUserPermissions, type ManagePermissionKey } from '@/lib/permissions'
+import {
+  hasManagePermission,
+  isSystemAdminUser,
+  type CurrentUserPermissions,
+  type ManagePermissionKey,
+} from '@/lib/permissions'
 
 type SidebarUser = CurrentUserPermissions
 type MenuItem = {
@@ -165,7 +170,7 @@ export default function Sidebar() {
         </Link>
         {userData && (
           <div className="mt-2 text-[11px] font-bold text-gray-400 uppercase tracking-tight">
-            {userData.user_name} / {isAdminRole(userData.role_name) ? 'ADMIN' : 'STAFF'} / {userData.employee_no ?? '-'}
+            {userData.user_name} / {isSystemAdminUser(userData) ? 'ADMIN' : 'STAFF'} / {userData.employee_no ?? '-'}
           </div>
         )}
       </div>
@@ -188,9 +193,7 @@ export default function Sidebar() {
 
         {/* 기존 메뉴 그룹 렌더링 */}
         {menuGroups.map((group) => {
-          if (group.title === '시스템 관리' && 
-              !isAdminRole(userData?.role_name) &&
-              !hasManagePermission(userData, 'can_manage_permissions')) {
+          if (group.title === '시스템 관리' && !isSystemAdminUser(userData ?? null)) {
             return null;
           }
 

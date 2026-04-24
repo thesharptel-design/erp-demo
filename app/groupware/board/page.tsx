@@ -111,8 +111,16 @@ export default function GroupwareBoardListPage() {
         return
       }
 
-      const { data: profile } = await supabase.from('app_users').select('role_name').eq('id', session.user.id).single()
-      setIsRoleAdmin(isErpRoleAdminUser(profile as Pick<CurrentUserPermissions, 'role_name'> | null))
+      const { data: profile } = await supabase
+        .from('app_users')
+        .select('role_name, can_manage_permissions, can_admin_manage')
+        .eq('id', session.user.id)
+        .single()
+      setIsRoleAdmin(
+        isErpRoleAdminUser(
+          profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
+        )
+      )
 
       let q = supabase
         .from('board_posts')

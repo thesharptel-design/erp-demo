@@ -15,6 +15,7 @@ import {
   getWriterName,
 } from '@/lib/approval-status';
 import type { ApprovalDocLike, ApprovalLineWithName } from '@/lib/approval-status';
+import { isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions';
 
 type ApprovalsDocRow = ApprovalDocLike & {
   id: number;
@@ -200,11 +201,11 @@ export default function ApprovalsPage() {
         .select('role_name, can_manage_permissions, can_admin_manage')
         .eq('id', user.id)
         .single();
-      const userIsAdmin =
-        String(profile?.role_name || '').toLowerCase() === 'admin' ||
-        profile?.can_manage_permissions === true ||
-        profile?.can_admin_manage === true;
-      setViewerIsAdmin(userIsAdmin);
+      setViewerIsAdmin(
+        isSystemAdminUser(
+          profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
+        )
+      );
 
       const draftDateRaw = filterDraftDate.trim();
       const pDraftDate =

@@ -79,6 +79,8 @@ type AppUserProfile = {
   teacher_subject?: string | null
   role_name: string | null
   seal_image_path: string | null
+  can_manage_permissions?: boolean | null
+  can_admin_manage?: boolean | null
 }
 
 type OutboundRequestRow = {
@@ -129,7 +131,7 @@ export async function getOutboundRequestDetail(supabase: SupabaseClient, id: str
     supabase
       .from('app_users')
       .select(
-        'id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, seal_image_path'
+        'id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, seal_image_path, can_manage_permissions, can_admin_manage'
       ),
     supabase.from('departments').select('id, dept_name'),
     supabase.from('warehouses').select('name').eq('id', request.warehouse_id).maybeSingle(),

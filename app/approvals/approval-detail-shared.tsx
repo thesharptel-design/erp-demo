@@ -76,6 +76,8 @@ type AppUserProfile = {
   teacher_subject?: string | null
   role_name: string | null
   seal_image_path: string | null
+  can_manage_permissions?: boolean | null
+  can_admin_manage?: boolean | null
 }
 
 export async function getApprovalDetail(supabase: SupabaseClient, id: string) {
@@ -99,7 +101,7 @@ export async function getApprovalDetail(supabase: SupabaseClient, id: string) {
     supabase
       .from('app_users')
       .select(
-        'id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, seal_image_path'
+        'id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, seal_image_path, can_manage_permissions, can_admin_manage'
       ),
     supabase.from('departments').select('id, dept_name'),
     supabase.from('approval_lines').select('*').eq('approval_doc_id', docId).order('line_no'),
@@ -109,7 +111,7 @@ export async function getApprovalDetail(supabase: SupabaseClient, id: string) {
 
   if (docError) return null
 
-  const isAdmin = getIsAdmin((users ?? []) as { id: string; role_name?: string | null }[], currentUserId)
+  const isAdmin = getIsAdmin((users ?? []) as AppUserProfile[], currentUserId)
   const canView = canViewApprovalDoc({
     isAdmin,
     currentUserId,

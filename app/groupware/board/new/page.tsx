@@ -42,7 +42,11 @@ export default function NewBoardPostPage() {
         .select('role_name, can_manage_permissions, can_admin_manage')
         .eq('id', user.id)
         .single()
-      setCanWriteNotice(isErpRoleAdminUser(profile as Pick<CurrentUserPermissions, 'role_name'> | null))
+      setCanWriteNotice(
+        isErpRoleAdminUser(
+          profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
+        )
+      )
       setCanUsePdfTools(
         isSystemAdminUser(
           profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null

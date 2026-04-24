@@ -54,29 +54,27 @@ export function isSystemAdminUser(
 }
 
 /**
- * ERP에서 role 슬러그가 `admin`인 계정만 (게시판 타인 글/댓글 삭제 등 최고 권한 UI용).
- * `can_admin_manage` 등 플래그만으로는 true가 되지 않습니다.
+ * ERP 최고 권한: `role_name = admin` 과 동일하게 시스템 관리자(`can_manage_permissions` / `can_admin_manage`) 포함.
+ * (게시판 삭제·공지·대시보드 일정 등 기존 role-admin UI·RLS와 맞춤.)
  */
-export function isErpRoleAdminUser(user: Pick<CurrentUserPermissions, 'role_name'> | null): boolean {
-  if (!user) return false
-  return isAdminRole(user.role_name)
+export function isErpRoleAdminUser(
+  user: Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
+): boolean {
+  return isSystemAdminUser(user)
 }
 
-/** System Admin 이상: 품목 마스터 등록·수정·삭제 (role admin 또는 시스템 관리 플래그). */
+/** 품목 마스터 등록·수정·삭제 — role admin 과 시스템 관리자 동일. */
 export function canEditItemsMaster(
-  user: Pick<CurrentUserPermissions, 'role_name' | 'can_admin_manage'> | null
+  user: Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
 ): boolean {
-  if (!user) return false
-  if (isAdminRole(user.role_name)) return true
-  return Boolean(user.can_admin_manage)
+  return isSystemAdminUser(user)
 }
 
-/** 최고관리자: 중앙 공정 설정(DB) 편집 — role `admin` 전용. */
+/** 중앙 공정 설정(DB) 편집 — role admin 과 시스템 관리자 동일. */
 export function canManageCentralItemProcessConfig(
-  user: Pick<CurrentUserPermissions, 'role_name'> | null
+  user: Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
 ): boolean {
-  if (!user) return false
-  return isAdminRole(user.role_name)
+  return isSystemAdminUser(user)
 }
 
 export function hasManagePermission(
@@ -102,6 +100,13 @@ export function hasManagePermission(
 ) {
   if (!user) return false
   if (isAdminRole(user.role_name)) return true
+  if (
+    isSystemAdminUser(
+      user as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'>
+    )
+  ) {
+    return true
+  }
 
   switch (key) {
     case 'can_manage_master':

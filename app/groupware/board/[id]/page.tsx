@@ -123,7 +123,11 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
           .select('role_name, can_manage_permissions, can_admin_manage')
           .eq('id', session.user.id)
           .single()
-        setIsRoleAdmin(isErpRoleAdminUser(profile as Pick<CurrentUserPermissions, 'role_name'> | null))
+        setIsRoleAdmin(
+          isErpRoleAdminUser(
+            profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
+          )
+        )
         setCanMoveBoardTab(
           isSystemAdminUser(
             profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null

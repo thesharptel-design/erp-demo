@@ -6,6 +6,7 @@ import type { Database } from '@/lib/database.types'
 import { getOutboundRequestRowPresentation } from '@/lib/approval-status'
 import type { ApprovalDocLike, ApprovalLineLike } from '@/lib/approval-status'
 import { openApprovalShellPopup, openOutboundRequestDetailViewPopup } from '@/lib/approval-popup'
+import { isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
 
 type OutboundRequestRow = Database['public']['Tables']['outbound_requests']['Row'] & {
   approval_doc?: (ApprovalDocLike & { approval_lines?: ApprovalLineLike[] }) | null
@@ -55,11 +56,13 @@ export default function OutboundRequestsPage() {
 
         const { data: profile } = await supabase
           .from('app_users')
-          .select('role_name')
+          .select('role_name, can_manage_permissions, can_admin_manage')
           .eq('id', user.id)
           .single();
-          
-        const userIsAdmin = String(profile?.role_name || '').toLowerCase() === 'admin';
+
+        const userIsAdmin = isSystemAdminUser(
+          profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
+        );
         setIsAdmin(userIsAdmin);
 
         let myDocIds: number[] = [];

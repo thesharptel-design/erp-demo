@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react'
 
+import { isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
+
 export function getDocStatusLabel(status: string) {
   switch (status) {
     case 'draft':
@@ -44,10 +46,17 @@ export function getActionLabel(actionType: string) {
   }
 }
 
-export function getIsAdmin(users: { id: string; role_name?: string | null }[], currentUserId: string | null) {
+export function getIsAdmin(
+  users: (Pick<CurrentUserPermissions, 'id'> &
+    Partial<Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'>>)[],
+  currentUserId: string | null
+) {
   if (!currentUserId) return false
   const currentUserProfile = users.find((u) => u.id === currentUserId)
-  return String(currentUserProfile?.role_name || '').toLowerCase() === 'admin'
+  if (!currentUserProfile) return false
+  return isSystemAdminUser(
+    currentUserProfile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'>
+  )
 }
 
 export function canViewApprovalDoc(params: {
