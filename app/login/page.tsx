@@ -55,7 +55,7 @@ export default function LoginPage() {
   ]
   const userKindOptions = [
     { value: 'staff', label: '직원' },
-    { value: 'teacher', label: '선생' },
+    { value: 'teacher', label: '교사' },
     { value: 'student', label: '학생' },
   ]
 
@@ -126,7 +126,7 @@ export default function LoginPage() {
       if (!isPrivacyRead || !privacyAgreed) return setErrorMessage('약관을 끝까지 읽고 동의해 주세요.')
       if (userKind === 'staff' && (!department || !jobRank)) return setErrorMessage('직원은 부서와 직급이 필요합니다.')
       if (userKind === 'teacher' && (!schoolName || !trainingProgram || !teacherSubject)) {
-        return setErrorMessage('선생은 학교, 교육프로그램, 과목이 필요합니다.')
+        return setErrorMessage('교사는 학교, 교육프로그램, 과목이 필요합니다.')
       }
       if (userKind === 'student' && (!schoolName || !trainingProgram || !gradeLevel || !major)) {
         return setErrorMessage('학생은 학교, 교육프로그램, 학년, 전공이 필요합니다.')

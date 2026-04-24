@@ -40,7 +40,7 @@ type NewUserForm = {
 
 const USER_KIND_LABELS: Record<UserKind, string> = {
   student: '학생',
-  teacher: '선생',
+  teacher: '교사',
   staff: '직원',
 };
 
@@ -248,12 +248,12 @@ export default function UserApprovalsPage() {
     if (!newUser.email || !newUser.password || !newUser.user_name) {
       return alert('이름, 이메일, 비밀번호는 필수 입력입니다.');
     }
-    if (!newUser.user_kind) return alert('사용자 유형(학생/선생/직원)은 필수입니다.');
+    if (!newUser.user_kind) return alert('사용자 유형(학생/교사/직원)은 필수입니다.');
     if (newUser.user_kind === 'student' && (!newUser.school_name || !newUser.training_program || !newUser.grade_level || !newUser.major)) {
       return alert('학생은 학교, 교육프로그램, 학년, 전공이 필수입니다.');
     }
     if (newUser.user_kind === 'teacher' && (!newUser.school_name || !newUser.training_program || !newUser.teacher_subject)) {
-      return alert('선생은 학교, 교육프로그램, 과목이 필수입니다.');
+      return alert('교사는 학교, 교육프로그램, 과목이 필수입니다.');
     }
     if (newUser.user_kind === 'staff' && (!newUser.department || !newUser.job_rank)) {
       return alert('직원은 부서와 직급이 필수입니다.');
@@ -341,7 +341,7 @@ export default function UserApprovalsPage() {
       },
       {
         이름: '필독!',
-        이메일: '사용자유형: student/teacher/staff (또는 학생/선생/직원)',
+        이메일: '사용자유형: student/teacher/staff (또는 학생/교사/직원)',
         초기비밀번호: '필수',
         연락처: '권장',
         사용자유형: '',

@@ -23,6 +23,24 @@ function formatRemainingMs(remainingMs: number) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
+function resolveStaffIconByDepartment(department: string | null | undefined): string {
+  const dept = String(department ?? '').trim()
+  if (!dept) return '👔'
+  if (dept.includes('영업') || dept.includes('구매')) return '💼'
+  if (dept.includes('자재')) return '📦'
+  if (dept.includes('생산')) return '🏭'
+  if (dept.includes('품질') || dept.toUpperCase().includes('QC')) return '🧪'
+  return '👔'
+}
+
+function resolveUserIcon(user: CurrentUserPermissions | null): string {
+  if (!user) return '👤'
+  if (Boolean(user.can_manage_permissions)) return '🛡️'
+  if (user.user_kind === 'student') return '🎓'
+  if (user.user_kind === 'teacher') return '🧑‍🏫'
+  return resolveStaffIconByDepartment(user.department)
+}
+
 export default function AppTopChrome({ onMenuClick }: Props) {
   const router = useRouter()
   const { remainingMs, extendSession, isWarning } = useIdleSession()
@@ -59,7 +77,8 @@ export default function AppTopChrome({ onMenuClick }: Props) {
   }, [user])
 
   const userKindLabel =
-    user?.user_kind === 'student' ? '학생' : user?.user_kind === 'teacher' ? '선생' : '직원'
+    user?.user_kind === 'student' ? '학생' : user?.user_kind === 'teacher' ? '교사' : '직원'
+  const userIcon = resolveUserIcon(user)
 
   const userMetaLabels = useMemo(() => {
     if (!user) return []
@@ -113,7 +132,7 @@ export default function AppTopChrome({ onMenuClick }: Props) {
             <div className="min-w-0">
               <div className="mt-1 flex flex-wrap items-center gap-2">
                 <span className="truncate text-lg font-black tracking-tight text-gray-900 sm:text-xl">
-                  {user?.user_name ?? '사용자'}
+                  {userIcon} {user?.user_name ?? '사용자'}
                 </span>
                 <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700">
                   {userKindLabel}

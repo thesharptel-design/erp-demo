@@ -83,7 +83,7 @@ const RANK_OPTIONS = ['사원', '대리', '과장', '차장', '부장', '이사'
 }));
 const USER_KIND_OPTIONS: { value: UserKind; label: string }[] = [
   { value: 'staff', label: '직원' },
-  { value: 'teacher', label: '선생' },
+  { value: 'teacher', label: '교사' },
   { value: 'student', label: '학생' },
 ];
 const PERMISSION_FIELDS: { key: PermissionKey; label: string }[] = [
@@ -124,7 +124,7 @@ function parseUserKind(value: unknown): UserKind {
 
 function getUserKindLabel(kind: UserKind): string {
   if (kind === 'student') return '학생';
-  if (kind === 'teacher') return '선생';
+  if (kind === 'teacher') return '교사';
   return '직원';
 }
 
