@@ -2,11 +2,12 @@
 
 import type { FormEvent } from 'react'
 import Link from 'next/link'
-import { useRouter } from 'next/navigation'
-import { useCallback, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { Suspense, useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import ApprovalDraftPaper from '@/components/approvals/ApprovalDraftPaper'
 import ApprovalDraftLoadDialog from '@/components/approvals/ApprovalDraftLoadDialog'
+import ApprovalProcessHistoryPanel from '@/components/approvals/ApprovalProcessHistoryPanel'
 import { DraftFormErrorBanner, DraftFormWarningBanner } from '@/components/approvals/DraftFormAlertBanners'
 import SearchableCombobox from '@/components/SearchableCombobox'
 import { useOutboundRequestDraftForm } from '@/components/outbound/useOutboundRequestDraftForm'
@@ -47,9 +48,17 @@ function closePopupOrNavigate(router: ReturnType<typeof useRouter>) {
   router.refresh()
 }
 
-export default function NewOutboundPage() {
+function NewOutboundPageInner() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [loadDialogOpen, setLoadDialogOpen] = useState(false)
+  const initialResubmitDocId = useMemo(() => {
+    const raw = searchParams.get('resubmit')
+    const n = raw ? Number(raw) : NaN
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+  }, [searchParams])
+  const autosaveKey =
+    initialResubmitDocId != null ? `outbound-resubmit-${initialResubmitDocId}` : AUTOSAVE_KEY
 
   const {
     isLoading,
@@ -96,11 +105,16 @@ export default function NewOutboundPage() {
     lastLocalSaveAt,
     lastServerSaveAt,
     allowLeavingWithoutBeforeUnloadPrompt,
+    resubmitDocId,
+    resubmitHistories,
+    isResubmitHydrating,
   } = useOutboundRequestDraftForm({
-    autosaveKey: AUTOSAVE_KEY,
-    enableServerDraft: true,
+    autosaveKey,
+    enableServerDraft: initialResubmitDocId == null,
     webDraftRemarksTag: WEB_OUTBOUND_DRAFT_REMARKS,
+    initialResubmitDocId,
   })
+  const isResubmitMode = initialResubmitDocId != null
 
   const handleListClick = useCallback(
     (e: React.MouseEvent) => {
@@ -141,14 +155,25 @@ export default function NewOutboundPage() {
   }
 
   const handleDeleteDraft = async () => {
-    if (!confirm('작성 중인 내용과 임시저장을 모두 삭제할까요?')) return
+    const msg = resubmitDocId
+      ? '이 문서를 삭제합니다. 복구할 수 없습니다. 계속할까요?'
+      : '작성 중인 내용과 임시저장을 모두 삭제할까요?'
+    if (!confirm(msg)) return
     const r = await deleteDraftDocument()
     if (r.ok) {
       toast.success('삭제했습니다.')
+      if (resubmitDocId && typeof window !== 'undefined' && window.opener && !window.opener.closed) {
+        try {
+          window.opener.location.reload()
+        } catch {
+          /* ignore */
+        }
+        window.close()
+      }
     }
   }
 
-  if (isLoading) {
+  if (isLoading || isResubmitHydrating) {
     return (
       <div className="flex min-h-screen items-center justify-center text-sm font-bold text-gray-500">
         로딩 중…
@@ -158,18 +183,25 @@ export default function NewOutboundPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
-      <ApprovalDraftLoadDialog
-        open={loadDialogOpen}
-        onOpenChange={setLoadDialogOpen}
-        writerId={writerId || null}
-        remarksTag={WEB_OUTBOUND_DRAFT_REMARKS}
-        listServerDrafts={(c, w, t) => listOutboundWebDrafts(c as any, w, t)}
-        onLoadServerDraft={loadServerDraftById}
-        onReloadLocal={reloadFromLocalStorage}
-      />
+      {!isResubmitMode && (
+        <ApprovalDraftLoadDialog
+          open={loadDialogOpen}
+          onOpenChange={setLoadDialogOpen}
+          writerId={writerId || null}
+          remarksTag={WEB_OUTBOUND_DRAFT_REMARKS}
+          listServerDrafts={(c, w, t) => listOutboundWebDrafts(c as any, w, t)}
+          onLoadServerDraft={loadServerDraftById}
+          onReloadLocal={reloadFromLocalStorage}
+        />
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <DraftFormErrorBanner message={errorMessage} />
+        {isResubmitMode && resubmitDocId != null && (
+          <DraftFormWarningBanner>
+            회수·반려된 출고 문서를 불러왔습니다. 내용을 수정한 뒤 재상신하거나 삭제할 수 있습니다.
+          </DraftFormWarningBanner>
+        )}
         {!writerHasApprovalRight ? (
           <DraftFormWarningBanner>
             작성자에게 결재권이 없어 저장·상신할 수 없습니다. 관리자에게 결재권 부여를 요청하세요.
@@ -199,6 +231,7 @@ export default function NewOutboundPage() {
           onExecutionEndDateChange={setExecutionEndDate}
           onAgreementTextChange={setAgreementText}
           writerName={selectedWriter?.user_name ?? '—'}
+          writerEmployeeNo={selectedWriter?.employee_no ?? null}
           writerDeptName={writerDeptName}
           draftedDate={draftedDate}
           documentNumberHint="(저장·상신 시 DRO-YYMMDD-HHMM 자동 부여)"
@@ -332,6 +365,16 @@ export default function NewOutboundPage() {
               </div>
             </div>
           }
+          processHistorySlot={
+            isResubmitMode && resubmitHistories.length > 0 ? (
+              <ApprovalProcessHistoryPanel
+                rows={resubmitHistories.map((row) => ({
+                  ...row,
+                  actor_name: users.find((u) => u.id === row.actor_id)?.user_name ?? null,
+                }))}
+              />
+            ) : undefined
+          }
         />
 
         <div className="space-y-2 border-t border-gray-200 pt-4">
@@ -341,7 +384,7 @@ export default function NewOutboundPage() {
             ) : (
               <span className="text-gray-400">로컬 저장 시각: —</span>
             )}
-            {lastServerSaveAt ? (
+            {!isResubmitMode && lastServerSaveAt ? (
               <span className="ml-3">서버 임시저장: {formatSaveAt(lastServerSaveAt) ?? lastServerSaveAt}</span>
             ) : null}
           </div>
@@ -355,13 +398,15 @@ export default function NewOutboundPage() {
               >
                 {isDraftSaving ? '저장 중…' : '임시저장'}
               </button>
-              <button
-                type="button"
-                onClick={() => setLoadDialogOpen(true)}
-                className="rounded-lg border border-gray-400 bg-white px-4 py-2 text-sm font-bold text-gray-800 hover:bg-gray-50"
-              >
-                임시저장 불러오기
-              </button>
+              {!isResubmitMode && (
+                <button
+                  type="button"
+                  onClick={() => setLoadDialogOpen(true)}
+                  className="rounded-lg border border-gray-400 bg-white px-4 py-2 text-sm font-bold text-gray-800 hover:bg-gray-50"
+                >
+                  임시저장 불러오기
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => void handleDeleteDraft()}
@@ -384,12 +429,24 @@ export default function NewOutboundPage() {
                 disabled={isSaving || !writerHasApprovalRight || warehouses.length === 0}
                 className="rounded-lg border-2 border-black bg-blue-600 px-4 py-2 text-sm font-black text-white disabled:opacity-50"
               >
-                {isSaving ? '처리 중…' : '작성 후 상신'}
+                {isSaving ? '처리 중…' : isResubmitMode ? '재상신' : '작성 후 상신'}
               </button>
             </div>
           </div>
         </div>
       </form>
     </div>
+  )
+}
+
+export default function NewOutboundPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center text-sm font-bold text-gray-500">로딩 중…</div>
+      }
+    >
+      <NewOutboundPageInner />
+    </Suspense>
   )
 }

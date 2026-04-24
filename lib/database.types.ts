@@ -21,6 +21,9 @@ export type Database = {
           dept_id: number | null
           doc_type: string | null
           current_line_no: number | null
+          post_approval_cancel_opinion: string | null
+          post_approval_cancel_by: string | null
+          post_approval_cancel_at: string | null
         }
         Insert: Partial<Database['public']['Tables']['approval_docs']['Row']>
         Update: Partial<Database['public']['Tables']['approval_docs']['Row']>
@@ -219,6 +222,14 @@ export type Database = {
       }
       finalize_outbound_cancellation: {
         Args: { p_doc_id: number }
+        Returns: undefined
+      }
+      request_approval_cancellation: {
+        Args: { p_doc_id: number; p_reason: string }
+        Returns: undefined
+      }
+      direct_cancel_final_approval: {
+        Args: { p_doc_id: number; p_opinion?: string | null }
         Returns: undefined
       }
       admin_delete_approval_doc: {

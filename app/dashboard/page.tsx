@@ -3,8 +3,8 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { openApprovalDocDetailViewPopup } from '@/lib/approval-popup';
-import { getApprovalDocDetailedStatusPresentation, getDocDetailViewHref } from '@/lib/approval-status';
+import { openApprovalDocFromInbox } from '@/lib/approval-popup';
+import { getApprovalDocDetailedStatusPresentation, getDocDetailOpenHref } from '@/lib/approval-status';
 import type { ApprovalDocLike } from '@/lib/approval-status';
 
 // --- 타입 정의 ---
@@ -18,6 +18,7 @@ type ApprovalDocRow = {
   current_line_no: number | null;
   drafted_at: string;
   doc_type: string | null;
+  writer_id: string | null;
   outbound_requests: { id: number }[] | { id: number } | null;
 };
 type ProductionOrderRow = { id: number; prod_no: string; status: string; prod_date: string; inbound_completed?: boolean; items: { item_name: string } | null; };
@@ -74,10 +75,16 @@ export default function DashboardPage() {
     loginAudits: [] as LoginAuditRow[],
   });
   const [loading, setLoading] = useState(true);
+  const [dashboardUserId, setDashboardUserId] = useState<string | null>(null);
 
   useEffect(() => {
     async function loadData() {
       try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        setDashboardUserId(user?.id ?? null);
+
         const [
           { data: inventoryData }, { data: approvalsData },
           { data: productionOrdersData }, { data: purchaseOrdersData },
@@ -85,7 +92,11 @@ export default function DashboardPage() {
           { data: coaFileData }, { data: loginAuditData },
         ] = await Promise.all([
           supabase.from('inventory').select('item_id, current_qty, available_qty, quarantine_qty'),
-          supabase.from('approval_docs').select('id, doc_no, title, status, remarks, current_line_no, drafted_at, doc_type, outbound_requests(id)').order('id', { ascending: false }).limit(5),
+          supabase
+            .from('approval_docs')
+            .select('id, doc_no, title, status, remarks, current_line_no, drafted_at, doc_type, writer_id, outbound_requests(id)')
+            .order('id', { ascending: false })
+            .limit(5),
           supabase.from('production_orders').select(`id, prod_no, status, prod_date, inbound_completed, items:item_id(item_name)`).order('id', { ascending: false }).limit(5),
           supabase.from('purchase_orders').select(`id, po_no, status, po_date, remarks, customers:customer_id(customer_name)`).order('id', { ascending: false }).limit(5),
           supabase.from('inventory_transactions').select('id, trans_type, trans_date').order('id', { ascending: false }),
@@ -293,12 +304,18 @@ export default function DashboardPage() {
                 return (
                   <a
                     key={doc.id}
-                    href={getDocDetailViewHref(doc as unknown as ApprovalDocLike & { id: number })}
+                    href={getDocDetailOpenHref(
+                      doc as unknown as ApprovalDocLike & { id: number; writer_id?: string | null },
+                      dashboardUserId
+                    )}
                     onClick={(e) => {
                       if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
                       if (e.button !== 0) return;
                       e.preventDefault();
-                      openApprovalDocDetailViewPopup(doc as unknown as ApprovalDocLike & { id: number });
+                      openApprovalDocFromInbox(
+                        doc as unknown as ApprovalDocLike & { id: number; writer_id?: string | null },
+                        dashboardUserId
+                      );
                     }}
                     className="flex justify-between items-center p-3 rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all"
                   >

@@ -2,6 +2,7 @@ import { supabase } from '@/lib/supabase'
 
 export type CurrentUserPermissions = {
   id: string
+  employee_no: string | null
   login_id: string | null
   email: string | null
   user_name: string | null
@@ -136,6 +137,7 @@ export async function getCurrentUserPermissions() {
     .from('app_users')
     .select(`
       id,
+      employee_no,
       login_id,
       email,
       user_name,

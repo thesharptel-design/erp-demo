@@ -126,6 +126,9 @@ export default function AppTopChrome({ onMenuClick }: Props) {
                 <span className="max-w-full break-all rounded-full bg-gray-100 px-2.5 py-1 text-xs font-bold text-gray-600">
                   {user?.email ?? '이메일 없음'}
                 </span>
+                <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">
+                  사번 {user?.employee_no ?? '-'}
+                </span>
               </div>
             </div>
           </div>

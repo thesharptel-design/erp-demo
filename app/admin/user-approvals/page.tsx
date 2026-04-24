@@ -564,7 +564,7 @@ export default function UserApprovalsPage() {
                       }))
                     }
                   />
-                  <span>{warehouse.code ?? `WH-${String(warehouse.id).padStart(2, '0')}`}</span>
+                  <span>{warehouse.code ?? `WH-${String(warehouse.id).padStart(3, '0')}`}</span>
                 </label>
               ))}
             </div>
@@ -619,7 +619,12 @@ export default function UserApprovalsPage() {
                 pageUsers.map((user) => (
                   <tr key={user.id} className="hover:bg-orange-50/30">
                     <td className="p-4 text-center"><input type="checkbox" className="w-5 h-5 accent-orange-500 cursor-pointer" checked={selectedIds.includes(user.id)} onChange={(e) => handleSelectUser(user.id, e.target.checked)} /></td>
-                    <td className="p-4"><div className="font-black text-sm">{user.user_name}</div><div className="text-gray-500 font-bold">{user.email}</div><div className="text-[11px] text-gray-400 mt-1">{USER_KIND_LABELS[(user.user_kind as UserKind) ?? 'staff'] ?? '직원'}</div></td>
+                    <td className="p-4">
+                      <div className="font-black text-sm">{user.user_name}</div>
+                      <div className="text-gray-500 font-bold">{user.email}</div>
+                      <div className="mt-0.5 text-[11px] font-bold text-indigo-600">사번: {user.employee_no ?? '-'}</div>
+                      <div className="text-[11px] text-gray-400 mt-1">{USER_KIND_LABELS[(user.user_kind as UserKind) ?? 'staff'] ?? '직원'}</div>
+                    </td>
                     <td className="p-4 font-bold text-gray-600">{user.phone}</td>
                     <td className="p-4"><span className="bg-gray-100 px-2 py-1 rounded font-black">{user.department || user.school_name || '-'}</span> {user.job_rank || user.training_program || ''}</td>
                     <td className="p-4 text-gray-400 font-bold">{new Date(user.created_at).toLocaleString()}</td>

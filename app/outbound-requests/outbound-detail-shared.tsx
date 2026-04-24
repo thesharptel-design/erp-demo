@@ -1,8 +1,12 @@
+import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import ApprovalActionButtons from '@/components/ApprovalActionButtons'
 import ApprovalDocumentPaperView from '@/components/approvals/ApprovalDocumentPaperView'
 import ApprovalLineOpinionsBlock from '@/components/approvals/ApprovalLineOpinionsBlock'
+import ApprovalProcessHistoryPanel, {
+  type ApprovalProcessHistoryRow,
+} from '@/components/approvals/ApprovalProcessHistoryPanel'
 import ApprovalShellListNav from '@/components/approvals/ApprovalShellListNav'
 import { selectApprovalOpinionRows } from '@/lib/approval-line-opinions'
 import OutboundDetailCoaButtons, {
@@ -11,12 +15,16 @@ import OutboundDetailCoaButtons, {
 import {
   canViewApprovalDoc,
   cooperatorReadBadge,
-  getActionLabel,
   getDetailLineStatus,
   getIsAdmin,
 } from '@/lib/approval-document-detail-helpers'
 import { formatWriterDepartmentLabel } from '@/lib/approval-draft'
-import { getDocTypeLabel, getUnifiedApprovalWorkflowBadges, type ApprovalDocLike } from '@/lib/approval-status'
+import {
+  buildPostApprovalCancelPaperRow,
+  getDocTypeLabel,
+  getUnifiedApprovalWorkflowBadges,
+  type ApprovalDocLike,
+} from '@/lib/approval-status'
 import { isProbablyRichHtml } from '@/lib/html-content'
 
 type ApprovalDoc = {
@@ -37,6 +45,9 @@ type ApprovalDoc = {
   remarks: string | null
   writer_id: string
   dept_id: number
+  post_approval_cancel_opinion?: string | null
+  post_approval_cancel_by?: string | null
+  post_approval_cancel_at?: string | null
 }
 
 type ApprovalLine = {
@@ -59,6 +70,7 @@ type ApprovalParticipant = {
 type AppUserProfile = {
   id: string
   user_name: string | null
+  employee_no?: string | null
   dept_id: number | null
   department?: string | null
   user_kind?: string | null
@@ -117,7 +129,7 @@ export async function getOutboundRequestDetail(supabase: SupabaseClient, id: str
     supabase
       .from('app_users')
       .select(
-        'id, user_name, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, seal_image_path'
+        'id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, seal_image_path'
       ),
     supabase.from('departments').select('id, dept_name'),
     supabase.from('warehouses').select('name').eq('id', request.warehouse_id).maybeSingle(),
@@ -128,7 +140,8 @@ export async function getOutboundRequestDetail(supabase: SupabaseClient, id: str
   let doc: ApprovalDoc | null = null
   let lines: ApprovalLine[] = []
   let participants: ApprovalParticipant[] = []
-  let histories: { id: number; action_type: string; actor_id: string; action_at: string }[] = []
+  let histories: { id: number; action_type: string; actor_id: string; action_at: string; action_comment?: string | null }[] =
+    []
 
   if (approvalDocId) {
     const [docRes, linesRes, partsRes, histRes] = await Promise.all([
@@ -185,6 +198,7 @@ export async function getOutboundRequestDetail(supabase: SupabaseClient, id: str
   return {
     request,
     doc,
+    currentUserId,
     users: (users as AppUserProfile[]) ?? [],
     departments: departments ?? [],
     lines,
@@ -210,7 +224,7 @@ export async function OutboundDetailShared({
   const result = await getOutboundRequestDetail(supabase, id)
   if (!result) notFound()
 
-  const { request, doc, users, departments, lines, participants, histories, warehouseName, itemRows, coaFiles } =
+  const { request, doc, currentUserId, users, departments, lines, participants, histories, warehouseName, itemRows, coaFiles } =
     result
 
   const userMap = new Map(users.map((u) => [u.id, u]))
@@ -225,6 +239,7 @@ export async function OutboundDetailShared({
   const writerIdForPaper = doc?.writer_id ?? request.requester_id
   const writerProfile = userMap.get(writerIdForPaper)
   const writerName = writerProfile?.user_name || writerIdForPaper.slice(0, 8)
+  const writerEmployeeNo = writerProfile?.employee_no ?? null
   const writerDeptName = formatWriterDepartmentLabel(writerProfile, deptMap, { docDeptId: doc?.dept_id ?? null })
 
   const draftedDate = doc?.drafted_at
@@ -233,7 +248,34 @@ export async function OutboundDetailShared({
   const docNo = doc?.doc_no ?? request.req_no ?? '—'
   const titleForPaper = doc?.title?.trim() || request.purpose?.trim()?.slice(0, 500) || '(제목 없음)'
   const contentRaw = doc?.content ?? request.purpose ?? ''
-  const contentIsHtml = Boolean(contentRaw && isProbablyRichHtml(contentRaw))
+  const latestDirectCancelHistory = [...histories]
+    .reverse()
+    .find((h) => String((h as { action_type?: string }).action_type || '') === 'direct_cancel_final') as
+    | { actor_id?: string | null; action_at?: string | null; action_comment?: string | null }
+    | undefined
+  const cancelActorIdOutbound = doc?.post_approval_cancel_by ?? latestDirectCancelHistory?.actor_id ?? null
+  const cancelActorNameOutbound =
+    cancelActorIdOutbound != null ? userMap.get(cancelActorIdOutbound)?.user_name ?? null : null
+  const cancelOpinionFallbackOutbound =
+    doc?.post_approval_cancel_opinion ??
+    (latestDirectCancelHistory?.action_comment && latestDirectCancelHistory.action_comment !== '[-]'
+      ? latestDirectCancelHistory.action_comment
+      : null)
+  const cancelAtFallbackOutbound = doc?.post_approval_cancel_at ?? latestDirectCancelHistory?.action_at ?? null
+  const postCancelPaper = doc
+    ? buildPostApprovalCancelPaperRow(
+        {
+          ...doc,
+          post_approval_cancel_opinion: cancelOpinionFallbackOutbound,
+          post_approval_cancel_by: cancelActorIdOutbound,
+          post_approval_cancel_at: cancelAtFallbackOutbound,
+        },
+        cancelActorNameOutbound
+      )
+    : { cleanBody: contentRaw, row: null as null }
+  const contentForPaper = postCancelPaper.row ? postCancelPaper.cleanBody : contentRaw
+  const postApprovalCancelRowOutbound = postCancelPaper.row
+  const contentIsHtml = Boolean(contentForPaper && isProbablyRichHtml(contentForPaper))
 
   const lineMapByNo = new Map(lines.map((line) => [line.line_no, line]))
   const displayLines =
@@ -268,6 +310,7 @@ export async function OutboundDetailShared({
     return {
       id: `${line.line_no}-${line.approver_id}`,
       name: userName,
+      employeeNo: profile?.employee_no ?? null,
       sealUrl: sealUrlMap.get(line.approver_id) ?? null,
       status: getDetailLineStatus(line.approver_role, line.status),
       actedAt: line.acted_at,
@@ -329,6 +372,17 @@ export async function OutboundDetailShared({
     userNameById
   )
 
+  const outboundHistoryRowsSorted: ApprovalProcessHistoryRow[] = [...histories]
+    .map((h) => ({
+      id: h.id,
+      action_type: h.action_type,
+      actor_id: h.actor_id,
+      actor_name: userMap.get(h.actor_id)?.user_name ?? null,
+      action_at: h.action_at,
+      action_comment: h.action_comment ?? null,
+    }))
+    .sort((a, b) => String(a.action_at).localeCompare(String(b.action_at)))
+
   const postBodyGridSlot = (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-[5.5rem_1fr] sm:items-center">
@@ -377,6 +431,9 @@ export async function OutboundDetailShared({
   )
 
   const listBare = shellMode === 'bare'
+  const canWriterEditResubmit =
+    Boolean(currentUserId && doc && doc.writer_id === currentUserId) &&
+    ['draft', 'rejected'].includes(String(doc?.status ?? ''))
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
@@ -386,6 +443,7 @@ export async function OutboundDetailShared({
         docStatusClassName={docStatusBand.className}
         showCancelRequestBadge={Boolean(doc?.remarks?.includes('취소 요청'))}
         writerName={writerName}
+        writerEmployeeNo={writerEmployeeNo}
         writerDeptName={writerDeptName}
         draftedDate={draftedDate}
         docNo={docNo}
@@ -397,37 +455,27 @@ export async function OutboundDetailShared({
         executionText={executionText}
         agreementText={agreementText}
         title={titleForPaper}
-        contentHtml={contentRaw}
+        contentHtml={contentForPaper}
         contentIsHtml={contentIsHtml}
         drafterStatus={getDetailLineStatus('drafter', 'approved')}
         drafterActedAt={drafterActedAt}
+        postApprovalCancelRow={postApprovalCancelRowOutbound}
         afterBodySlot={opinionRows.length > 0 ? <ApprovalLineOpinionsBlock rows={opinionRows} /> : undefined}
         postBodyGridSlot={postBodyGridSlot}
       />
 
       <div className="mt-6 space-y-4 border-t border-gray-200 pt-4">
-        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
-          <p className="mb-2 text-[11px] font-black uppercase tracking-wider text-gray-500">최근 처리 이력</p>
-          <div className="flex flex-wrap gap-x-6 gap-y-2">
-            {histories.length === 0 ? (
-              <p className="text-xs font-bold text-gray-400">처리 이력이 없습니다.</p>
-            ) : (
-              histories
-                .slice(-5)
-                .reverse()
-                .map((h) => (
-                  <div key={h.id} className="min-w-[140px] border-l-2 border-gray-300 pl-2">
-                    <p className="text-xs font-black text-gray-800">{getActionLabel(h.action_type)}</p>
-                    <p className="text-[10px] font-bold text-gray-500">
-                      {userMap.get(h.actor_id)?.user_name ?? '-'} · {new Date(h.action_at).toLocaleString('ko-KR')}
-                    </p>
-                  </div>
-                ))
-            )}
-          </div>
-        </div>
+        <ApprovalProcessHistoryPanel rows={outboundHistoryRowsSorted} />
 
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {canWriterEditResubmit && doc ? (
+            <Link
+              href={`/outbound-requests/new?resubmit=${doc.id}`}
+              className="rounded-lg border-2 border-blue-600 bg-blue-50 px-4 py-2 text-sm font-black text-blue-900 hover:bg-blue-100"
+            >
+              수정·재상신
+            </Link>
+          ) : null}
           <ApprovalShellListNav href="/outbound-requests" popupListBehavior={listBare}>
             목록
           </ApprovalShellListNav>

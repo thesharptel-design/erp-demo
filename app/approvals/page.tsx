@@ -4,13 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import SearchableCombobox from '@/components/SearchableCombobox';
 import { APPROVAL_DRAFT_DOC_TYPE_OPTIONS } from '@/lib/approval-draft';
-import { openApprovalShellPopup, openApprovalDocDetailViewPopup } from '@/lib/approval-popup';
+import { openApprovalDocFromInbox, openApprovalShellPopup } from '@/lib/approval-popup';
 import {
   APPROVAL_INBOX_STATUS_FILTER_OPTIONS,
   formatApprovalProgressChain,
   formatInboxApproverLineDisplay,
   getApprovalDocDetailedStatusPresentation,
-  getDocDetailViewHref,
+  getDocDetailOpenHref,
   getDocTypeLabel,
   getWriterName,
 } from '@/lib/approval-status';
@@ -132,6 +132,7 @@ export default function ApprovalsPage() {
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [viewerIsAdmin, setViewerIsAdmin] = useState(false);
+  const [inboxViewerId, setInboxViewerId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(20);
 
@@ -187,10 +188,12 @@ export default function ApprovalsPage() {
         data: { user },
       } = await supabase.auth.getUser();
       if (!user) {
+        setInboxViewerId(null);
         setDocs([]);
         setTotalCount(0);
         return;
       }
+      setInboxViewerId(user.id);
 
       const { data: profile } = await supabase
         .from('app_users')
@@ -245,7 +248,7 @@ export default function ApprovalsPage() {
         return;
       }
 
-      const [{ data: rejectedRows }, { data: rejectedHistoryRows }, { data: rawLines }] = await Promise.all([
+      const [{ data: rejectedRows }, { data: rejectedHistoryRows }, { data: opinionHistoryRowsRaw }, { data: rawLines }] = await Promise.all([
         supabase
           .from('approval_lines')
           .select('approval_doc_id, opinion, acted_at')
@@ -260,6 +263,12 @@ export default function ApprovalsPage() {
           .eq('action_type', 'reject')
           .not('action_comment', 'is', null)
           .order('action_at', { ascending: false }),
+        supabase
+          .from('approval_histories')
+          .select('approval_doc_id, action_comment, action_type')
+          .in('approval_doc_id', docIds)
+          .in('action_type', ['approve', 'reject', 'approve_revoke', 'cancel_request', 'cancel_relay', 'direct_cancel_final'])
+          .not('action_comment', 'is', null),
         supabase
           .from('approval_lines')
           .select('approval_doc_id, line_no, status, approver_role, approver_id, opinion')
@@ -278,6 +287,11 @@ export default function ApprovalsPage() {
         rejectCommentMap.set(row.approval_doc_id, row.opinion);
       }
 
+      const opinionHistoryRows = (opinionHistoryRowsRaw ?? []) as {
+        approval_doc_id: number;
+        action_comment: string | null;
+        action_type: string | null;
+      }[]
       const lineRows = (rawLines ?? []) as {
         approval_doc_id: number;
         line_no: number;
@@ -290,6 +304,17 @@ export default function ApprovalsPage() {
       for (const row of lineRows) {
         if (String(row.opinion ?? '').trim()) {
           hasOpinionByDoc.set(row.approval_doc_id, true);
+        }
+      }
+      for (const row of opinionHistoryRows) {
+        const comment = String(row.action_comment ?? '').trim()
+        if (!comment || comment === '[-]') continue
+        // 시스템성 문구(예: 기안서 상신)는 의견으로 취급하지 않음
+        if (comment === '기안서 상신' || comment === '출고요청 상신' || comment === '출고요청 재상신') continue
+        if (comment.includes('재상신')) continue
+        if (String(row.action_type ?? '').trim() === '') continue
+        if (comment) {
+          hasOpinionByDoc.set(row.approval_doc_id, true)
         }
       }
       const approverIds = [...new Set(lineRows.map((r) => r.approver_id).filter(Boolean))];
@@ -642,12 +667,12 @@ export default function ApprovalsPage() {
                     <tr key={doc.id} className="group transition-colors hover:bg-gray-50">
                       <td className="px-4 py-4 font-black">
                         <a
-                          href={getDocDetailViewHref(doc)}
+                          href={getDocDetailOpenHref(doc, inboxViewerId)}
                           onClick={(e) => {
                             if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
                             if (e.button !== 0) return;
                             e.preventDefault();
-                            openApprovalDocDetailViewPopup(doc);
+                            openApprovalDocFromInbox(doc, inboxViewerId);
                           }}
                           className="block min-w-0 truncate text-blue-600 hover:underline"
                           title={inboxDisplayText(doc.doc_no)}

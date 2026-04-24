@@ -31,6 +31,14 @@ export function getActionLabel(actionType: string) {
       return '회수'
     case 'cancel':
       return '취소'
+    case 'cancel_request':
+      return '취소 요청'
+    case 'cancel_relay':
+      return '역순 취소 처리'
+    case 'direct_cancel_final':
+      return '결재 취소(완결 후)'
+    case 'outbound_cancel_done':
+      return '취소·재고환원 완료'
     default:
       return actionType
   }

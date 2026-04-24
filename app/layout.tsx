@@ -16,12 +16,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   // 🌟 '/print'라는 단어가 포함된 모든 경로는 AppShell(사이드바)을 아예 그리지 않음
   const isPrintPage = pathname && pathname.includes('/print');
   const isApprovalViewPopup = Boolean(pathname?.startsWith('/approvals/view/'))
+  const isApprovalEditBare = Boolean(pathname && /^\/approvals\/\d+\/edit$/.test(pathname))
   const isOutboundViewPopup = Boolean(pathname?.startsWith('/outbound-requests/view/'))
   const useBareShell = Boolean(
     isPrintPage ||
       pathname === '/approvals/new' ||
       pathname === '/outbound-requests/new' ||
       isApprovalViewPopup ||
+      isApprovalEditBare ||
       isOutboundViewPopup
   )
 

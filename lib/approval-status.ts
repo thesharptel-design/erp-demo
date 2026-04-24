@@ -1,5 +1,10 @@
 import type { Database } from '@/lib/database.types'
-import { getApprovalRoleLabel, isFinalApprovalRole, normalizeApprovalRole } from '@/lib/approval-roles'
+import {
+  getApprovalRoleLabel,
+  isApprovalActionRole,
+  isFinalApprovalRole,
+  normalizeApprovalRole,
+} from '@/lib/approval-roles'
 
 export type ApprovalDocLike = Pick<
   Database['public']['Tables']['approval_docs']['Row'],
@@ -7,6 +12,10 @@ export type ApprovalDocLike = Pick<
 > & {
   /** Present on full 결재 문서 로드; 목록·대시보드에서는 누락될 수 있음 */
   content?: string | null
+  /** `direct_cancel_final_approval` 이후 상세·용지에서만 채워질 수 있음 */
+  post_approval_cancel_opinion?: string | null
+  post_approval_cancel_by?: string | null
+  post_approval_cancel_at?: string | null
   outbound_requests?:
     | { id: number }[]
     | { id: number }
@@ -43,11 +52,64 @@ export const APPROVAL_INBOX_STATUS_FILTER_OPTIONS = [
   { value: 'in_review', label: '협조·결재 대기', keywords: ['검토', '대기', '협조'] },
   { value: 'approved', label: '최종 승인', keywords: ['승인'] },
   { value: 'rejected', label: '반려됨', keywords: ['반려'] },
+  { value: '결재 취소', label: '결재취소', keywords: ['결재취소', '결재 취소'] },
   { value: '취소', label: '취소·환원(비고)', keywords: ['취소', '환원'] },
 ]
 
 /** `ApprovalActionButtons` 회수 처리와 동일한 비고 문구 (RLS·삭제 조건과 일치해야 함) */
 export const APPROVAL_RECALL_REMARK_MARKER = '기안 회수됨'
+
+/** `direct_cancel_final_approval` RPC과 동일: 일반 반려(`결재자 반려`)와 구분 */
+export const APPROVAL_POST_APPROVAL_CANCEL_REMARK = '결재 취소'
+
+const LEGACY_POST_APPROVAL_CANCEL_OPINION_MARKER = '\n\n[결재 취소 의견]:'
+
+export function isRejectedAsPostApprovalCancel(
+  doc: Pick<ApprovalDocLike, 'status' | 'remarks'>
+): boolean {
+  return (
+    doc.status === 'rejected' &&
+    String(doc.remarks ?? '').trim() === APPROVAL_POST_APPROVAL_CANCEL_REMARK
+  )
+}
+
+/** 구버전 RPC가 본문에 붙인 `[결재 취소 의견]:` 구간 제거·파싱 */
+export function splitLegacyPostApprovalCancelFromContent(
+  content: string | null | undefined
+): { cleanBody: string; legacyOpinion: string | null } {
+  const raw = content ?? ''
+  const i = raw.indexOf(LEGACY_POST_APPROVAL_CANCEL_OPINION_MARKER)
+  if (i === -1) return { cleanBody: raw, legacyOpinion: null }
+  return {
+    cleanBody: raw.slice(0, i).trimEnd(),
+    legacyOpinion: raw.slice(i + LEGACY_POST_APPROVAL_CANCEL_OPINION_MARKER.length).trim() || null,
+  }
+}
+
+/**
+ * 용지 본문 표시용 본문 문자열 + 결재취소 요약 행(누가·언제·의견).
+ * `remarks === 결재 취소` 인 경우에만 `row`를 채움.
+ */
+export function buildPostApprovalCancelPaperRow(
+  doc: Pick<ApprovalDocLike, 'status' | 'remarks' | 'content'> & {
+    post_approval_cancel_opinion?: string | null
+    post_approval_cancel_by?: string | null
+    post_approval_cancel_at?: string | null
+  },
+  cancelActorDisplayName: string | null
+): { cleanBody: string; row: { actorName: string; opinion: string | null; at: string | null } | null } {
+  if (!isRejectedAsPostApprovalCancel(doc)) {
+    return { cleanBody: doc.content ?? '', row: null }
+  }
+  const { cleanBody, legacyOpinion } = splitLegacyPostApprovalCancelFromContent(doc.content ?? null)
+  const opinion = (doc.post_approval_cancel_opinion ?? legacyOpinion)?.trim() || null
+  const at = doc.post_approval_cancel_at ?? null
+  const actorName = (cancelActorDisplayName ?? '').trim() || '—'
+  return {
+    cleanBody,
+    row: { actorName, opinion, at },
+  }
+}
 
 /** 기안자가 문서를 삭제할 수 있는 경우: 반려 종료, 또는 회수로 임시저장 복귀 */
 export function canWriterDeleteApprovalDoc(doc: Pick<ApprovalDocLike, 'status' | 'remarks'>): boolean {
@@ -91,6 +153,25 @@ export function getDocDetailViewHref(doc: ApprovalDocLike & { id: number }) {
   return `/approvals/view/${doc.id}`
 }
 
+type DocInboxOpen = ApprovalDocLike & { id: number; writer_id?: string | null }
+
+/**
+ * 통합함·대시보드: 기안자가 **회수·반려 등 수정 가능** 상태(`draft`/`rejected`)이면
+ * 팝업에서 바로 편집 화면으로 연다. 그 외는 읽기 전용 view URL.
+ */
+export function getDocDetailOpenHref(doc: DocInboxOpen, currentUserId: string | null | undefined): string {
+  const uid =
+    currentUserId != null && String(currentUserId).trim() !== ''
+      ? String(currentUserId).toLowerCase()
+      : ''
+  const wid = doc.writer_id != null ? String(doc.writer_id).toLowerCase() : ''
+  if (uid && wid === uid && (doc.status === 'draft' || doc.status === 'rejected')) {
+    if (doc.doc_type === 'outbound_request') return getDocDetailViewHref(doc)
+    return `/approvals/new?resubmit=${doc.id}`
+  }
+  return getDocDetailViewHref(doc)
+}
+
 const badge = (classes: string) =>
   `inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-black border ${classes}`
 
@@ -115,7 +196,12 @@ export function getUnifiedApprovalWorkflowBadges(
     return one('상신취소·작성복귀', 'bg-amber-50 text-amber-900 border-amber-400 font-black')
   }
   if (doc.status === 'draft') return one('임시저장', 'bg-gray-100 text-gray-500 font-bold border-gray-200')
-  if (doc.status === 'rejected') return one('반려', 'bg-red-50 text-red-700 border-red-300 font-black')
+  if (doc.status === 'rejected') {
+    if (isRejectedAsPostApprovalCancel(doc)) {
+      return one('결재취소', 'bg-rose-50 text-rose-900 border-rose-400 font-black')
+    }
+    return one('반려', 'bg-red-50 text-red-700 border-red-300 font-black')
+  }
 
   const hasCoop = L.some((l) => normalizeApprovalRole(l.approver_role) === 'cooperator')
   const allCoopDone = !L.some(
@@ -258,6 +344,34 @@ export function isApprovalCancellationRemarkProcess(remarks: string | null | und
   return r.includes('취소 요청') || r.includes('취소완료') || r.includes('취소승인')
 }
 
+/** `orderedApprovalFlow` 한 행과 동일한 최소 필드 */
+export type ApprovalDirectCancelFlowRow = {
+  line_no: number
+  approver_id: string
+  approver_role: string
+  status: string
+}
+
+/**
+ * 최종 승인(`approved`) 직후, 역순 릴레이 없이 `direct_cancel_final_approval` RPC로 끝낼 수 있는지.
+ * 마지막으로 승인 처리한 결재·협조·참조 차수 담당자만 true.
+ */
+export function canLastApproverDirectCancelFinalApproval(input: {
+  doc: Pick<ApprovalDocLike, 'status' | 'remarks'>
+  orderedFlow: ApprovalDirectCancelFlowRow[]
+  currentUserId: string
+}): boolean {
+  if (isApprovalCancellationRemarkProcess(input.doc.remarks)) return false
+  if (input.doc.status !== 'approved') return false
+  const actionApproved = input.orderedFlow.filter(
+    (l) => isApprovalActionRole(l.approver_role) && l.status === 'approved'
+  )
+  if (actionApproved.length === 0) return false
+  const last = actionApproved.reduce((a, b) => (a.line_no >= b.line_no ? a : b))
+  const me = String(input.currentUserId).toLowerCase()
+  return String(last.approver_id).toLowerCase() === me
+}
+
 export function getPendingApprovalLine(lines: ApprovalLineLike[]) {
   const sorted = [...lines].sort((a, b) => a.line_no - b.line_no)
   return sorted.find((line) => {
@@ -357,7 +471,7 @@ export function formatApprovalProgressChain(doc: ApprovalProgressDocInput, lines
 
   if (sorted.length === 0) {
     if (doc.status === 'rejected') {
-      parts.push('반려됨')
+      parts.push(isRejectedAsPostApprovalCancel(doc) ? '결재취소' : '반려됨')
       return parts.join(' › ')
     }
     return parts.join(' › ')
@@ -385,8 +499,11 @@ export function formatApprovalProgressChain(doc: ApprovalProgressDocInput, lines
     }
   }
 
-  if (doc.status === 'rejected' && !parts.some((p) => p.includes('반려'))) {
-    parts.push('반려됨')
+  if (
+    doc.status === 'rejected' &&
+    !parts.some((p) => p.includes('반려') || p.includes('결재취소'))
+  ) {
+    parts.push(isRejectedAsPostApprovalCancel(doc) ? '결재취소' : '반려됨')
   }
 
   return parts.join(' › ')

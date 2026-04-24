@@ -1,41 +1,131 @@
-'use client';
+'use client'
 
-import { useMemo, useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import SearchableCombobox from '@/components/SearchableCombobox';
-import { getAllowedWarehouseIds } from '@/lib/permissions';
+import { useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import * as XLSX from 'xlsx'
+
+import SearchableCombobox from '@/components/SearchableCombobox'
+import { getAllowedWarehouseIds } from '@/lib/permissions'
+import { supabase } from '@/lib/supabase'
+
+type ItemRow = {
+  id: number
+  item_code: string
+  item_name: string
+  is_lot_managed: boolean
+  is_exp_managed: boolean
+  is_sn_managed: boolean
+}
+
+type CustomerRow = {
+  id: number
+  customer_code: string | null
+  customer_name: string
+}
+
+type WarehouseRow = {
+  id: number
+  code: string
+  name: string
+}
+
+type UploadRow = {
+  row_no: number
+  inbound_date: string
+  item_code: string
+  warehouse_code: string
+  customer_code: string
+  qty: number
+  lot_no: string
+  exp_date: string
+  serial_no: string
+  remarks: string
+  local_error?: string
+}
+
+type ProcessRowResult = {
+  rowNo: number
+  status: 'success' | 'failed'
+  message: string
+}
+
+type ProcessSummary = {
+  total: number
+  success: number
+  failed: number
+}
+
+function normalizeText(value: unknown): string {
+  return String(value ?? '').trim()
+}
+
+function parseTemplateSheet(file: File): Promise<Record<string, unknown>[]> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const buf = reader.result
+        const wb = XLSX.read(buf, { type: 'array' })
+        const first = wb.SheetNames[0]
+        if (!first) return resolve([])
+        const ws = wb.Sheets[first]
+        const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+        resolve(rows)
+      } catch (e) {
+        reject(e)
+      }
+    }
+    reader.onerror = () => reject(new Error('파일을 읽을 수 없습니다.'))
+    reader.readAsArrayBuffer(file)
+  })
+}
+
+function downloadInboundTemplate() {
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['입고일자', '품목코드', '창고코드', '거래처코드', '수량', 'LOT번호', '유효기간', '시리얼번호', '비고'],
+    ['2026-04-28', 'ITEM-001', 'WH-001', 'CUST-001', 10, 'LOT-240428-A', '2027-04-28', '', '일반 LOT 입고'],
+    ['2026-04-28', 'ITEM-SN-001', 'WH-001', 'CUST-001', 1, '', '', 'SN-0001-2026', 'SN 개별 입고'],
+    ['2026-04-28', 'ITEM-EXP-001', 'WH-002', 'CUST-002', 5, 'EXP-LOT-1', '20270430', '', 'EXP 숫자형 허용'],
+  ])
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, '입고업로드')
+  XLSX.writeFile(wb, '입고_템플릿.xlsx')
+}
 
 export default function NewInboundPage() {
-  const router = useRouter();
-  
-  // 기초 데이터 상태
-  const [items, setItems] = useState<any[]>([]);
-  const [customers, setCustomers] = useState<any[]>([]);
-  const [warehouses, setWarehouses] = useState<any[]>([]);
-  const [userData, setUserData] = useState<any>(null);
+  const router = useRouter()
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
-  // 폼 입력 데이터 상태
-  const [selectedItemId, setSelectedItemId] = useState('');
-  const [selectedItem, setSelectedItem] = useState<any>(null);
-  
-  const [inboundDate, setInboundDate] = useState(new Date().toISOString().split('T')[0]); 
-  const [customerId, setCustomerId] = useState('');
-  const [warehouseId, setWarehouseId] = useState('');
-  const [remarks, setRemarks] = useState('');
+  const [mode, setMode] = useState<'single' | 'template'>('single')
+  const [items, setItems] = useState<ItemRow[]>([])
+  const [warehouses, setWarehouses] = useState<WarehouseRow[]>([])
+  const [customers, setCustomers] = useState<CustomerRow[]>([])
+  const [userName, setUserName] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
 
-  const [qty, setQty] = useState(1);
-  const [lotNo, setLotNo] = useState('');
-  const [expDate, setExpDate] = useState('');
-  const [serialNo, setSerialNo] = useState('');
-  
-  const [isSaving, setIsSaving] = useState(false);
+  const today = new Date().toISOString().slice(0, 10)
+  const [inboundDate, setInboundDate] = useState(today)
+  const [selectedItemId, setSelectedItemId] = useState('')
+  const [customerId, setCustomerId] = useState('')
+  const [warehouseId, setWarehouseId] = useState('')
+  const [qty, setQty] = useState(1)
+  const [lotNo, setLotNo] = useState('')
+  const [expDate, setExpDate] = useState('')
+  const [serialNo, setSerialNo] = useState('')
+  const [remarks, setRemarks] = useState('')
 
-  const normalizeTrackingText = (value: unknown) => {
-    const text = String(value ?? '').trim();
-    return text ? text : null;
-  };
+  const [uploadRows, setUploadRows] = useState<UploadRow[]>([])
+  const [uploadFileName, setUploadFileName] = useState('')
+  const [processSummary, setProcessSummary] = useState<ProcessSummary | null>(null)
+  const [processRows, setProcessRows] = useState<ProcessRowResult[]>([])
+
+  const selectedItem = useMemo(
+    () => items.find((i) => String(i.id) === selectedItemId) ?? null,
+    [items, selectedItemId]
+  )
+
   const itemOptions = useMemo(
     () =>
       items.map((item) => ({
@@ -44,395 +134,445 @@ export default function NewInboundPage() {
         keywords: [item.item_code, item.item_name],
       })),
     [items]
-  );
-  const customerOptions = useMemo(
-    () => customers.map((c) => ({ value: String(c.id), label: c.customer_name, keywords: [c.customer_name] })),
-    [customers]
-  );
-  const warehouseOptions = useMemo(
-    () => warehouses.map((wh) => ({ value: String(wh.id), label: wh.name, keywords: [wh.name] })),
-    [warehouses]
-  );
+  )
 
-  // 1. 초기 데이터 로드
+  const customerOptions = useMemo(
+    () =>
+      customers.map((c) => ({
+        value: String(c.id),
+        label: `${c.customer_name}${c.customer_code ? ` (${c.customer_code})` : ''}`,
+        keywords: [c.customer_name, c.customer_code ?? ''],
+      })),
+    [customers]
+  )
+
+  const warehouseOptions = useMemo(
+    () =>
+      warehouses.map((w) => ({
+        value: String(w.id),
+        label: `${w.name} (${w.code})`,
+        keywords: [w.name, w.code],
+      })),
+    [warehouses]
+  )
+
   useEffect(() => {
-    const fetchData = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      let allowedWarehouseIds: number[] | null = [];
+    void (async () => {
+      setLoading(true)
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+
+      let allowedWarehouseIds: number[] | null = []
       if (session?.user) {
         const { data: user } = await supabase
           .from('app_users')
           .select('user_name, id, role_name, can_manage_permissions, can_admin_manage')
           .eq('id', session.user.id)
-          .single();
-        setUserData({ ...user, id: session.user.id });
-        allowedWarehouseIds = await getAllowedWarehouseIds(user);
+          .single()
+        setUserName(String(user?.user_name ?? ''))
+        allowedWarehouseIds = await getAllowedWarehouseIds(user as any)
       }
 
-      const { data: itemsData } = await supabase
-        .from('items')
-        .select('id, item_name, item_code, is_lot_managed, is_exp_managed, is_sn_managed')
-        .eq('is_active', true);
-      setItems(itemsData || []);
-
-      const { data: customersData } = await supabase
-        .from('customers')
-        .select('id, customer_name')
-        .eq('is_active', true);
-      setCustomers(customersData || []);
+      const [itemRes, customerRes] = await Promise.all([
+        supabase
+          .from('items')
+          .select('id, item_code, item_name, is_lot_managed, is_exp_managed, is_sn_managed')
+          .eq('is_active', true)
+          .order('item_code'),
+        supabase.from('customers').select('id, customer_code, customer_name').eq('is_active', true).order('customer_name'),
+      ])
 
       let warehouseQuery = supabase
         .from('warehouses')
-        .select('id, name')
+        .select('id, code, name')
         .eq('is_active', true)
-        .order('sort_order', { ascending: true });
+        .order('sort_order', { ascending: true })
       if (allowedWarehouseIds !== null) {
         if (allowedWarehouseIds.length === 0) {
-          setWarehouses([]);
-          setWarehouseId('');
-          return;
+          setWarehouses([])
+        } else {
+          warehouseQuery = warehouseQuery.in('id', allowedWarehouseIds)
         }
-        warehouseQuery = warehouseQuery.in('id', allowedWarehouseIds);
       }
-      const { data: warehouseData } = await warehouseQuery;
-      setWarehouses(warehouseData || []);
-      if (warehouseData?.[0]?.id) setWarehouseId(String(warehouseData[0].id));
-    };
-    fetchData();
-  }, []);
+      const warehouseRes = await warehouseQuery
 
-  // 2. 품목 선택 시 해당 품목의 관리 정책에 따른 초기화
-  const handleItemChange = (id: string) => {
-    const itemId = id;
-    setSelectedItemId(itemId);
-    const item = items.find(i => i.id === parseInt(itemId));
-    setSelectedItem(item);
-    
-    if (item?.is_sn_managed) {
-      setQty(1);
+      setItems((itemRes.data as ItemRow[]) ?? [])
+      setCustomers((customerRes.data as CustomerRow[]) ?? [])
+      setWarehouses((warehouseRes.data as WarehouseRow[]) ?? [])
+      if ((warehouseRes.data ?? [])[0]?.id) setWarehouseId(String(warehouseRes.data?.[0].id))
+      setLoading(false)
+    })()
+  }, [])
+
+  const handleTemplateUpload = async (file: File) => {
+    const rawRows = await parseTemplateSheet(file)
+    const parsed: UploadRow[] = rawRows.map((row, index) => {
+      const entry: UploadRow = {
+        row_no: index + 2,
+        inbound_date: normalizeText(row['입고일자'] ?? row['inbound_date']) || today,
+        item_code: normalizeText(row['품목코드'] ?? row['item_code']),
+        warehouse_code: normalizeText(row['창고코드'] ?? row['warehouse_code']),
+        customer_code: normalizeText(row['거래처코드'] ?? row['customer_code']),
+        qty: Number(row['수량'] ?? row['qty'] ?? 0),
+        lot_no: normalizeText(row['LOT번호'] ?? row['lot_no']),
+        exp_date: normalizeText(row['유효기간'] ?? row['exp_date']),
+        serial_no: normalizeText(row['시리얼번호'] ?? row['serial_no']),
+        remarks: normalizeText(row['비고'] ?? row['remarks']),
+      }
+      if (!entry.item_code) entry.local_error = '품목코드 누락'
+      if (!entry.warehouse_code) entry.local_error = entry.local_error ? `${entry.local_error}, 창고코드 누락` : '창고코드 누락'
+      if (!Number.isFinite(entry.qty) || entry.qty <= 0) {
+        entry.local_error = entry.local_error ? `${entry.local_error}, 수량 오류` : '수량 오류'
+      }
+      return entry
+    })
+    setUploadRows(parsed)
+    setUploadFileName(file.name)
+    setProcessSummary(null)
+    setProcessRows([])
+  }
+
+  const processInbound = async (payloadRows: UploadRow[], fileName?: string) => {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
+    if (!session?.access_token) {
+      alert('세션이 만료되었습니다. 다시 로그인 후 시도해주세요.')
+      return
     }
-    
-    setLotNo('');
-    setExpDate('');
-    setSerialNo('');
-  };
+    const response = await fetch('/api/inbound/process', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({
+        mode,
+        file_name: fileName ?? null,
+        rows: payloadRows,
+      }),
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result?.error ?? '입고 처리에 실패했습니다.')
+    setProcessSummary(result.summary as ProcessSummary)
+    setProcessRows((result.rowResults ?? []) as ProcessRowResult[])
+    if ((result.summary?.failed ?? 0) === 0) {
+      alert(`입고 처리 완료 (총 ${result.summary.total}건)`)
+      router.refresh()
+    }
+  }
 
-  // 3. 입고 실행 (재고 반영 및 수불부 기록)
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedItemId) return alert('품목을 선택해주세요.');
-    if (!customerId) return alert('거래처를 선택해주세요.');
-    if (!warehouseId) return alert('입고 창고를 선택해주세요.');
-    if (!userData?.id) return alert('사용자 인증 정보가 없습니다. 다시 로그인해주세요.');
-    
-    setIsSaving(true);
+  const handleSingleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedItem) return alert('품목을 선택해주세요.')
+    if (!warehouseId) return alert('창고를 선택해주세요.')
+    if (!qty || qty <= 0) return alert('수량은 0보다 커야 합니다.')
+    if (selectedItem.is_sn_managed && qty !== 1) return alert('S/N 관리 품목은 수량이 1이어야 합니다.')
+    if (selectedItem.is_lot_managed && !normalizeText(lotNo)) return alert('LOT 관리 품목은 LOT 번호가 필요합니다.')
+    if (selectedItem.is_exp_managed && !normalizeText(expDate)) return alert('EXP 관리 품목은 유효기간이 필요합니다.')
+    if (selectedItem.is_sn_managed && !normalizeText(serialNo)) return alert('S/N 관리 품목은 시리얼 번호가 필요합니다.')
+
+    const wh = warehouses.find((w) => String(w.id) === warehouseId)
+    const cust = customers.find((c) => String(c.id) === customerId)
+    if (!wh) return alert('창고 정보를 확인해주세요.')
+
+    const row: UploadRow = {
+      row_no: 1,
+      inbound_date: inboundDate,
+      item_code: selectedItem.item_code,
+      warehouse_code: wh.code,
+      customer_code: cust?.customer_code ?? '',
+      qty,
+      lot_no: normalizeText(lotNo),
+      exp_date: normalizeText(expDate),
+      serial_no: normalizeText(serialNo),
+      remarks: normalizeText(remarks),
+    }
+
+    setSaving(true)
     try {
-      const itemIdNum = Number(selectedItemId)
-      const selectedWarehouseId = Number(warehouseId)
-      const normalizedLotNo = selectedItem?.is_lot_managed ? normalizeTrackingText(lotNo) : null
-      const normalizedExpDate = selectedItem?.is_exp_managed ? normalizeTrackingText(expDate) : null
-      const normalizedSerialNo = selectedItem?.is_sn_managed ? normalizeTrackingText(serialNo) : null
-
-      // [A] 동일 창고 후보 재고 조회 후 추적키 정규화 매칭
-      const { data: warehouseStocks, error: fetchError } = await supabase
-        .from('inventory')
-        .select('*')
-        .eq('item_id', itemIdNum)
-        .eq('warehouse_id', selectedWarehouseId);
-      if (fetchError) throw fetchError;
-
-      const existingStock =
-        (warehouseStocks ?? []).find((row: any) => {
-          const rowLot = normalizeTrackingText(row.lot_no);
-          const rowExp = normalizeTrackingText(row.exp_date);
-          const rowSerial = normalizeTrackingText(row.serial_no);
-          return rowLot === normalizedLotNo && rowExp === normalizedExpDate && rowSerial === normalizedSerialNo;
-        }) ?? null;
-
-      // [B] 재고 데이터 갱신 (UPSERT)
-      let inventoryIdForTx: number | null = null
-
-      if (existingStock) {
-        
-        // 🚨 [핵심 방어 로직 추가] S/N 관리 품목인데 이미 창고에 수량이 있다면 절대 차단!
-        if (selectedItem?.is_sn_managed && Number(existingStock.current_qty) > 0) {
-            alert(`⛔ 중복 입고 불가: 해당 시리얼 번호(${serialNo})는 이미 창고에 존재하는 기기입니다!`);
-            setIsSaving(false);
-            return; // 👈 여기서 입고 프로세스를 강제 종료시킵니다.
-        }
-
-        // 기존 재고가 있으면 수량 업데이트 (S/N가 아닌 일반 LOT 제품들)
-        const { error: updateError } = await supabase
-          .from('inventory')
-          .update({
-            current_qty: Number(existingStock.current_qty) + Number(qty),
-            available_qty: Number(existingStock.available_qty) + Number(qty),
-            lot_no: normalizedLotNo,
-            exp_date: normalizedExpDate,
-            serial_no: normalizedSerialNo,
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', existingStock.id);
-        
-        if (updateError) throw updateError;
-        inventoryIdForTx = Number(existingStock.id)
-      } else {
-        // 기존 재고가 없으면 신규 생성
-        // ... (이하 기존 else 구문 동일)
-           const { data: insertedRow, error: insertError } = await supabase
-          .from('inventory')
-          .insert({
-            item_id: itemIdNum,
-            lot_no: normalizedLotNo,
-            exp_date: normalizedExpDate,
-            serial_no: normalizedSerialNo,
-            current_qty: qty,
-            available_qty: qty,
-            quarantine_qty: 0,
-            warehouse_id: selectedWarehouseId,
-          })
-          .select('id')
-          .single();
-          
-        if (insertError) throw insertError;
-        inventoryIdForTx = insertedRow?.id ?? null
-      }
-
-      // [C] 수불부(inventory_transactions) 상세 이력 기록
-      // trans_date: YYYY-MM-DD만 넣으면 자정 UTC → KST 09:00로 고정되어 보임. 폼의 입고일 + 현재 시각(로컬)으로 합성.
-      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(inboundDate);
-      const now = new Date();
-      const transDateIso =
-        m != null
-          ? new Date(
-              Number(m[1]),
-              Number(m[2]) - 1,
-              Number(m[3]),
-              now.getHours(),
-              now.getMinutes(),
-              now.getSeconds(),
-              now.getMilliseconds()
-            ).toISOString()
-          : now.toISOString();
-
-      const { error: transError } = await supabase
-        .from('inventory_transactions')
-        .insert({
-          item_id: itemIdNum,
-          trans_type: 'IN', // 👈 transaction_type 대신 스키마에 맞춰 trans_type 사용 및 제약조건에 맞춰 'IN' 입력
-          qty: qty,
-          lot_no: normalizedLotNo,
-          exp_date: normalizedExpDate,
-          serial_no: normalizedSerialNo,
-          customer_id: parseInt(customerId),
-          remarks: remarks || null,
-          trans_date: transDateIso,
-          actor_id: userData.id,
-          created_by: userData.id, // 👈 스키마의 created_by 외래키 제약조건 대비
-          warehouse_id: selectedWarehouseId,
-          inventory_id: inventoryIdForTx,
-          ref_table: 'inbound_new',
-        });
-
-      if (transError) throw transError;
-
-      alert('입고 등록 및 재고 반영이 성공적으로 완료되었습니다.');
-      router.push('/inventory'); 
-      router.refresh(); 
-      
-    } catch (error: any) {
-      console.error('Inbound Process Error:', error);
-      alert(`입고 처리 중 오류가 발생했습니다: ${error.message}`);
+      await processInbound([row])
+    } catch (e: any) {
+      alert(`입고 처리 실패: ${String(e?.message ?? e)}`)
     } finally {
-      setIsSaving(false);
+      setSaving(false)
     }
-  };
+  }
+
+  const handleTemplateSubmit = async () => {
+    if (uploadRows.length === 0) return alert('업로드된 데이터가 없습니다.')
+    setSaving(true)
+    try {
+      await processInbound(uploadRows, uploadFileName)
+    } catch (e: any) {
+      alert(`템플릿 처리 실패: ${String(e?.message ?? e)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
-    <div className="p-8 max-w-5xl mx-auto font-sans bg-gray-50 min-h-screen">
-      <div className="mb-8">
-        <h1 className="text-3xl font-black tracking-tight text-gray-900">물품 입고 등록</h1>
-        <p className="mt-2 text-sm font-bold text-gray-500">입고 내역을 등록하고 LOT/SN 등 추적 정보를 재고에 즉시 반영합니다.</p>
+    <div className="mx-auto max-w-[1120px] space-y-4 p-4 md:p-6">
+      <div className="rounded-xl border-2 border-black bg-white p-4">
+        <h1 className="text-2xl font-black tracking-tight text-gray-900 md:text-3xl">입고 등록</h1>
+        <p className="mt-1 text-xs font-bold text-gray-500">
+          자재과 입고 전용 · 단건 등록 / 템플릿 업로드 병행 · 서버 단일 검증/처리
+        </p>
       </div>
-      
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {/* 섹션 1: 입고 기본 정보 */}
-        <div className="bg-white border border-gray-200 rounded-3xl p-8 shadow-sm">
-          <h2 className="text-lg font-black text-gray-800 mb-6 flex items-center">
-            <span className="w-1.5 h-5 bg-blue-600 rounded-full mr-2"></span>
-            입고 기본 정보
-          </h2>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div>
-              <label className="block text-xs font-black mb-2 text-gray-500 uppercase">입고 일자 <span className="text-red-500">*</span></label>
-              <input 
-                type="date" 
-                value={inboundDate}
-                onChange={(e) => setInboundDate(e.target.value)}
-                className="w-full border-2 border-gray-100 bg-gray-50 rounded-xl p-3 outline-none focus:border-blue-500 font-bold text-gray-700 transition-all"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-black mb-2 text-gray-500 uppercase">거래처 (매입처) <span className="text-red-500">*</span></label>
-              <SearchableCombobox
-                value={customerId}
-                onChange={setCustomerId}
-                options={customerOptions}
-                placeholder="거래처를 선택하세요"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-black mb-2 text-gray-500 uppercase">담당자</label>
-              <input 
-                type="text" 
-                value={userData?.user_name || '사용자 로딩 중...'}
-                disabled
-                className="w-full border-2 border-gray-100 bg-gray-100 rounded-xl p-3 font-black text-gray-500 cursor-not-allowed"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-black mb-2 text-gray-500 uppercase">입고 창고 <span className="text-red-500">*</span></label>
-              <SearchableCombobox
-                value={warehouseId}
-                onChange={setWarehouseId}
-                options={warehouseOptions}
-                placeholder="창고 선택"
-              />
-            </div>
-            <div className="lg:col-span-4">
-              <label className="block text-xs font-black mb-2 text-gray-500 uppercase">입고 비고</label>
-              <input 
-                type="text" 
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-                placeholder="특이사항, 송장 번호 등을 입력하세요"
-                className="w-full border-2 border-gray-100 bg-gray-50 rounded-xl p-3 outline-none focus:border-blue-500 font-medium text-gray-700 transition-all"
-              />
+
+      <div className="rounded-xl border border-gray-300 bg-white p-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+          <button
+            type="button"
+            className={`rounded border px-3 py-2 text-sm font-black ${mode === 'single' ? 'border-black bg-black text-white' : 'border-gray-300 bg-white text-gray-700'}`}
+            onClick={() => setMode('single')}
+          >
+            단건 등록
+          </button>
+          <button
+            type="button"
+            className={`rounded border px-3 py-2 text-sm font-black ${mode === 'template' ? 'border-black bg-black text-white' : 'border-gray-300 bg-white text-gray-700'}`}
+            onClick={() => setMode('template')}
+          >
+            템플릿 업로드
+          </button>
+          <button
+            type="button"
+            onClick={downloadInboundTemplate}
+            className="rounded border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-black text-blue-700"
+          >
+            템플릿 다운로드
+          </button>
+          <Link
+            href="/admin/inbound-logs"
+            className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-center text-sm font-black text-emerald-700"
+          >
+            입고 로그 조회
+          </Link>
+        </div>
+      </div>
+
+      {mode === 'single' ? (
+        <form onSubmit={handleSingleSubmit} className="space-y-4">
+          <div className="rounded-xl border-2 border-black bg-white p-4">
+            <div className="grid grid-cols-1 border border-gray-200 text-sm sm:grid-cols-[120px_1fr]">
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">입고일자</div>
+              <div className="border-b px-3 py-2">
+                <input
+                  type="date"
+                  value={inboundDate}
+                  onChange={(e) => setInboundDate(e.target.value)}
+                  className="w-full rounded border border-gray-300 px-3 py-2"
+                />
+              </div>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">담당자</div>
+              <div className="border-b px-3 py-2 font-bold text-gray-700">{userName || '—'}</div>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">품목</div>
+              <div className="border-b px-3 py-2">
+                <SearchableCombobox
+                  value={selectedItemId}
+                  onChange={(v) => {
+                    setSelectedItemId(v)
+                    const found = items.find((x) => String(x.id) === v)
+                    if (found?.is_sn_managed) setQty(1)
+                  }}
+                  options={itemOptions}
+                  placeholder="품목 선택"
+                />
+              </div>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">창고</div>
+              <div className="border-b px-3 py-2">
+                <SearchableCombobox value={warehouseId} onChange={setWarehouseId} options={warehouseOptions} placeholder="창고 선택" />
+              </div>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">거래처 (선택)</div>
+              <div className="border-b px-3 py-2">
+                <SearchableCombobox value={customerId} onChange={setCustomerId} options={customerOptions} placeholder="선택 안함 가능" />
+              </div>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">수량</div>
+              <div className="border-b px-3 py-2">
+                <input
+                  type="number"
+                  min={1}
+                  value={qty}
+                  onChange={(e) => setQty(Number(e.target.value))}
+                  disabled={Boolean(selectedItem?.is_sn_managed)}
+                  className="w-full rounded border border-gray-300 px-3 py-2"
+                />
+              </div>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">LOT</div>
+              <div className="border-b px-3 py-2">
+                <input
+                  type="text"
+                  value={lotNo}
+                  onChange={(e) => setLotNo(e.target.value)}
+                  placeholder={selectedItem?.is_lot_managed ? 'LOT 필수' : '해당없음'}
+                  className="w-full rounded border border-gray-300 px-3 py-2"
+                />
+              </div>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">EXP</div>
+              <div className="border-b px-3 py-2">
+                <input
+                  type="text"
+                  value={expDate}
+                  onChange={(e) => setExpDate(e.target.value)}
+                  placeholder={selectedItem?.is_exp_managed ? 'YYYY-MM-DD or YYYYMMDD' : '해당없음'}
+                  className="w-full rounded border border-gray-300 px-3 py-2"
+                />
+              </div>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">S/N</div>
+              <div className="border-b px-3 py-2">
+                <input
+                  type="text"
+                  value={serialNo}
+                  onChange={(e) => setSerialNo(e.target.value)}
+                  placeholder={selectedItem?.is_sn_managed ? 'S/N 필수' : '해당없음'}
+                  className="w-full rounded border border-gray-300 px-3 py-2"
+                />
+              </div>
+              <div className="bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">비고</div>
+              <div className="px-3 py-2">
+                <input
+                  type="text"
+                  value={remarks}
+                  onChange={(e) => setRemarks(e.target.value)}
+                  placeholder="입고 비고"
+                  className="w-full rounded border border-gray-300 px-3 py-2"
+                />
+              </div>
             </div>
           </div>
-        </div>
-
-        {/* 섹션 2: 품목 및 추적 정보 */}
-        <div className="bg-white border border-gray-200 rounded-3xl p-8 shadow-sm">
-          <h2 className="text-lg font-black text-gray-800 mb-6 flex items-center">
-            <span className="w-1.5 h-5 bg-green-500 rounded-full mr-2"></span>
-            입고 품목 및 추적 정보
-          </h2>
-
-          <div className="mb-6">
-            <label className="block text-xs font-black mb-2 text-gray-500 uppercase">입고 품목 선택 <span className="text-red-500">*</span></label>
-            <SearchableCombobox
-              value={selectedItemId}
-              onChange={handleItemChange}
-              options={itemOptions}
-              placeholder="품목을 검색/선택하세요 (예: 벨)"
-              className="text-lg"
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="submit"
+              disabled={saving || loading}
+              className="rounded-lg bg-black px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:bg-gray-300"
+            >
+              {saving ? '처리 중...' : '단건 입고 등록'}
+            </button>
+            <Link href="/inventory" className="rounded-lg border border-gray-300 px-4 py-3 text-center text-sm font-black text-gray-700">
+              취소
+            </Link>
+          </div>
+        </form>
+      ) : (
+        <div className="space-y-4">
+          <div className="rounded-xl border-2 border-black bg-white p-4">
+            <p className="mb-2 text-xs font-black text-gray-500">업로드 파일</p>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="rounded border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-black text-blue-700"
+              >
+                파일 선택 (.xlsx/.xls)
+              </button>
+              <span className="rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-600">
+                {uploadFileName || '선택된 파일 없음'}
+              </span>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0]
+                if (!file) return
+                try {
+                  await handleTemplateUpload(file)
+                } catch (err: any) {
+                  alert(`파일 파싱 실패: ${String(err?.message ?? err)}`)
+                } finally {
+                  e.currentTarget.value = ''
+                }
+              }}
             />
           </div>
 
-          <div className={`grid grid-cols-1 md:grid-cols-2 gap-6 p-6 rounded-2xl border-2 transition-all duration-300 ${selectedItem ? 'border-blue-100 bg-blue-50/30' : 'border-gray-100 bg-gray-50 opacity-50 pointer-events-none'}`}>
-            {/* 수량 */}
-            <div>
-              <label className="block text-sm font-black mb-2 text-gray-700">입고 수량 <span className="text-red-500">*</span></label>
-              <input 
-                type="number" 
-                value={qty} 
-                onChange={(e) => setQty(parseInt(e.target.value))}
-                disabled={selectedItem?.is_sn_managed}
-                min="1"
-                className={`w-full border-2 rounded-xl p-3 outline-none transition-all font-black text-lg ${
-                  selectedItem?.is_sn_managed 
-                  ? 'border-gray-200 bg-gray-100 text-gray-400 cursor-not-allowed' 
-                  : 'border-white focus:border-blue-500 shadow-sm'
-                }`}
-                required
-              />
-              {selectedItem?.is_sn_managed && (
-                <p className="mt-1.5 text-xs font-bold text-purple-600">💡 S/N 관리 품목은 개별 등록(1개)만 가능합니다.</p>
-              )}
+          <div className="overflow-hidden rounded-xl border border-gray-300 bg-white">
+            <div className="border-b bg-gray-50 px-3 py-2 text-xs font-black text-gray-600">
+              업로드 미리보기 ({uploadRows.length}행)
             </div>
-
-            {/* LOT 번호 */}
-            <div>
-              <label className="block text-sm font-black mb-2 text-gray-700">
-                LOT 번호 {selectedItem?.is_lot_managed && <span className="text-red-500">*</span>}
-              </label>
-              {selectedItem?.is_lot_managed ? (
-                <input 
-                  value={lotNo} 
-                  onChange={(e) => setLotNo(e.target.value)}
-                  placeholder="LOT 번호를 입력하세요"
-                  className="w-full border-2 border-white rounded-xl p-3 outline-none focus:border-blue-500 shadow-sm font-bold"
-                  required
-                />
-              ) : (
-                <div className="w-full border-2 border-gray-100 bg-gray-100 rounded-xl p-3 text-gray-400 font-bold flex items-center justify-center cursor-not-allowed italic">
-                  LOT 관리 대상 아님
-                </div>
-              )}
-            </div>
-
-            {/* 유효기간 */}
-            <div>
-              <label className="block text-sm font-black mb-2 text-gray-700">
-                유효기간 (EXP) {selectedItem?.is_exp_managed && <span className="text-red-500">*</span>}
-              </label>
-              {selectedItem?.is_exp_managed ? (
-                <input 
-                  type="date" 
-                  value={expDate} 
-                  onChange={(e) => setExpDate(e.target.value)}
-                  className="w-full border-2 border-white rounded-xl p-3 outline-none focus:border-blue-500 shadow-sm font-bold"
-                  required
-                />
-              ) : (
-                <div className="w-full border-2 border-gray-100 bg-gray-100 rounded-xl p-3 text-gray-400 font-bold flex items-center justify-center cursor-not-allowed italic">
-                  유효기간 관리 대상 아님
-                </div>
-              )}
-            </div>
-
-            {/* S/N */}
-            <div>
-              <label className="block text-sm font-black mb-2 text-gray-700">
-                시리얼 번호 (S/N) {selectedItem?.is_sn_managed && <span className="text-red-500">*</span>}
-              </label>
-              {selectedItem?.is_sn_managed ? (
-                <input 
-                  value={serialNo} 
-                  onChange={(e) => setSerialNo(e.target.value)}
-                  placeholder="장비 고유 번호를 입력하세요"
-                  className="w-full border-2 border-purple-200 focus:border-purple-500 bg-purple-50 rounded-xl p-3 outline-none shadow-sm font-black text-purple-900"
-                  required
-                />
-              ) : (
-                <div className="w-full border-2 border-gray-100 bg-gray-100 rounded-xl p-3 text-gray-400 font-bold flex items-center justify-center cursor-not-allowed italic">
-                  S/N 관리 대상 아님
-                </div>
-              )}
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[980px] text-sm">
+                <thead className="border-b bg-gray-50 text-[11px] font-black text-gray-500">
+                  <tr>
+                    <th className="px-3 py-2 text-left">행</th>
+                    <th className="px-3 py-2 text-left">입고일</th>
+                    <th className="px-3 py-2 text-left">품목코드</th>
+                    <th className="px-3 py-2 text-left">창고코드</th>
+                    <th className="px-3 py-2 text-left">거래처코드</th>
+                    <th className="px-3 py-2 text-left">수량</th>
+                    <th className="px-3 py-2 text-left">LOT</th>
+                    <th className="px-3 py-2 text-left">EXP</th>
+                    <th className="px-3 py-2 text-left">S/N</th>
+                    <th className="px-3 py-2 text-left">로컬검증</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {uploadRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="px-3 py-8 text-center text-sm font-bold text-gray-400">
+                        업로드된 데이터가 없습니다.
+                      </td>
+                    </tr>
+                  ) : (
+                    uploadRows.slice(0, 200).map((r) => (
+                      <tr key={`${r.row_no}-${r.item_code}-${r.serial_no}`}>
+                        <td className="px-3 py-2">{r.row_no}</td>
+                        <td className="px-3 py-2">{r.inbound_date}</td>
+                        <td className="px-3 py-2">{r.item_code}</td>
+                        <td className="px-3 py-2">{r.warehouse_code}</td>
+                        <td className="px-3 py-2">{r.customer_code}</td>
+                        <td className="px-3 py-2">{r.qty}</td>
+                        <td className="px-3 py-2">{r.lot_no || '-'}</td>
+                        <td className="px-3 py-2">{r.exp_date || '-'}</td>
+                        <td className="px-3 py-2">{r.serial_no || '-'}</td>
+                        <td className={`px-3 py-2 text-xs font-black ${r.local_error ? 'text-red-700' : 'text-green-700'}`}>
+                          {r.local_error ?? 'OK'}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           </div>
-        </div>
 
-        {/* 액션 버튼 */}
-        <div className="flex gap-4 pt-2">
-          <button 
-            type="submit" 
-            disabled={isSaving || !selectedItem}
-            className="flex-1 bg-black text-white py-4 rounded-2xl font-black text-lg hover:bg-gray-800 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isSaving ? '입고 처리 중...' : '입고 등록 완료'}
-          </button>
-          <Link 
-            href="/inventory"
-            className="px-10 border-2 border-gray-300 py-4 rounded-2xl font-black text-gray-600 hover:bg-gray-100 hover:text-black hover:border-gray-400 transition-all text-center flex items-center justify-center"
-          >
-            취소
-          </Link>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              disabled={saving || uploadRows.length === 0}
+              onClick={() => void handleTemplateSubmit()}
+              className="rounded-lg bg-black px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:bg-gray-300"
+            >
+              {saving ? '처리 중...' : '템플릿 입고 등록'}
+            </button>
+            <Link href="/inventory" className="rounded-lg border border-gray-300 px-4 py-3 text-center text-sm font-black text-gray-700">
+              취소
+            </Link>
+          </div>
         </div>
-      </form>
+      )}
+
+      {processSummary ? (
+        <div className="rounded-xl border border-gray-300 bg-white p-4">
+          <h3 className="text-sm font-black text-gray-800">처리 결과</h3>
+          <p className="mt-1 text-xs font-bold text-gray-600">
+            총 {processSummary.total}건 · 성공 {processSummary.success}건 · 실패 {processSummary.failed}건
+          </p>
+          <div className="mt-3 max-h-56 overflow-y-auto rounded border border-gray-200 bg-gray-50 p-2">
+            <ul className="space-y-1 text-xs font-bold">
+              {processRows.map((r) => (
+                <li key={`${r.rowNo}-${r.status}-${r.message}`} className={r.status === 'success' ? 'text-green-700' : 'text-red-700'}>
+                  [{r.rowNo}] {r.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      ) : null}
     </div>
-  );
+  )
 }

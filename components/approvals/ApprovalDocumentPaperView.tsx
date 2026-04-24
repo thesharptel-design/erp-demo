@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 export type ApprovalPaperApproverColumn = {
   id: string
   name: string
+  employeeNo?: string | null
   sealUrl: string | null
   status: ReactNode
   actedAt: string | null
@@ -17,6 +18,24 @@ export type ApprovalPaperCooperatorRow = {
   readStatus: ReactNode
   /** 협조자 `approval_lines.opinion` */
   opinionText?: string | null
+}
+
+const paperDateTimeFormatter = new Intl.DateTimeFormat('ko-KR', {
+  timeZone: 'Asia/Seoul',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+})
+
+function formatPaperDateTime(value: string | null | undefined): string {
+  if (!value) return '—'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return paperDateTimeFormatter.format(parsed)
 }
 
 function SealOrInitials({ name, sealUrl, show }: { name: string; sealUrl: string | null; show: boolean }) {
@@ -48,6 +67,7 @@ export type ApprovalDocumentPaperViewProps = {
   docStatusClassName: string
   showCancelRequestBadge?: boolean
   writerName: string
+  writerEmployeeNo?: string | null
   writerDeptName: string
   draftedDate: string
   docNo: string
@@ -66,6 +86,11 @@ export type ApprovalDocumentPaperViewProps = {
   drafterActedAt: string | null
   /** 기안 칸 도장 표시 (기본 true) */
   drafterShowSeal?: boolean
+  /**
+   * 최종 승인 후 결재취소(`remarks === 결재 취소`) 시 본문 아래: 처리자·일시·의견.
+   * (구버전 본문에 붙은 `[결재 취소 의견]:` 은 상위에서 제거한 `contentHtml`을 넘김)
+   */
+  postApprovalCancelRow?: { actorName: string; opinion: string | null; at: string | null } | null
   /** 본문 직후: 결재·협조 의견·반려 등 */
   afterBodySlot?: ReactNode
   /** 출고 등 본문·의견 아래 추가 블록 */
@@ -78,6 +103,7 @@ export default function ApprovalDocumentPaperView({
   docStatusClassName,
   showCancelRequestBadge,
   writerName,
+  writerEmployeeNo,
   writerDeptName,
   draftedDate,
   docNo,
@@ -94,6 +120,7 @@ export default function ApprovalDocumentPaperView({
   drafterStatus,
   drafterActedAt,
   drafterShowSeal = true,
+  postApprovalCancelRow,
   afterBodySlot,
   postBodyGridSlot,
 }: ApprovalDocumentPaperViewProps) {
@@ -134,6 +161,10 @@ export default function ApprovalDocumentPaperView({
                   <td className="px-2 py-2 font-bold text-gray-900">{writerDeptName || '—'}</td>
                 </tr>
                 <tr className="border-b border-black">
+                  <th className="border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">사번</th>
+                  <td className="px-2 py-2 font-bold text-gray-900">{writerEmployeeNo?.trim() || '—'}</td>
+                </tr>
+                <tr className="border-b border-black">
                   <th className="border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">기안일</th>
                   <td className="px-2 py-2 font-bold text-gray-900">{draftedDate}</td>
                 </tr>
@@ -166,13 +197,19 @@ export default function ApprovalDocumentPaperView({
                     <tr className="border-b border-black">
                       <td className="min-w-0 border-r border-black bg-white px-2 py-3 font-bold text-gray-900">
                         <span className="block truncate">{writerName || '—'}</span>
+                        <span className="mt-0.5 block truncate text-[10px] font-bold text-gray-500">
+                          {writerEmployeeNo?.trim() || '-'}
+                        </span>
                       </td>
                       {approverColumns.map((col) => (
                         <td
                           key={col.id}
                           className="min-w-0 border-l border-black bg-white px-2 py-3 font-bold text-gray-900"
                         >
-                          <span className="block truncate">{col.name || '—'}</span>
+                            <span className="block truncate">{col.name || '—'}</span>
+                            <span className="mt-0.5 block truncate text-[10px] font-bold text-gray-500">
+                              {col.employeeNo?.trim() || '-'}
+                            </span>
                         </td>
                       ))}
                     </tr>
@@ -292,6 +329,30 @@ export default function ApprovalDocumentPaperView({
               </p>
             )}
           </div>
+          {postApprovalCancelRow ? (
+            <>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">
+                결재 취소
+                <span className="mt-0.5 block text-[10px] font-bold normal-case text-gray-500">
+                  승인 완료 후 취소
+                </span>
+              </div>
+              <div className="border-b px-3 py-2 text-sm">
+                <div className="rounded-lg border border-red-100 bg-red-50/40 p-2.5">
+                  <div className="grid grid-cols-1 gap-1.5 text-xs sm:grid-cols-[5rem_1fr]">
+                    <p className="font-black text-gray-500">처리자</p>
+                    <p className="font-bold text-gray-900">{postApprovalCancelRow.actorName?.trim() || '—'}</p>
+                    <p className="font-black text-gray-500">일시</p>
+                    <p className="font-bold text-gray-700">{formatPaperDateTime(postApprovalCancelRow.at)}</p>
+                    <p className="font-black text-gray-500">의견</p>
+                    <p className="whitespace-pre-wrap break-words font-bold leading-relaxed text-gray-800">
+                      {postApprovalCancelRow.opinion?.trim() ? postApprovalCancelRow.opinion : '—'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </>
+          ) : null}
           {afterBodySlot ? (
             <>
               <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">

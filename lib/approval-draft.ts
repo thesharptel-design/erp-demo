@@ -1,5 +1,8 @@
 import { generateNextAppDocNo } from '@/lib/approval-doc-no'
-import { APPROVAL_ROLES, type ApprovalRole } from '@/lib/approval-roles'
+import { APPROVAL_ROLES, normalizeApprovalRole, type ApprovalRole } from '@/lib/approval-roles'
+
+/** `lib/approval-status` `APPROVAL_RECALL_REMARK_MARKER` 와 동일 — 순환 import 방지 */
+const APPROVAL_RECALL_REMARK_MARKER = '기안 회수됨'
 import {
   buildApprovalLines,
   buildApprovalParticipantsRows,
@@ -32,6 +35,8 @@ export type CreateApprovalDraftInput = {
   promoteDraftDocId?: number | null
   /** `promoteDraftDocId` 검증용 — `syncWebGeneralDraft`에 쓴 `remarksTag`와 동일해야 합니다. */
   draftRemarksTag?: string
+  /** 회수·반려 등 기존 행을 작성 화면에서 수정 후 그대로 상신(APP 번호)으로 승격 */
+  resubmitFromDocId?: number | null
 }
 
 export type CreateApprovalDraftResult = {
@@ -269,9 +274,117 @@ async function promoteWebGeneralDraftToSubmitted(
   return { docId, docNo }
 }
 
+/**
+ * 통합함에서 「수정·재상신」용: 회수 draft / 반려 문서를 새 APP 번호로 상신 상태로 갱신하고 결재선을 교체합니다.
+ */
+async function promoteResubmitFromComposeDoc(
+  input: CreateApprovalDraftInput & { resubmitFromDocId: number }
+): Promise<{ docId: number; docNo: string } | null> {
+  const {
+    supabase,
+    resubmitFromDocId,
+    writerId,
+    docType,
+    title,
+    content,
+    writerDeptId,
+    approvalOrder,
+    executionStartDate,
+    executionEndDate,
+    cooperationDept,
+    agreementText,
+    remarks = '웹 등록 문서',
+  } = input
+
+  const { data: head, error: selErr } = await supabase
+    .from('approval_docs')
+    .select('id, status, remarks, doc_type, writer_id')
+    .eq('id', resubmitFromDocId)
+    .eq('writer_id', writerId)
+    .single()
+  if (selErr || !head) return null
+  if (head.doc_type === 'outbound_request') return null
+
+  const remarksStr = String(head.remarks ?? '')
+  const eligible =
+    head.status === 'rejected' ||
+    (head.status === 'draft' &&
+      (remarksStr.includes(APPROVAL_RECALL_REMARK_MARKER) ||
+        remarksStr === WEB_GENERAL_DRAFT_REMARKS ||
+        remarksStr === WEB_MODAL_DRAFT_REMARKS ||
+        remarksStr === '웹 수정 문서'))
+  if (!eligible) return null
+
+  const docNo = await generateNextAppDocNo(supabase as any)
+  const now = new Date().toISOString()
+
+  const { data: updated, error: upErr } = await supabase
+    .from('approval_docs')
+    .update({
+      doc_no: docNo,
+      doc_type: docType,
+      title: title.trim(),
+      content: content.trim(),
+      dept_id: writerDeptId,
+      execution_start_date: executionStartDate || null,
+      execution_end_date: executionEndDate || null,
+      cooperation_dept: cooperationDept?.trim() || null,
+      agreement_text: agreementText?.trim() || null,
+      status: 'submitted',
+      current_line_no: 1,
+      submitted_at: now,
+      remarks,
+      completed_at: null,
+    })
+    .eq('id', resubmitFromDocId)
+    .eq('writer_id', writerId)
+    .in('status', ['draft', 'rejected'])
+    .neq('doc_type', 'outbound_request')
+    .select('id')
+    .maybeSingle()
+
+  if (upErr) throw upErr
+  if (!updated?.id) return null
+
+  const docId = updated.id as number
+
+  const { error: delLines } = await supabase.from('approval_lines').delete().eq('approval_doc_id', docId)
+  if (delLines) throw delLines
+  const { error: delParts } = await supabase.from('approval_participants').delete().eq('approval_doc_id', docId)
+  if (delParts) throw delParts
+
+  const participants = normalizeParticipants(
+    approvalOrder.map((line) => ({ role: line.role, userId: line.userId }))
+  )
+  const linesToInsert = buildApprovalLines(docId, participants)
+  const participantRows = buildApprovalParticipantsRows(docId, participants)
+
+  if (linesToInsert.length > 0) {
+    const { error: linesError } = await supabase.from('approval_lines').insert(linesToInsert)
+    if (linesError) throw linesError
+  }
+  if (participantRows.length > 0) {
+    const { error: participantsError } = await supabase
+      .from('approval_participants')
+      .insert(participantRows)
+    if (participantsError) throw participantsError
+  }
+
+  await supabase.from('approval_histories').insert({
+    approval_doc_id: docId,
+    actor_id: writerId,
+    action_type: 'submit',
+    action_comment: '기안서 재상신',
+    action_at: now,
+  })
+
+  return { docId, docNo }
+}
+
 export async function createApprovalDraft(input: CreateApprovalDraftInput): Promise<CreateApprovalDraftResult> {
   const {
     promoteDraftDocId,
+    resubmitFromDocId,
     draftRemarksTag = WEB_GENERAL_DRAFT_REMARKS,
     supabase,
     docType,
@@ -300,6 +413,17 @@ export async function createApprovalDraft(input: CreateApprovalDraftInput): Prom
     cooperationDept,
     agreementText,
     remarks,
+  }
+
+  if (resubmitFromDocId != null) {
+    const resubmitted = await promoteResubmitFromComposeDoc({
+      ...input,
+      resubmitFromDocId,
+    })
+    if (resubmitted) {
+      return { ...resubmitted, leftoverDraftIdToDelete: null }
+    }
+    throw new Error('재상신에 실패했습니다. 문서 상태를 확인한 뒤 다시 시도하세요.')
   }
 
   if (promoteDraftDocId != null) {
@@ -551,4 +675,67 @@ export async function fetchWebGeneralDraftBundle(
   if (pErr) throw pErr
 
   return { doc: doc as Record<string, unknown>, participants: (parts ?? []) as Array<{ user_id: string; role: string; line_no: number }> }
+}
+
+function linesToResubmitApprovalOrder(
+  lines: Array<{ line_no: number; approver_id: string; approver_role: string }>
+): Array<{ user_id: string; role: string; line_no: number }> {
+  const sorted = [...lines].sort((a, b) => a.line_no - b.line_no)
+  return sorted.map((l) => {
+    const role = normalizeApprovalRole(l.approver_role) ?? 'approver'
+    return { user_id: l.approver_id, role, line_no: l.line_no }
+  })
+}
+
+/** 회수·반려(및 웹 임시) 문서를 `/approvals/new` 작성 폼으로 불러오기 */
+export async function fetchApprovalResubmitBundle(
+  supabase: SupabaseLike,
+  docId: number,
+  writerId: string
+): Promise<{ doc: Record<string, unknown>; participants: Array<{ user_id: string; role: string; line_no: number }> }> {
+  const { data: doc, error } = await supabase
+    .from('approval_docs')
+    .select('*')
+    .eq('id', docId)
+    .eq('writer_id', writerId)
+    .single()
+  if (error || !doc) throw error || new Error('문서를 불러올 수 없습니다')
+
+  const d = doc as Record<string, unknown>
+  if (String(d.doc_type ?? '') === 'outbound_request') {
+    throw new Error('출고요청은 이 화면에서 열 수 없습니다.')
+  }
+
+  const remarksStr = String(d.remarks ?? '')
+  const st = String(d.status ?? '')
+  const eligible =
+    st === 'rejected' ||
+    (st === 'draft' &&
+      (remarksStr.includes(APPROVAL_RECALL_REMARK_MARKER) ||
+        remarksStr === WEB_GENERAL_DRAFT_REMARKS ||
+        remarksStr === WEB_MODAL_DRAFT_REMARKS ||
+        remarksStr === '웹 수정 문서'))
+  if (!eligible) {
+    throw new Error('수정·재상신할 수 있는 상태가 아닙니다.')
+  }
+
+  const { data: parts, error: pErr } = await supabase
+    .from('approval_participants')
+    .select('user_id, role, line_no')
+    .eq('approval_doc_id', docId)
+    .order('line_no')
+  if (pErr) throw pErr
+
+  let participants = (parts ?? []) as Array<{ user_id: string; role: string; line_no: number }>
+  if (participants.length === 0) {
+    const { data: lines, error: lErr } = await supabase
+      .from('approval_lines')
+      .select('line_no, approver_id, approver_role')
+      .eq('approval_doc_id', docId)
+      .order('line_no')
+    if (lErr) throw lErr
+    participants = linesToResubmitApprovalOrder((lines ?? []) as Array<{ line_no: number; approver_id: string; approver_role: string }>)
+  }
+
+  return { doc: d, participants }
 }

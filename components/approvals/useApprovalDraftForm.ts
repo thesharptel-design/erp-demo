@@ -7,6 +7,7 @@ import {
   createApprovalDraft,
   deleteWebGeneralDraft,
   deleteWebGeneralDraftWithRetry,
+  fetchApprovalResubmitBundle,
   fetchWebGeneralDraftBundle,
   getApprovalCreateErrorMessage,
   syncWebGeneralDraft,
@@ -16,8 +17,13 @@ import { toast } from 'sonner'
 import type { ApprovalRole } from '@/lib/approval-roles'
 import type { ApprovalDraftAppUser, ApprovalOrderItem } from '@/components/approvals/ApprovalDraftPaper'
 import { isHtmlContentEffectivelyEmpty } from '@/lib/html-content'
-import { executionDateForDb, isCompleteValidExecutionDate } from '@/lib/execution-date-input'
+import {
+  executionDateForDb,
+  executionDateInputDisplay,
+  isCompleteValidExecutionDate,
+} from '@/lib/execution-date-input'
 import { dismissDraftValidationToast, showDraftValidationError } from '@/lib/draft-form-feedback'
+import type { ApprovalProcessHistoryRow } from '@/components/approvals/ApprovalProcessHistoryPanel'
 
 type Department = {
   id: number
@@ -32,6 +38,8 @@ export type UseApprovalDraftFormParams = {
   enableServerDraft?: boolean
   /** 임시 문서 remarks 구분 (모달·신규 페이지 분리) */
   webDraftRemarksTag?: string
+  /** `/approvals/new?resubmit=` — 회수·반려 문서를 작성 폼으로 불러 재상신 */
+  initialResubmitDocId?: number | null
 }
 
 type ApprovalDraftAutosavePayloadV2 = {
@@ -68,6 +76,7 @@ export function useApprovalDraftForm({
   autosaveKey,
   enableServerDraft = false,
   webDraftRemarksTag = WEB_GENERAL_DRAFT_REMARKS,
+  initialResubmitDocId = null,
 }: UseApprovalDraftFormParams) {
   const [users, setUsers] = useState<ApprovalDraftAppUser[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
@@ -85,6 +94,11 @@ export function useApprovalDraftForm({
   const [writerId, setWriterId] = useState('')
   const [approvalOrder, setApprovalOrder] = useState<ApprovalOrderItem[]>([makeEmptyApprovalLine()])
   const [serverDraftDocId, setServerDraftDocId] = useState<number | null>(null)
+  const [resubmitDocId, setResubmitDocId] = useState<number | null>(null)
+  const [resubmitHistories, setResubmitHistories] = useState<ApprovalProcessHistoryRow[]>([])
+  const [isResubmitHydrating, setIsResubmitHydrating] = useState(
+    () => initialResubmitDocId != null && initialResubmitDocId > 0
+  )
   const [errorMessage, setErrorMessage] = useState('')
   const [lastLocalSaveAt, setLastLocalSaveAt] = useState<string | null>(null)
   const [lastServerSaveAt, setLastServerSaveAt] = useState<string | null>(null)
@@ -108,7 +122,7 @@ export function useApprovalDraftForm({
         supabase
           .from('app_users')
           .select(
-            'id, login_id, user_name, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate'
+            'id, login_id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate'
           )
           .order('user_name'),
         supabase.from('departments').select('id, dept_name').order('id'),
@@ -126,6 +140,77 @@ export function useApprovalDraftForm({
       active = false
     }
   }, [enabled])
+
+  useEffect(() => {
+    if (!enabled) return
+    if (initialResubmitDocId == null || initialResubmitDocId <= 0) {
+      setResubmitHistories([])
+      setIsResubmitHydrating(false)
+      return
+    }
+    if (!writerId || users.length === 0) return
+
+    let cancelled = false
+    setIsResubmitHydrating(true)
+    ;(async () => {
+      dismissDraftValidationToast()
+      setErrorMessage('')
+      try {
+        const { doc, participants } = await fetchApprovalResubmitBundle(
+          supabase as any,
+          initialResubmitDocId,
+          writerId
+        )
+        if (cancelled) return
+        const { data: histRows } = await supabase
+          .from('approval_histories')
+          .select('id, action_type, actor_id, action_at, action_comment')
+          .eq('approval_doc_id', initialResubmitDocId)
+          .order('action_at', { ascending: true })
+        if (cancelled) return
+        setResubmitHistories((histRows as ApprovalProcessHistoryRow[]) ?? [])
+        setResubmitDocId(initialResubmitDocId)
+        setServerDraftDocId(null)
+        setDocType(String(doc.doc_type ?? 'draft_doc'))
+        setTitle(String(doc.title ?? ''))
+        setContent(String(doc.content ?? ''))
+        setExecutionStartDate(executionDateInputDisplay(doc.execution_start_date as string | null | undefined))
+        setExecutionEndDate(executionDateInputDisplay(doc.execution_end_date as string | null | undefined))
+        setAgreementText(String(doc.agreement_text ?? ''))
+        const nextOrder =
+          participants.length > 0 ? participantsToApprovalOrder(participants) : [makeEmptyApprovalLine()]
+        setApprovalOrder(nextOrder)
+        if (autosaveKey && typeof window !== 'undefined') {
+          const payload: ApprovalDraftAutosavePayloadV2 = {
+            version: 2,
+            savedAt: new Date().toISOString(),
+            serverDraftDocId: null,
+            docType: String(doc.doc_type ?? 'draft_doc'),
+            title: String(doc.title ?? ''),
+            content: String(doc.content ?? ''),
+            executionStartDate: executionDateInputDisplay(doc.execution_start_date as string | null | undefined),
+            executionEndDate: executionDateInputDisplay(doc.execution_end_date as string | null | undefined),
+            agreementText: String(doc.agreement_text ?? ''),
+            approvalOrder: nextOrder,
+          }
+          localStorage.setItem(autosaveKey, JSON.stringify(payload))
+        }
+        setLastLocalSaveAt(new Date().toISOString())
+        dismissDraftValidationToast()
+        setErrorMessage('')
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : '불러오기에 실패했습니다.'
+        showDraftValidationError(setErrorMessage, msg)
+        setResubmitDocId(null)
+        setResubmitHistories([])
+      } finally {
+        if (!cancelled) setIsResubmitHydrating(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [autosaveKey, enabled, initialResubmitDocId, writerId, users.length])
 
   const deptMap = useMemo(() => new Map(departments.map((d) => [d.id, d.dept_name])), [departments])
   const selectedWriter = users.find((u) => u.id === writerId)
@@ -277,6 +362,8 @@ export function useApprovalDraftForm({
       setAgreementText('')
       setApprovalOrder([makeEmptyApprovalLine()])
       setServerDraftDocId(null)
+      setResubmitDocId(null)
+      setResubmitHistories([])
       dismissDraftValidationToast()
       setErrorMessage('')
       setLastLocalSaveAt(null)
@@ -389,6 +476,15 @@ export function useApprovalDraftForm({
     }
     setIsDraftDeleting(true)
     try {
+      if (resubmitDocId != null) {
+        const { error } = await supabase.from('approval_docs').delete().eq('id', resubmitDocId).eq('writer_id', writerId)
+        if (error) throw error
+        clearSavedDraft()
+        resetForm({ clearAutosave: false })
+        setResubmitDocId(null)
+        setResubmitHistories([])
+        return { ok: true as const }
+      }
       if (enableServerDraft && serverDraftDocId != null) {
         await deleteWebGeneralDraft(supabase as any, serverDraftDocId, writerId, webDraftRemarksTag)
       }
@@ -402,7 +498,7 @@ export function useApprovalDraftForm({
     } finally {
       setIsDraftDeleting(false)
     }
-  }, [clearSavedDraft, enableServerDraft, resetForm, serverDraftDocId, webDraftRemarksTag, writerId])
+  }, [clearSavedDraft, enableServerDraft, resetForm, resubmitDocId, serverDraftDocId, webDraftRemarksTag, writerId])
 
   const loadServerDraftById = useCallback(
     async (draftDocId: number) => {
@@ -459,6 +555,10 @@ export function useApprovalDraftForm({
   const submitDraft = async () => {
     dismissDraftValidationToast()
     setErrorMessage('')
+    if (initialResubmitDocId != null && initialResubmitDocId > 0 && resubmitDocId == null) {
+      showDraftValidationError(setErrorMessage, '문서를 불러오지 못했습니다. 목록에서 다시 열어 주세요.')
+      return false
+    }
     if (!title.trim() || isHtmlContentEffectivelyEmpty(content)) {
       showDraftValidationError(setErrorMessage, '제목과 내용을 모두 입력하십시오.')
       return false
@@ -503,7 +603,9 @@ export function useApprovalDraftForm({
         cooperationDept: referenceSummary,
         agreementText,
         remarks,
-        promoteDraftDocId: enableServerDraft ? serverDraftDocId : undefined,
+        resubmitFromDocId: resubmitDocId ?? undefined,
+        promoteDraftDocId:
+          resubmitDocId != null ? undefined : enableServerDraft ? serverDraftDocId : undefined,
         draftRemarksTag: webDraftRemarksTag,
       })
       if (leftoverDraftIdToDelete != null && writerId) {
@@ -522,6 +624,8 @@ export function useApprovalDraftForm({
       }
       clearSavedDraft()
       setServerDraftDocId(null)
+      setResubmitDocId(null)
+      setResubmitHistories([])
       setLastLocalSaveAt(null)
       setLastServerSaveAt(null)
       dismissDraftValidationToast()
@@ -575,5 +679,8 @@ export function useApprovalDraftForm({
     loadServerDraftById,
     reloadFromLocalStorage,
     allowLeavingWithoutBeforeUnloadPrompt,
+    resubmitDocId,
+    resubmitHistories,
+    isResubmitHydrating,
   }
 }

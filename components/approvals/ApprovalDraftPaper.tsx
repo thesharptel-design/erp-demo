@@ -13,6 +13,7 @@ export type ApprovalDraftAppUser = {
   id: string
   login_id: string
   user_name: string
+  employee_no?: string | null
   dept_id: number | null
   department?: string | null
   user_kind?: string | null
@@ -44,6 +45,7 @@ type ApprovalDraftPaperProps = {
   onExecutionEndDateChange: (value: string) => void
   onAgreementTextChange: (value: string) => void
   writerName: string
+  writerEmployeeNo?: string | null
   writerDeptName: string
   draftedDate: string
   /** 신규 기안 시 문서번호 안내 문구 (예: 상신 시 자동 부여) */
@@ -66,6 +68,8 @@ type ApprovalDraftPaperProps = {
    * 출고요청 작성 등에서 창고·품목 UI를 넣습니다.
    */
   postBodyGridSlot?: ReactNode
+  /** 본문·출고 사이: 재상신 시 이전 `approval_histories` 등 (읽기 전용) */
+  processHistorySlot?: ReactNode
   /** true면 문서유형을 콤보 대신 고정 라벨로만 표시 */
   docTypeSelectDisabled?: boolean
 }
@@ -97,6 +101,7 @@ export default function ApprovalDraftPaper({
   onExecutionEndDateChange,
   onAgreementTextChange,
   writerName,
+  writerEmployeeNo,
   writerDeptName,
   draftedDate,
   documentNumberHint,
@@ -112,6 +117,7 @@ export default function ApprovalDraftPaper({
   paperTitle = '업무기안서',
   paperSubtitle = '문서 작성 후 결재선을 지정해 바로 상신합니다.',
   postBodyGridSlot,
+  processHistorySlot,
   docTypeSelectDisabled = false,
 }: ApprovalDraftPaperProps) {
   const approverSlots = approvalOrder.filter((l) => l.role === 'approver')
@@ -137,6 +143,10 @@ export default function ApprovalDraftPaper({
                 <tr className="border-b border-black">
                   <th className="border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">부서</th>
                   <td className="px-2 py-2 font-bold text-gray-900">{writerDeptName || '—'}</td>
+                </tr>
+                <tr className="border-b border-black">
+                  <th className="border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">사번</th>
+                  <td className="px-2 py-2 font-bold text-gray-900">{writerEmployeeNo?.trim() || '—'}</td>
                 </tr>
                 <tr className="border-b border-black">
                   <th className="border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">기안일</th>
@@ -171,6 +181,9 @@ export default function ApprovalDraftPaper({
                     <tr className="border-b border-black">
                       <td className="min-w-0 border-r border-black bg-white px-2 py-3 font-bold text-gray-900">
                         <span className="block truncate">{writerName || '—'}</span>
+                        <span className="mt-0.5 block truncate text-[10px] font-bold text-gray-500">
+                          {writerEmployeeNo?.trim() || '-'}
+                        </span>
                       </td>
                       {approverSlots.map((line) => {
                         const u = line.userId.trim() ? resolveLineUser(line.userId) : undefined
@@ -181,6 +194,9 @@ export default function ApprovalDraftPaper({
                           >
                             <span className="block truncate">
                               {u?.user_name ?? (line.userId.trim() ? '—' : '미지정')}
+                            </span>
+                            <span className="mt-0.5 block truncate text-[10px] font-bold text-gray-500">
+                              {u?.employee_no?.trim() || '-'}
                             </span>
                           </td>
                         )
@@ -338,6 +354,17 @@ export default function ApprovalDraftPaper({
             />
             <ApprovalDraftRichEditor value={content} onChange={onContentChange} />
           </div>
+          {processHistorySlot ? (
+            <>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">
+                처리 이력
+                <span className="mt-0.5 block text-[10px] font-bold normal-case text-gray-500">
+                  이전 상신·결재 기록 (읽기 전용)
+                </span>
+              </div>
+              <div className="border-b px-3 py-2">{processHistorySlot}</div>
+            </>
+          ) : null}
           {postBodyGridSlot ? (
             <>
               <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">출고</div>

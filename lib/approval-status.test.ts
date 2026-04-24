@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildPostApprovalCancelPaperRow,
+  canLastApproverDirectCancelFinalApproval,
   canWriterDeleteApprovalDoc,
   formatApprovalProgressChain,
   formatApproverLineNames,
@@ -7,9 +9,12 @@ import {
   formatInboxApproverLineDisplay,
   getApprovalDocDetailedStatusLabel,
   getApprovalDocDetailedStatusPresentation,
+  getDocDetailOpenHref,
   getOutboundRequestRowPresentation,
   getUnifiedApprovalWorkflowBadges,
   isApprovalCancellationRemarkProcess,
+  isRejectedAsPostApprovalCancel,
+  splitLegacyPostApprovalCancelFromContent,
 } from '@/lib/approval-status'
 
 /** Mirrors `ApprovalActionButtons` admin-delete confirm: first badge label only. */
@@ -45,6 +50,134 @@ describe('isApprovalCancellationRemarkProcess', () => {
     expect(isApprovalCancellationRemarkProcess('결재자 취소완료')).toBe(true)
     expect(isApprovalCancellationRemarkProcess('검토자 취소승인')).toBe(true)
     expect(isApprovalCancellationRemarkProcess('결재자 반려')).toBe(false)
+  })
+})
+
+describe('isRejectedAsPostApprovalCancel & splitLegacy', () => {
+  it('detects post-approval cancel remark only when rejected', () => {
+    expect(isRejectedAsPostApprovalCancel({ status: 'rejected', remarks: '결재 취소' })).toBe(true)
+    expect(isRejectedAsPostApprovalCancel({ status: 'rejected', remarks: '결재자 반려' })).toBe(false)
+    expect(isRejectedAsPostApprovalCancel({ status: 'approved', remarks: '결재 취소' })).toBe(false)
+  })
+
+  it('strips legacy marker from body and captures opinion', () => {
+    const r = splitLegacyPostApprovalCancelFromContent('본문A\n\n[결재 취소 의견]: 반려한다')
+    expect(r.cleanBody).toBe('본문A')
+    expect(r.legacyOpinion).toBe('반려한다')
+  })
+})
+
+describe('buildPostApprovalCancelPaperRow', () => {
+  it('returns row with DB columns when present', () => {
+    const r = buildPostApprovalCancelPaperRow(
+      {
+        status: 'rejected',
+        remarks: '결재 취소',
+        content: '본문',
+        post_approval_cancel_opinion: '의견',
+        post_approval_cancel_by: 'u1',
+        post_approval_cancel_at: '2026-01-02T00:00:00.000Z',
+      },
+      '김결재'
+    )
+    expect(r.cleanBody).toBe('본문')
+    expect(r.row?.actorName).toBe('김결재')
+    expect(r.row?.opinion).toBe('의견')
+    expect(r.row?.at).toBe('2026-01-02T00:00:00.000Z')
+  })
+
+  it('falls back to legacy opinion in content', () => {
+    const r = buildPostApprovalCancelPaperRow(
+      {
+        status: 'rejected',
+        remarks: '결재 취소',
+        content: '본문B\n\n[결재 취소 의견]: 구버전',
+      },
+      null
+    )
+    expect(r.cleanBody).toBe('본문B')
+    expect(r.row?.opinion).toBe('구버전')
+    expect(r.row?.actorName).toBe('—')
+  })
+})
+
+describe('getUnifiedApprovalWorkflowBadges rejected vs 결재취소', () => {
+  it('labels 결재취소 when remarks match post-approval cancel', () => {
+    const b = getUnifiedApprovalWorkflowBadges(
+      { status: 'rejected', remarks: '결재 취소', current_line_no: 1, doc_type: 'draft_doc' },
+      [{ line_no: 1, approver_role: 'approver', status: 'waiting' }]
+    )
+    expect(b[0]?.label).toBe('결재취소')
+  })
+
+  it('labels 반려 for ordinary reject', () => {
+    const b = getUnifiedApprovalWorkflowBadges(
+      { status: 'rejected', remarks: '결재자 반려', current_line_no: 1, doc_type: 'draft_doc' },
+      [{ line_no: 1, approver_role: 'approver', status: 'rejected' }]
+    )
+    expect(b[0]?.label).toBe('반려')
+  })
+})
+
+describe('canLastApproverDirectCancelFinalApproval', () => {
+  const docApproved = { status: 'approved' as const, remarks: null as string | null }
+
+  it('is true only for the last approved action-line approver', () => {
+    const flow = [
+      { line_no: 1, approver_id: 'a111', approver_role: 'approver', status: 'approved' },
+      { line_no: 2, approver_id: 'b222', approver_role: 'approver', status: 'approved' },
+    ]
+    expect(
+      canLastApproverDirectCancelFinalApproval({
+        doc: docApproved,
+        orderedFlow: flow,
+        currentUserId: 'b222',
+      })
+    ).toBe(true)
+    expect(
+      canLastApproverDirectCancelFinalApproval({
+        doc: docApproved,
+        orderedFlow: flow,
+        currentUserId: 'a111',
+      })
+    ).toBe(false)
+  })
+
+  it('is true for sole final approver', () => {
+    const flow = [
+      { line_no: 1, approver_id: 'c333', approver_role: 'approver', status: 'approved' },
+    ]
+    expect(
+      canLastApproverDirectCancelFinalApproval({
+        doc: docApproved,
+        orderedFlow: flow,
+        currentUserId: 'c333',
+      })
+    ).toBe(true)
+  })
+
+  it('is false during cancellation relay remarks', () => {
+    expect(
+      canLastApproverDirectCancelFinalApproval({
+        doc: { status: 'approved', remarks: '취소 요청 중' },
+        orderedFlow: [
+          { line_no: 1, approver_id: 'c333', approver_role: 'approver', status: 'approved' },
+        ],
+        currentUserId: 'c333',
+      })
+    ).toBe(false)
+  })
+
+  it('is false when doc is not approved', () => {
+    expect(
+      canLastApproverDirectCancelFinalApproval({
+        doc: { status: 'in_review', remarks: null },
+        orderedFlow: [
+          { line_no: 1, approver_id: 'c333', approver_role: 'approver', status: 'approved' },
+        ],
+        currentUserId: 'c333',
+      })
+    ).toBe(false)
   })
 })
 
@@ -303,6 +436,38 @@ describe('formatApprovalProgressChain', () => {
     ).toBe('이기안-김영태')
     expect(formatInboxApproverLineDisplay('이기안', [])).toBe('이기안')
     expect(formatInboxApproverLineDisplay(null, [])).toBe('—')
+  })
+})
+
+describe('getDocDetailOpenHref', () => {
+  const base = { id: 10, doc_type: 'draft_doc' as const, remarks: null as string | null, current_line_no: null as number | null }
+
+  it('기안자·반려면 통합함에서 작성(재상신) URL', () => {
+    expect(getDocDetailOpenHref({ ...base, status: 'rejected', writer_id: 'u1' }, 'u1')).toBe('/approvals/new?resubmit=10')
+  })
+
+  it('기안자·draft면 작성 URL', () => {
+    expect(getDocDetailOpenHref({ ...base, status: 'draft', writer_id: 'u1' }, 'u1')).toBe('/approvals/new?resubmit=10')
+  })
+
+  it('다른 사용자면 view URL', () => {
+    expect(getDocDetailOpenHref({ ...base, status: 'rejected', writer_id: 'u1' }, 'u2')).toBe('/approvals/view/10')
+  })
+
+  it('기안자 출고 반려는 출고 view 유지', () => {
+    expect(
+      getDocDetailOpenHref(
+        {
+          ...base,
+          id: 9,
+          status: 'rejected',
+          doc_type: 'outbound_request',
+          writer_id: 'w',
+          outbound_requests: { id: 33 },
+        },
+        'w'
+      )
+    ).toBe('/outbound-requests/view/33')
   })
 })
 

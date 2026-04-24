@@ -7,6 +7,7 @@ import {
   createOutboundRequestApproval,
   deleteWebOutboundDraft,
   deleteWebOutboundDraftWithRetry,
+  fetchOutboundResubmitBundle,
   fetchOutboundWebDraftBundle,
   getOutboundApprovalCreateErrorMessage,
   syncOutboundWebDraft,
@@ -19,6 +20,7 @@ import { isHtmlContentEffectivelyEmpty } from '@/lib/html-content'
 import { executionDateForDb, isCompleteValidExecutionDate } from '@/lib/execution-date-input'
 import { dismissDraftValidationToast, showDraftValidationError } from '@/lib/draft-form-feedback'
 import { getAllowedWarehouseIds } from '@/lib/permissions'
+import type { ApprovalProcessHistoryRow } from '@/components/approvals/ApprovalProcessHistoryPanel'
 
 type Department = {
   id: number
@@ -36,6 +38,8 @@ export type UseOutboundRequestDraftFormParams = {
   autosaveKey?: string
   enableServerDraft?: boolean
   webDraftRemarksTag?: string
+  /** `/outbound-requests/new?resubmit=` — 회수·반려 출고문서 재상신 */
+  initialResubmitDocId?: number | null
 }
 
 type OutboundDraftAutosavePayloadV3 = {
@@ -69,8 +73,13 @@ function participantsToApprovalOrder(
 }
 
 export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormParams = {}) {
-  const { enabled = true, autosaveKey, enableServerDraft = false, webDraftRemarksTag = WEB_OUTBOUND_DRAFT_REMARKS } =
-    params
+  const {
+    enabled = true,
+    autosaveKey,
+    enableServerDraft = false,
+    webDraftRemarksTag = WEB_OUTBOUND_DRAFT_REMARKS,
+    initialResubmitDocId = null,
+  } = params
 
   const [users, setUsers] = useState<ApprovalDraftAppUser[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
@@ -89,6 +98,11 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
   const [writerId, setWriterId] = useState('')
   const [approvalOrder, setApprovalOrder] = useState<ApprovalOrderItem[]>([makeEmptyApprovalLine()])
   const [serverDraftDocId, setServerDraftDocId] = useState<number | null>(null)
+  const [resubmitDocId, setResubmitDocId] = useState<number | null>(null)
+  const [resubmitHistories, setResubmitHistories] = useState<ApprovalProcessHistoryRow[]>([])
+  const [isResubmitHydrating, setIsResubmitHydrating] = useState(
+    () => initialResubmitDocId != null && initialResubmitDocId > 0
+  )
 
   const [warehouseId, setWarehouseId] = useState('')
   const [selectedItems, setSelectedItems] = useState<OutboundItemLine[]>([{ item_id: '', quantity: 1 }])
@@ -125,7 +139,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         supabase
           .from('app_users')
           .select(
-            'id, login_id, user_name, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate'
+            'id, login_id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate'
           )
           .order('user_name'),
         supabase.from('departments').select('id, dept_name').order('id'),
@@ -171,6 +185,84 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       active = false
     }
   }, [enabled])
+
+  useEffect(() => {
+    if (!enabled) return
+    if (initialResubmitDocId == null || initialResubmitDocId <= 0) {
+      setResubmitHistories([])
+      setIsResubmitHydrating(false)
+      return
+    }
+    if (!writerId || users.length === 0) return
+
+    let cancelled = false
+    setIsResubmitHydrating(true)
+    ;(async () => {
+      dismissDraftValidationToast()
+      setErrorMessage('')
+      try {
+        const bundle = await fetchOutboundResubmitBundle(supabase as any, initialResubmitDocId, writerId)
+        if (cancelled) return
+        const { data: histRows } = await supabase
+          .from('approval_histories')
+          .select('id, action_type, actor_id, action_at, action_comment')
+          .eq('approval_doc_id', initialResubmitDocId)
+          .order('action_at', { ascending: true })
+        if (cancelled) return
+        setResubmitHistories((histRows as ApprovalProcessHistoryRow[]) ?? [])
+        setResubmitDocId(initialResubmitDocId)
+        setServerDraftDocId(null)
+        setTitle(String((bundle.doc as Record<string, unknown>).title ?? ''))
+        setContent(String((bundle.doc as Record<string, unknown>).content ?? ''))
+        setExecutionStartDate(String((bundle.doc as Record<string, unknown>).execution_start_date ?? '').slice(0, 10))
+        setExecutionEndDate(String((bundle.doc as Record<string, unknown>).execution_end_date ?? '').slice(0, 10))
+        setAgreementText(String((bundle.doc as Record<string, unknown>).agreement_text ?? ''))
+        const resolvedWh = warehouses.some((w) => w.id === bundle.warehouseId)
+          ? String(bundle.warehouseId)
+          : String(warehouses[0]?.id ?? '')
+        setWarehouseId(resolvedWh)
+        const nextItems: OutboundItemLine[] =
+          bundle.itemLines.length > 0
+            ? bundle.itemLines.map((row) => ({ item_id: String(row.item_id), quantity: Math.max(1, row.qty) }))
+            : [{ item_id: '', quantity: 1 }]
+        setSelectedItems(nextItems)
+        const nextOrder =
+          bundle.participants.length > 0 ? participantsToApprovalOrder(bundle.participants) : [makeEmptyApprovalLine()]
+        setApprovalOrder(nextOrder)
+        if (autosaveKey && typeof window !== 'undefined') {
+          const payload: OutboundDraftAutosavePayloadV3 = {
+            version: 3,
+            savedAt: new Date().toISOString(),
+            serverDraftDocId: null,
+            title: String((bundle.doc as Record<string, unknown>).title ?? ''),
+            content: String((bundle.doc as Record<string, unknown>).content ?? ''),
+            executionStartDate: String((bundle.doc as Record<string, unknown>).execution_start_date ?? '').slice(0, 10),
+            executionEndDate: String((bundle.doc as Record<string, unknown>).execution_end_date ?? '').slice(0, 10),
+            agreementText: String((bundle.doc as Record<string, unknown>).agreement_text ?? ''),
+            approvalOrder: nextOrder,
+            warehouseId: resolvedWh,
+            selectedItems: nextItems,
+            itemSearchKeyword: '',
+          }
+          localStorage.setItem(autosaveKey, JSON.stringify(payload))
+        }
+        setItemSearchKeyword('')
+        setLastLocalSaveAt(new Date().toISOString())
+        dismissDraftValidationToast()
+        setErrorMessage('')
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : '불러오기에 실패했습니다.'
+        showDraftValidationError(setErrorMessage, msg)
+        setResubmitDocId(null)
+        setResubmitHistories([])
+      } finally {
+        if (!cancelled) setIsResubmitHydrating(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [autosaveKey, enabled, initialResubmitDocId, writerId, users.length, warehouses])
 
   const deptMap = useMemo(() => new Map(departments.map((d) => [d.id, d.dept_name])), [departments])
   const selectedWriter = users.find((u) => u.id === writerId)
@@ -358,6 +450,8 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       setAgreementText('')
       setApprovalOrder([makeEmptyApprovalLine()])
       setServerDraftDocId(null)
+      setResubmitDocId(null)
+      setResubmitHistories([])
       setWarehouseId(String(warehouses[0]?.id ?? ''))
       setSelectedItems([{ item_id: '', quantity: 1 }])
       setItemSearchKeyword('')
@@ -559,6 +653,15 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     }
     setIsDraftDeleting(true)
     try {
+      if (resubmitDocId != null) {
+        const { error } = await supabase.from('approval_docs').delete().eq('id', resubmitDocId).eq('writer_id', writerId)
+        if (error) throw error
+        clearSavedDraft()
+        resetForm({ clearAutosave: false })
+        setResubmitDocId(null)
+        setResubmitHistories([])
+        return { ok: true as const }
+      }
       if (enableServerDraft && serverDraftDocId != null) {
         await deleteWebOutboundDraft(supabase as any, serverDraftDocId, writerId, webDraftRemarksTag)
       }
@@ -572,7 +675,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     } finally {
       setIsDraftDeleting(false)
     }
-  }, [clearSavedDraft, enableServerDraft, resetForm, serverDraftDocId, webDraftRemarksTag, writerId])
+  }, [clearSavedDraft, enableServerDraft, resetForm, resubmitDocId, serverDraftDocId, webDraftRemarksTag, writerId])
 
   const loadServerDraftById = useCallback(
     async (draftDocId: number) => {
@@ -664,7 +767,8 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         cooperationDept: referenceSummary,
         agreementText,
         mode: 'submit',
-        promoteDraftDocId: enableServerDraft ? serverDraftDocId : undefined,
+        promoteDraftDocId: resubmitDocId != null ? undefined : enableServerDraft ? serverDraftDocId : undefined,
+        resubmitFromDocId: resubmitDocId ?? undefined,
         draftRemarksTag: webDraftRemarksTag,
       })
       if (leftoverDraftIdToDelete != null && writerId) {
@@ -683,6 +787,8 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       }
       clearSavedDraft()
       setServerDraftDocId(null)
+      setResubmitDocId(null)
+      setResubmitHistories([])
       setLastLocalSaveAt(null)
       setLastServerSaveAt(null)
       dismissDraftValidationToast()
@@ -708,6 +814,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     selectedItems,
     selectedWriter?.dept_id,
     serverDraftDocId,
+    resubmitDocId,
     title,
     users,
     validateCommon,
@@ -762,6 +869,9 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     lastLocalSaveAt,
     lastServerSaveAt,
     serverDraftDocId,
+    resubmitDocId,
+    resubmitHistories,
+    isResubmitHydrating,
     allowLeavingWithoutBeforeUnloadPrompt,
   }
 }

@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import {
   openApprovalShellPopup,
   openApprovalDocDetailViewPopup,
+  openApprovalDocFromInbox,
   openOutboundRequestDetailViewPopup,
 } from '@/lib/approval-popup'
 
@@ -74,6 +75,46 @@ describe('openApprovalDocDetailViewPopup', () => {
       expect.any(String)
     )
     expect(location.href).toBe('/outbound-requests/view/55')
+  })
+})
+
+describe('openApprovalDocFromInbox', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('기안자·반려면 작성(재상신) 팝업 URL·윈도우 이름', () => {
+    const open = vi.fn().mockReturnValue(null)
+    stubWindowWithOpen(open)
+    openApprovalDocFromInbox(
+      {
+        id: 5,
+        doc_type: 'draft_doc',
+        status: 'rejected',
+        remarks: null,
+        current_line_no: null,
+        writer_id: 'me',
+      },
+      'me'
+    )
+    expect(open).toHaveBeenCalledWith('/approvals/new?resubmit=5', 'approvalResubmit_5', expect.any(String))
+  })
+
+  it('결재 진행 중이면 view', () => {
+    const open = vi.fn().mockReturnValue(null)
+    stubWindowWithOpen(open)
+    openApprovalDocFromInbox(
+      {
+        id: 5,
+        doc_type: 'draft_doc',
+        status: 'in_review',
+        remarks: null,
+        current_line_no: 2,
+        writer_id: 'me',
+      },
+      'me'
+    )
+    expect(open).toHaveBeenCalledWith('/approvals/view/5', 'approvalDocView_5', expect.any(String))
   })
 })
 

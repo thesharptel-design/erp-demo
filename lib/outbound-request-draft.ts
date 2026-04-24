@@ -46,6 +46,8 @@ export type CreateOutboundRequestApprovalInput = {
   promoteDraftDocId?: number | null
   /** `promoteDraftDocId` 검증용 — `syncOutboundWebDraft`의 `remarksTag`와 동일 */
   draftRemarksTag?: string
+  /** 통합함 「수정·재상신」으로 기존 회수/반려 출고문서를 같은 행에서 재상신 */
+  resubmitFromDocId?: number | null
 }
 
 export type CreateOutboundRequestApprovalResult = {
@@ -54,6 +56,9 @@ export type CreateOutboundRequestApprovalResult = {
   outboundRequestId: number
   leftoverDraftIdToDelete: number | null
 }
+
+/** `lib/approval-status` `APPROVAL_RECALL_REMARK_MARKER`와 동일 — 순환 import 방지 */
+const APPROVAL_RECALL_REMARK_MARKER = '기안 회수됨'
 
 export type SyncOutboundWebDraftInput = {
   supabase: SupabaseLike
@@ -296,13 +301,157 @@ async function promoteOutboundWebDraftToSubmitted(
   return { docId, docNo, outboundRequestId: reqId }
 }
 
+async function promoteOutboundResubmitFromComposeDoc(
+  input: CreateOutboundRequestApprovalInput & { resubmitFromDocId: number }
+): Promise<{ docId: number; docNo: string; outboundRequestId: number } | null> {
+  const {
+    supabase,
+    resubmitFromDocId,
+    writerId,
+    title,
+    content,
+    writerDeptId,
+    warehouseId,
+    itemLines,
+    approvalOrder,
+    executionStartDate,
+    executionEndDate,
+    cooperationDept,
+    agreementText,
+    remarks = '웹 출고요청',
+  } = input
+
+  const { data: head, error: selErr } = await supabase
+    .from('approval_docs')
+    .select('id, status, remarks, doc_type, writer_id')
+    .eq('id', resubmitFromDocId)
+    .eq('writer_id', writerId)
+    .single()
+  if (selErr || !head) return null
+  if (head.doc_type !== 'outbound_request') return null
+
+  const remarksStr = String(head.remarks ?? '')
+  const eligible =
+    head.status === 'rejected' ||
+    (head.status === 'draft' &&
+      (remarksStr.includes(APPROVAL_RECALL_REMARK_MARKER) ||
+        remarksStr === WEB_OUTBOUND_DRAFT_REMARKS ||
+        remarksStr === '웹 출고요청'))
+  if (!eligible) return null
+
+  const docNo = await generateNextDroDocNo(supabase as any)
+  const now = new Date().toISOString()
+  const purposePlain = plainTextFromHtml(content).slice(0, 4000) || title.trim()
+  const reqDate = now.slice(0, 10)
+
+  const { data: updated, error: upErr } = await supabase
+    .from('approval_docs')
+    .update({
+      doc_no: docNo,
+      doc_type: 'outbound_request',
+      title: title.trim(),
+      content: content.trim(),
+      dept_id: writerDeptId,
+      execution_start_date: executionStartDate || null,
+      execution_end_date: executionEndDate || null,
+      cooperation_dept: cooperationDept?.trim() || null,
+      agreement_text: agreementText?.trim() || null,
+      status: 'submitted',
+      current_line_no: 1,
+      submitted_at: now,
+      remarks,
+      completed_at: null,
+    })
+    .eq('id', resubmitFromDocId)
+    .eq('writer_id', writerId)
+    .in('status', ['draft', 'rejected'])
+    .eq('doc_type', 'outbound_request')
+    .select('id')
+    .maybeSingle()
+
+  if (upErr) throw upErr
+  if (!updated?.id) return null
+
+  const docId = updated.id as number
+
+  const { error: delLines } = await supabase.from('approval_lines').delete().eq('approval_doc_id', docId)
+  if (delLines) throw delLines
+  const { error: delParts } = await supabase.from('approval_participants').delete().eq('approval_doc_id', docId)
+  if (delParts) throw delParts
+
+  const participants = normalizeParticipants(
+    approvalOrder.map((line) => ({ role: line.role, userId: line.userId }))
+  )
+  const linesToInsert = buildApprovalLines(docId, participants)
+  const participantRows = buildApprovalParticipantsRows(docId, participants)
+
+  if (linesToInsert.length > 0) {
+    const { error: linesError } = await supabase.from('approval_lines').insert(linesToInsert)
+    if (linesError) throw linesError
+  }
+  if (participantRows.length > 0) {
+    const { error: participantsError } = await supabase.from('approval_participants').insert(participantRows)
+    if (participantsError) throw participantsError
+  }
+
+  const { data: reqRow, error: reqFetchErr } = await supabase
+    .from('outbound_requests')
+    .select('id')
+    .eq('approval_doc_id', docId)
+    .maybeSingle()
+  if (reqFetchErr) throw reqFetchErr
+  if (!reqRow?.id) throw new Error('연결된 출고요청 행을 찾을 수 없습니다.')
+
+  const reqId = reqRow.id as number
+
+  const { error: reqUp } = await supabase
+    .from('outbound_requests')
+    .update({
+      req_no: docNo,
+      req_date: reqDate,
+      purpose: purposePlain,
+      status: 'submitted',
+      warehouse_id: warehouseId,
+    })
+    .eq('id', reqId)
+  if (reqUp) throw reqUp
+
+  await upsertOutboundRequestItems(supabase, reqId, itemLines)
+
+  await supabase.from('approval_histories').insert({
+    approval_doc_id: docId,
+    actor_id: writerId,
+    action_type: 'submit',
+    action_comment: '출고요청 재상신',
+    action_at: now,
+  })
+
+  return { docId, docNo, outboundRequestId: reqId }
+}
+
 /**
  * 출고요청 + 결재 마스터(approval_docs doc_type=outbound_request) + 결재선 + 품목행을 한 번에 생성합니다.
  */
 export async function createOutboundRequestApproval(
   input: CreateOutboundRequestApprovalInput
 ): Promise<CreateOutboundRequestApprovalResult> {
-  const { mode, promoteDraftDocId, draftRemarksTag = WEB_OUTBOUND_DRAFT_REMARKS } = input
+  const {
+    mode,
+    promoteDraftDocId,
+    resubmitFromDocId,
+    draftRemarksTag = WEB_OUTBOUND_DRAFT_REMARKS,
+  } = input
+
+  if (mode === 'submit' && resubmitFromDocId != null) {
+    const resubmitted = await promoteOutboundResubmitFromComposeDoc({
+      ...input,
+      resubmitFromDocId,
+    })
+    if (resubmitted) {
+      return { ...resubmitted, leftoverDraftIdToDelete: null }
+    }
+    throw new Error('재상신에 실패했습니다. 문서 상태를 확인한 뒤 다시 시도하세요.')
+  }
 
   if (mode === 'submit' && promoteDraftDocId != null) {
     const promoted = await promoteOutboundWebDraftToSubmitted({
@@ -564,6 +713,77 @@ export async function fetchOutboundWebDraftBundle(
     .from('outbound_requests')
     .select('id, warehouse_id')
     .eq('approval_doc_id', draftDocId)
+    .maybeSingle()
+  if (rErr) throw rErr
+  if (!reqRow?.id) throw new Error('출고요청 본문을 찾을 수 없습니다.')
+
+  const reqId = reqRow.id as number
+  const whId = Number((reqRow as { warehouse_id: number }).warehouse_id)
+
+  const { data: itemRows, error: iErr } = await supabase
+    .from('outbound_request_items')
+    .select('item_id, qty, line_no')
+    .eq('outbound_request_id', reqId)
+    .order('line_no')
+  if (iErr) throw iErr
+
+  const itemLines: OutboundRequestLineInput[] = (itemRows ?? []).map((r: { item_id: number; qty: number }) => ({
+    item_id: Number(r.item_id),
+    qty: Number(r.qty),
+  }))
+
+  return {
+    doc: doc as Record<string, unknown>,
+    participants: (parts ?? []) as Array<{ user_id: string; role: string; line_no: number }>,
+    outboundRequestId: reqId,
+    warehouseId: whId,
+    itemLines,
+  }
+}
+
+export async function fetchOutboundResubmitBundle(
+  supabase: SupabaseLike,
+  resubmitDocId: number,
+  writerId: string
+): Promise<{
+  doc: Record<string, unknown>
+  participants: Array<{ user_id: string; role: string; line_no: number }>
+  outboundRequestId: number
+  warehouseId: number
+  itemLines: OutboundRequestLineInput[]
+}> {
+  const { data: doc, error } = await supabase
+    .from('approval_docs')
+    .select('*')
+    .eq('id', resubmitDocId)
+    .eq('writer_id', writerId)
+    .eq('doc_type', 'outbound_request')
+    .single()
+  if (error || !doc) throw error || new Error('재상신 문서를 불러올 수 없습니다')
+
+  const status = String((doc as { status?: string }).status ?? '')
+  const remarks = String((doc as { remarks?: string | null }).remarks ?? '')
+  const eligible =
+    status === 'rejected' ||
+    (status === 'draft' &&
+      (remarks.includes(APPROVAL_RECALL_REMARK_MARKER) ||
+        remarks === WEB_OUTBOUND_DRAFT_REMARKS ||
+        remarks === '웹 출고요청'))
+  if (!eligible) {
+    throw new Error('회수·반려된 출고 문서만 수정·재상신할 수 있습니다.')
+  }
+
+  const { data: parts, error: pErr } = await supabase
+    .from('approval_participants')
+    .select('user_id, role, line_no')
+    .eq('approval_doc_id', resubmitDocId)
+    .order('line_no')
+  if (pErr) throw pErr
+
+  const { data: reqRow, error: rErr } = await supabase
+    .from('outbound_requests')
+    .select('id, warehouse_id')
+    .eq('approval_doc_id', resubmitDocId)
     .maybeSingle()
   if (rErr) throw rErr
   if (!reqRow?.id) throw new Error('출고요청 본문을 찾을 수 없습니다.')

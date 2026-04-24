@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { selectApprovalOpinionRows } from '@/lib/approval-line-opinions'
+import { APPROVAL_OPINION_EMPTY_DISPLAY, selectApprovalOpinionRows } from '@/lib/approval-line-opinions'
 
 describe('selectApprovalOpinionRows', () => {
   const names = new Map<string, string | null | undefined>([
@@ -7,7 +7,7 @@ describe('selectApprovalOpinionRows', () => {
     ['u2', null],
   ])
 
-  it('keeps only lines with non-empty trimmed opinion, sorted by line_no', () => {
+  it('includes approved lines with empty opinion as [-], sorted by acted_at', () => {
     const rows = selectApprovalOpinionRows(
       [
         {
@@ -40,11 +40,13 @@ describe('selectApprovalOpinionRows', () => {
       ],
       names
     )
-    expect(rows).toHaveLength(1)
-    expect(rows[0].lineNo).toBe(2)
-    expect(rows[0].body).toBe('최종 동의합니다.')
-    expect(rows[0].name).toBe('김결재')
-    expect(rows[0].statusLabel).toBe('승인')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].lineNo).toBe(1)
+    expect(rows[0].body).toBe(APPROVAL_OPINION_EMPTY_DISPLAY)
+    expect(rows[1].lineNo).toBe(2)
+    expect(rows[1].body).toBe('최종 동의합니다.')
+    expect(rows[1].name).toBe('김결재')
+    expect(rows[1].statusLabel).toBe('승인')
   })
 
   it('uses em dash when user name is missing', () => {

@@ -24,6 +24,7 @@ export default function Sidebar() {
   const router = useRouter();
   
   const [userData, setUserData] = useState<SidebarUser | null>(null);
+  const [companyLogoUrl, setCompanyLogoUrl] = useState<string>('');
   const [loading, setLoading] = useState(true);
   
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({
@@ -52,6 +53,19 @@ export default function Sidebar() {
     }
     getUserData();
   }, []);
+
+  useEffect(() => {
+    async function loadCompanyLogo() {
+      const { data } = await supabase
+        .from('my_company_settings')
+        .select('logo_url')
+        .eq('id', 1)
+        .maybeSingle()
+      const logoUrl = typeof data?.logo_url === 'string' ? data.logo_url.trim() : ''
+      setCompanyLogoUrl(logoUrl)
+    }
+    loadCompanyLogo()
+  }, [])
 
   const toggleGroup = (title: string) => {
     setOpenGroups(prev => ({ ...prev, [title]: !prev[title] }));
@@ -123,6 +137,7 @@ export default function Sidebar() {
         { name: '사용자 가입 설정', href: '/admin/user-approvals', perm: 'can_manage_permissions'},
         { name: '사용자 조회 및 설정', href: '/admin/user-permissions', perm: 'can_manage_permissions' },
         { name: '로그인 모니터', href: '/admin/login-audit', perm: 'can_manage_permissions' },
+        { name: '입고 로그 조회', href: '/admin/inbound-logs', perm: 'can_manage_permissions' },
         { name: '창고 관리', href: '/admin/warehouses', perm: 'can_manage_permissions' },
         { name: 'CoA 파일 관리', href: '/admin/coa-files', perm: 'can_manage_permissions' },
         { name: '기업정보 설정', href: '/admin/company-settings', perm: 'can_manage_permissions' },
@@ -133,14 +148,24 @@ export default function Sidebar() {
   return (
     <aside className="w-64 bg-white border-r border-gray-200 h-screen sticky top-0 flex flex-col text-black shadow-sm font-sans z-50">
       <div className="p-6 border-b border-gray-50 bg-gray-50/20 shrink-0">
-        <Link href="/dashboard" className="group">
-          <h1 className="text-2xl font-black tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors uppercase">
-            ERP-<span className="text-blue-600">BIOGTP</span>
-          </h1>
+        <Link href="/dashboard" className="group block">
+          {companyLogoUrl ? (
+            <div className="flex h-24 w-full items-center justify-center">
+              <img
+                src={companyLogoUrl}
+                alt="기업 로고"
+                className="max-h-20 max-w-full object-contain object-center"
+              />
+            </div>
+          ) : (
+            <h1 className="text-center text-2xl font-black tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors uppercase">
+              ERP-<span className="text-blue-600">BIOGTP</span>
+            </h1>
+          )}
         </Link>
         {userData && (
           <div className="mt-2 text-[11px] font-bold text-gray-400 uppercase tracking-tight">
-            {userData.user_name} / {isAdminRole(userData.role_name) ? 'ADMIN' : 'STAFF'}
+            {userData.user_name} / {isAdminRole(userData.role_name) ? 'ADMIN' : 'STAFF'} / {userData.employee_no ?? '-'}
           </div>
         )}
       </div>

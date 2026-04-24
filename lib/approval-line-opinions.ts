@@ -1,4 +1,7 @@
-import { getApprovalRoleLabel } from '@/lib/approval-roles'
+import { getApprovalRoleLabel, isApprovalActionRole } from '@/lib/approval-roles'
+
+/** 본문 아래 결재·협조 의견란: 미입력 시 표시 */
+export const APPROVAL_OPINION_EMPTY_DISPLAY = '[-]'
 
 export type ApprovalOpinionRowVm = {
   id: number
@@ -20,9 +23,16 @@ function lineStatusLabel(status: string) {
   return status || '—'
 }
 
+function isProcessedApprovalLine(l: { status: string; acted_at?: string | null }): boolean {
+  const st = String(l.status || '').toLowerCase()
+  if (st === 'approved' || st === 'rejected' || st === 'cancelled') return true
+  const at = l.acted_at
+  return at != null && String(at).trim() !== ''
+}
+
 /**
- * `approval_lines` 중 `opinion`이 공백만이 아닌 행만 반환합니다 (빈 승인 의견은 제외).
- * 상세 페이지는 `approval_lines`를 `select('*')`로 불러온 뒤 이 함수에 넘기면 저장 값과 일치합니다.
+ * 결재·협조·참조 등 액션 라인 중 **이미 처리된** 행을 반환합니다.
+ * 의견이 비어 있어도 처리일시가 있으면 한 줄로 넣고 `body`는 `[-]`로 둡니다.
  */
 export function selectApprovalOpinionRows(
   lines: Array<{
@@ -37,15 +47,23 @@ export function selectApprovalOpinionRows(
   userNameById: Map<string, string | null | undefined>
 ): ApprovalOpinionRowVm[] {
   return [...lines]
-    .filter((l) => String(l.opinion ?? '').trim())
-    .sort((a, b) => a.line_no - b.line_no)
-    .map((l) => ({
-      id: l.id,
-      lineNo: l.line_no,
-      roleLabel: getApprovalRoleLabel(l.approver_role),
-      name: (userNameById.get(l.approver_id) ?? '').trim() || '—',
-      statusLabel: lineStatusLabel(l.status),
-      body: String(l.opinion).trim(),
-      actedAt: l.acted_at ?? null,
-    }))
+    .filter((l) => isApprovalActionRole(l.approver_role) && isProcessedApprovalLine(l))
+    .sort((a, b) => {
+      const ta = a.acted_at ?? ''
+      const tb = b.acted_at ?? ''
+      if (ta && tb && ta !== tb) return ta.localeCompare(tb)
+      return a.line_no - b.line_no
+    })
+    .map((l) => {
+      const rawOp = String(l.opinion ?? '').trim()
+      return {
+        id: l.id,
+        lineNo: l.line_no,
+        roleLabel: getApprovalRoleLabel(l.approver_role),
+        name: (userNameById.get(l.approver_id) ?? '').trim() || '—',
+        statusLabel: lineStatusLabel(l.status),
+        body: rawOp === '' ? APPROVAL_OPINION_EMPTY_DISPLAY : rawOp,
+        actedAt: l.acted_at ?? null,
+      }
+    })
 }
