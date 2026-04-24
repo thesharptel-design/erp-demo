@@ -2,8 +2,9 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Image } from 'lucide-react'
+import { Image, Trash2 } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { isErpRoleAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
 import {
   BOARD_LIST_TABS,
   boardAnonymousDisplayName,
@@ -49,6 +50,8 @@ export default function GroupwareBoardListPage() {
   const [loading, setLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
   const [hasSession, setHasSession] = useState<boolean | null>(null)
+  /** 게시판 글 삭제 열: role `admin`만 */
+  const [isRoleAdmin, setIsRoleAdmin] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -61,9 +64,13 @@ export default function GroupwareBoardListPage() {
       if (!session) {
         setRows([])
         setAuthorNameById({})
+        setIsRoleAdmin(false)
         setLoading(false)
         return
       }
+
+      const { data: profile } = await supabase.from('app_users').select('role_name').eq('id', session.user.id).single()
+      setIsRoleAdmin(isErpRoleAdminUser(profile as Pick<CurrentUserPermissions, 'role_name'> | null))
 
       let q = supabase
         .from('board_posts')
@@ -119,6 +126,28 @@ export default function GroupwareBoardListPage() {
   const filteredNotice = useMemo(() => rows.filter((r) => r.is_notice), [rows])
   const filteredNormal = useMemo(() => rows.filter((r) => !r.is_notice), [rows])
   const displayRows = useMemo(() => [...filteredNotice, ...filteredNormal], [filteredNotice, filteredNormal])
+
+  const tableColSpan = 6 + (isRoleAdmin ? 1 : 0)
+
+  const deletePostFromList = useCallback(
+    async (postId: string, title: string) => {
+      if (!isRoleAdmin) return
+      if (
+        !confirm(
+          `관리자(role: admin) 권한으로 이 글을 삭제할까요?\n\n「${title.slice(0, 80)}${title.length > 80 ? '…' : ''}」\n(댓글·추천 등 연관 데이터도 함께 삭제될 수 있습니다.)`
+        )
+      ) {
+        return
+      }
+      const { error } = await supabase.from('board_posts').delete().eq('id', postId)
+      if (error) {
+        setErrorMessage(error.message)
+        return
+      }
+      void load()
+    },
+    [isRoleAdmin, load]
+  )
 
   return (
     <div className="mx-auto max-w-6xl space-y-4 p-3 sm:p-4">
@@ -201,18 +230,23 @@ export default function GroupwareBoardListPage() {
               <th scope="col" className="whitespace-nowrap px-2 py-2 text-right font-bold sm:px-3">
                 좋아요
               </th>
+              {isRoleAdmin ? (
+                <th scope="col" className="whitespace-nowrap px-2 py-2 text-center font-bold sm:px-3">
+                  삭제
+                </th>
+              ) : null}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200 text-gray-800">
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-gray-500">
+                <td colSpan={tableColSpan} className="px-3 py-8 text-center text-gray-500">
                   불러오는 중…
                 </td>
               </tr>
             ) : displayRows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-3 py-8 text-center text-gray-500">
+                <td colSpan={tableColSpan} className="px-3 py-8 text-center text-gray-500">
                   게시글이 없습니다.
                 </td>
               </tr>
@@ -265,6 +299,23 @@ export default function GroupwareBoardListPage() {
                     <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-gray-600 sm:px-3">
                       {row.like_count}
                     </td>
+                    {isRoleAdmin ? (
+                      <td className="whitespace-nowrap px-1 py-2 text-center sm:px-2">
+                        <button
+                          type="button"
+                          title="글 삭제 (관리자 role: admin)"
+                          aria-label="글 삭제"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            void deletePostFromList(row.id, row.title)
+                          }}
+                          className="inline-flex items-center justify-center rounded border border-red-200 bg-red-50 p-1.5 text-red-700 hover:bg-red-100"
+                        >
+                          <Trash2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" aria-hidden />
+                        </button>
+                      </td>
+                    ) : null}
                   </tr>
                 )
               })

@@ -3,7 +3,12 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
-import { isApprovalCancellationRemarkProcess } from '@/lib/approval-status';
+import {
+  APPROVAL_RECALL_REMARK_MARKER,
+  canWriterDeleteApprovalDoc,
+  getApprovalDocDetailedStatusPresentation,
+  isApprovalCancellationRemarkProcess,
+} from '@/lib/approval-status';
 import type { ApprovalDocLike, ApprovalLineLike } from '@/lib/approval-status';
 import type { Database } from '@/lib/database.types';
 import { getApprovalRoleLabel, isApprovalActionRole } from '@/lib/approval-roles';
@@ -31,6 +36,7 @@ export default function ApprovalActionButtons({
   const [processing, setProcessing] = useState(false);
   const [opinion, setOpinion] = useState('');
   const [loading, setLoading] = useState(true);
+  const [isApprovalAdmin, setIsApprovalAdmin] = useState(false);
 
   useEffect(() => {
     async function init() {
@@ -38,6 +44,10 @@ export default function ApprovalActionButtons({
       if (session?.user) {
         const { data: profile } = await supabase.from('app_users').select('*').eq('id', session.user.id).single();
         setCurrentUser(profile || session.user);
+        const { data: adminRpc } = await supabase.rpc('is_approval_admin', { p_uid: session.user.id });
+        setIsApprovalAdmin(Boolean(adminRpc));
+      } else {
+        setIsApprovalAdmin(false);
       }
       setLoading(false);
     }
@@ -49,9 +59,6 @@ export default function ApprovalActionButtons({
 
   const myId = String(currentUser.id).toLowerCase();
   const isWriter = String(doc?.writer_id || '').toLowerCase() === myId;
-  const isAdmin =
-    ('role_name' in currentUser && String(currentUser.role_name || '').toUpperCase() === 'ADMIN') ||
-    ('role' in currentUser && currentUser.role === 'admin');
 
   const sortedLines = [...(lines || [])].sort((a, b) => a.line_no - b.line_no);
   const sortedParticipants = [...participants].sort((a, b) => a.line_no - b.line_no);
@@ -110,27 +117,48 @@ export default function ApprovalActionButtons({
     }
   };
 
+  const normalizeLineUpdatePayload = (data: {
+    status: string
+    acted_at?: string | null
+    opinion?: string | null
+  }) => {
+    if (!('opinion' in data)) return data
+    const o = data.opinion
+    const trimmed = o == null ? '' : String(o).trim()
+    return { ...data, opinion: trimmed === '' ? null : trimmed }
+  }
+
   const updateActiveLineStatus = async (
     targetLine: { id?: number; line_no: number },
     data: { status: string; acted_at?: string | null; opinion?: string | null }
   ) => {
+    const payload = normalizeLineUpdatePayload(data)
     if (targetLine.id) {
-      const { error } = await supabase.from('approval_lines').update(data).eq('id', targetLine.id);
-      if (!error) return;
+      const { data: updated, error } = await supabase
+        .from('approval_lines')
+        .update(payload)
+        .eq('id', targetLine.id)
+        .select('id')
+      if (error) throw error
+      if (updated && updated.length > 0) return
     }
-    const { error: fallbackError } = await supabase
+    const { data: fbRows, error: fallbackError } = await supabase
       .from('approval_lines')
-      .update(data)
+      .update(payload)
       .eq('approval_doc_id', doc.id)
-      .eq('line_no', targetLine.line_no);
-    if (fallbackError) throw fallbackError;
+      .eq('line_no', targetLine.line_no)
+      .select('id')
+    if (fallbackError) throw fallbackError
+    if (!fbRows?.length) {
+      throw new Error('결재선 행을 갱신하지 못했습니다. 해당 차수가 없거나 권한이 없습니다.')
+    }
   };
 
   const handleRecall = async () => {
     if (!confirm('기안을 회수하여 임시저장으로 되돌릴까요?')) return;
     setProcessing(true);
     try {
-      await updateDoc({ status: 'draft', remarks: '기안 회수됨', current_line_no: 1 });
+      await updateDoc({ status: 'draft', remarks: APPROVAL_RECALL_REMARK_MARKER, current_line_no: 1 });
       await supabase.from('approval_lines').update({ status: 'waiting', acted_at: null, opinion: null }).eq('approval_doc_id', doc.id);
       alert('회수되었습니다.');
       window.location.reload(); 
@@ -256,29 +284,163 @@ export default function ApprovalActionButtons({
   // 🌟 UI 렌더링 조건 수정
   const isCancellationRelay = isCancellationProcess && !doc?.remarks?.includes('재고환원');
 
+  /** 승인 철회: 본인 차수는 승인됐고, 그 다음 결재·협조·참조 차수는 아직 대기/검토 전인 경우에만 허용 */
+  const flowSorted = [...orderedApprovalFlow].sort((a, b) => a.line_no - b.line_no);
+  const revokableApprovalLine = (() => {
+    if (isCancellationProcess) return undefined;
+    if (doc.status === 'rejected' || doc.status === 'draft') return undefined;
+    if (!['submitted', 'in_review', 'approved'].includes(doc.status)) return undefined;
+    for (let i = flowSorted.length - 1; i >= 0; i -= 1) {
+      const row = flowSorted[i];
+      if (String(row.approver_id).toLowerCase() !== myId) continue;
+      if (row.status !== 'approved') continue;
+      if (!isApprovalActionRole(row.approver_role)) continue;
+      const nextAction = flowSorted.find(
+        (l) => l.line_no > row.line_no && isApprovalActionRole(l.approver_role)
+      );
+      if (!nextAction) continue;
+      if (String(nextAction.approver_id).toLowerCase() === myId) continue;
+      if (nextAction.status !== 'pending' && nextAction.status !== 'waiting') continue;
+      return row;
+    }
+    return undefined;
+  })();
+
+  const actorIdForHistory = 'id' in currentUser ? String(currentUser.id) : myId;
+
+  const handleAdminDeleteDocument = async () => {
+    if (!isApprovalAdmin) return;
+    const statusLabel =
+      getApprovalDocDetailedStatusPresentation(doc, lines).badges[0]?.label ?? String(doc.status ?? '');
+    if (!confirm(`현재 상태: ${statusLabel}입니다. 그래도 삭제하시겠습니까?`)) return;
+    setProcessing(true);
+    try {
+      const { error } = await supabase.rpc('admin_delete_approval_doc', { p_doc_id: doc.id });
+      if (error) throw error;
+      const listHref = doc.doc_type === 'outbound_request' ? '/outbound-requests' : '/approvals';
+      try {
+        if (typeof window !== 'undefined' && window.opener && !window.opener.closed) {
+          window.opener.location.reload();
+        }
+      } catch {
+        /* ignore cross-origin */
+      }
+      router.push(listHref);
+      router.refresh();
+    } catch (e: unknown) {
+      alert('관리자 삭제 오류: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleWriterDeleteDocument = async () => {
+    if (!canWriterDeleteApprovalDoc(doc)) return;
+    if (
+      !confirm(
+        '이 문서를 완전히 삭제합니다. 연결된 출고 요청·결재선·이력도 함께 삭제되며 복구할 수 없습니다. 계속하시겠습니까?'
+      )
+    ) {
+      return;
+    }
+    setProcessing(true);
+    try {
+      const { error } = await supabase.from('approval_docs').delete().eq('id', doc.id);
+      if (error) throw error;
+      const listHref = doc.doc_type === 'outbound_request' ? '/outbound-requests' : '/approvals';
+      try {
+        if (typeof window !== 'undefined' && window.opener && !window.opener.closed) {
+          window.opener.location.reload();
+        }
+      } catch {
+        /* ignore cross-origin */
+      }
+      router.push(listHref);
+      router.refresh();
+    } catch (e: unknown) {
+      alert('삭제 오류: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleApproveRevoke = async () => {
+    if (!revokableApprovalLine) return;
+    if (!opinion.trim()) return alert('승인 철회 사유를 입력해주세요.');
+    if (!confirm('승인을 철회하면 문서가 반려와 동일하게 종료되며, 기안자가 수정·재상신할 수 있습니다. 계속하시겠습니까?')) return;
+    setProcessing(true);
+    const now = new Date().toISOString();
+    try {
+      await updateActiveLineStatus(revokableApprovalLine, {
+        status: 'rejected',
+        acted_at: now,
+        opinion: opinion.trim(),
+      });
+      await updateDoc({
+        status: 'rejected',
+        remarks: '승인 철회',
+      });
+      const { error: histErr } = await supabase.from('approval_histories').insert({
+        approval_doc_id: doc.id,
+        actor_id: actorIdForHistory,
+        action_type: 'approve_revoke',
+        action_comment: opinion.trim(),
+        action_at: now,
+      });
+      if (histErr) throw histErr;
+      alert('승인이 철회되었습니다.');
+      window.location.reload();
+    } catch (e: unknown) {
+      alert('오류: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   return (
     <div className="bg-white border-2 border-gray-100 rounded-3xl p-6 shadow-sm space-y-4">
-      {isAdmin && (
-        <button 
-          onClick={async () => {
-            if(!confirm('관리자 권한으로 강제 취소 및 재고를 환원하시겠습니까?')) return;
-            try {
-              await supabase.rpc('finalize_outbound_cancellation', { p_doc_id: doc.id });
-              await updateDoc({ status: 'rejected', remarks: '관리자 강제취소(재고환원)' });
-              alert('강제 취소 및 환원이 완료되었습니다.');
-              window.location.reload();
-            } catch (e: unknown) {
-              alert('관리자 취소 오류: ' + (e instanceof Error ? e.message : String(e)));
-            }
-          }} 
-          className="w-full border-2 border-gray-900 text-gray-900 py-2 rounded-xl font-bold text-[10px] opacity-30 hover:opacity-100 transition-all uppercase"
-        >
-          Admin Force Cancel & Revert Stock
-        </button>
+      {isApprovalAdmin && (
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={handleAdminDeleteDocument}
+            disabled={processing}
+            className="w-full border-2 border-red-900 bg-red-950 py-2 rounded-xl font-bold text-[10px] text-red-100 opacity-90 hover:opacity-100 transition-all uppercase"
+          >
+            관리자 문서 삭제
+          </button>
+          <button
+            type="button"
+            onClick={async () => {
+              if (!confirm('관리자 권한으로 강제 취소 및 재고를 환원하시겠습니까?')) return;
+              try {
+                await supabase.rpc('finalize_outbound_cancellation', { p_doc_id: doc.id });
+                await updateDoc({ status: 'rejected', remarks: '관리자 강제취소(재고환원)' });
+                alert('강제 취소 및 환원이 완료되었습니다.');
+                window.location.reload();
+              } catch (e: unknown) {
+                alert('관리자 취소 오류: ' + (e instanceof Error ? e.message : String(e)));
+              }
+            }}
+            className="w-full border-2 border-gray-900 text-gray-900 py-2 rounded-xl font-bold text-[10px] opacity-30 hover:opacity-100 transition-all uppercase"
+          >
+            Admin Force Cancel & Revert Stock
+          </button>
+        </div>
       )}
 
       {isWriter && (
         <div className="space-y-2">
+          {canWriterDeleteApprovalDoc(doc) && (
+            <button
+              type="button"
+              onClick={handleWriterDeleteDocument}
+              disabled={processing}
+              className="w-full rounded-2xl border-2 border-red-700 bg-red-50 py-3 text-sm font-black text-red-800 hover:bg-red-100"
+            >
+              문서 삭제
+            </button>
+          )}
           {doc.status === 'submitted' && !isAnyLineApproved && (
             <button onClick={handleRecall} disabled={processing} className="erp-btn-recall w-full py-4 rounded-2xl font-black text-sm bg-orange-500 text-white">기안 회수 (임시저장)</button>
           )}
@@ -293,6 +455,31 @@ export default function ApprovalActionButtons({
           {doc.remarks?.includes('취소승인') && (
             <button onClick={handleFinalizeCancel} disabled={processing} className="w-full bg-red-600 text-white py-5 rounded-2xl font-black text-lg animate-bounce shadow-xl border-b-4 border-red-800">최종 취소 및 재고환원</button>
           )}
+        </div>
+      )}
+
+      {revokableApprovalLine && !isMyTurn && (
+        <div className="pt-2 border-t border-amber-100 space-y-3">
+          <div className="rounded-2xl border-2 border-amber-200 bg-amber-50/80 p-4 space-y-3">
+            <p className="text-center text-[11px] font-black text-amber-900">
+              이전 차수에서 승인한 내역을 철회할 수 있습니다. 다음 결재자가 아직 처리하지 않은 경우에만 가능합니다.
+            </p>
+            <textarea
+              className="w-full bg-white border border-amber-200 rounded-2xl p-3 text-sm font-bold outline-none focus:ring-2 focus:ring-amber-400"
+              placeholder="승인 철회 사유 (필수)"
+              value={opinion}
+              onChange={(e) => setOpinion(e.target.value)}
+              rows={2}
+            />
+            <button
+              type="button"
+              onClick={handleApproveRevoke}
+              disabled={processing}
+              className="w-full border-2 border-amber-700 bg-amber-100 text-amber-950 py-3 rounded-2xl font-black text-sm hover:bg-amber-200 transition-colors"
+            >
+              승인 철회
+            </button>
+          </div>
         </div>
       )}
 

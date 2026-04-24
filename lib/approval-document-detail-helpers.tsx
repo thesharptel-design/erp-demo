@@ -25,6 +25,8 @@ export function getActionLabel(actionType: string) {
       return '승인'
     case 'reject':
       return '반려'
+    case 'approve_revoke':
+      return '승인 철회'
     case 'recall':
       return '회수'
     case 'cancel':

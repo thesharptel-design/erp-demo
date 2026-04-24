@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  canWriterDeleteApprovalDoc,
   formatApprovalProgressChain,
   formatApproverLineNames,
   formatCancellationProgressChain,
@@ -7,8 +8,36 @@ import {
   getApprovalDocDetailedStatusLabel,
   getApprovalDocDetailedStatusPresentation,
   getOutboundRequestRowPresentation,
+  getUnifiedApprovalWorkflowBadges,
   isApprovalCancellationRemarkProcess,
 } from '@/lib/approval-status'
+
+/** Mirrors `ApprovalActionButtons` admin-delete confirm: first badge label only. */
+function adminDeleteConfirmStatusLabel(
+  doc: Parameters<typeof getApprovalDocDetailedStatusPresentation>[0],
+  lines: Parameters<typeof getApprovalDocDetailedStatusPresentation>[1]
+) {
+  return getApprovalDocDetailedStatusPresentation(doc, lines).badges[0]?.label ?? String(doc.status ?? '')
+}
+
+describe('canWriterDeleteApprovalDoc', () => {
+  it('allows delete for rejected', () => {
+    expect(canWriterDeleteApprovalDoc({ status: 'rejected', remarks: '결재자 반려' })).toBe(true)
+  })
+
+  it('allows delete for recall draft', () => {
+    expect(canWriterDeleteApprovalDoc({ status: 'draft', remarks: '기안 회수됨' })).toBe(true)
+  })
+
+  it('denies delete for plain draft', () => {
+    expect(canWriterDeleteApprovalDoc({ status: 'draft', remarks: '웹 등록 문서' })).toBe(false)
+    expect(canWriterDeleteApprovalDoc({ status: 'draft', remarks: null })).toBe(false)
+  })
+
+  it('denies delete for in-flight doc', () => {
+    expect(canWriterDeleteApprovalDoc({ status: 'in_review', remarks: null })).toBe(false)
+  })
+})
 
 describe('isApprovalCancellationRemarkProcess', () => {
   it('detects cancellation flow remarks', () => {
@@ -136,6 +165,99 @@ describe('getApprovalDocDetailedStatusPresentation', () => {
       []
     )
     expect(pres.badges.map((b) => b.label)).toEqual(['상신취소·작성복귀'])
+  })
+
+  it('returns 임시저장 for plain draft', () => {
+    const pres = getApprovalDocDetailedStatusPresentation(
+      { status: 'draft', remarks: '웹 등록 문서', current_line_no: null, doc_type: 'draft_doc' },
+      []
+    )
+    expect(pres.badges.map((b) => b.label)).toEqual(['임시저장'])
+  })
+
+  it('returns 반려 for rejected doc', () => {
+    const pres = getApprovalDocDetailedStatusPresentation(
+      { status: 'rejected', remarks: '결재자 반려', current_line_no: null, doc_type: 'draft_doc' },
+      [{ line_no: 1, approver_role: 'approver', status: 'rejected' }]
+    )
+    expect(pres.badges.map((b) => b.label)).toEqual(['반려'])
+  })
+
+  it('returns 기안자 취소요청 when remarks show cancel request', () => {
+    const pres = getApprovalDocDetailedStatusPresentation(
+      { status: 'approved', remarks: '취소 요청 중', current_line_no: 1, doc_type: 'draft_doc' },
+      []
+    )
+    expect(pres.badges.map((b) => b.label)).toEqual(['기안자 취소요청'])
+  })
+
+  it('uses full remarks as label for 취소완료 relay step without 재고환원', () => {
+    const remarks = '결재자 취소완료'
+    const pres = getApprovalDocDetailedStatusPresentation(
+      { status: 'approved', remarks, current_line_no: 1, doc_type: 'outbound_request' },
+      []
+    )
+    expect(pres.badges.map((b) => b.label)).toEqual([remarks])
+  })
+
+  it('returns 취소 완료됨 for finished stock-return cancellation', () => {
+    const pres = getApprovalDocDetailedStatusPresentation(
+      { status: 'rejected', remarks: '취소 완료(재고환원)', current_line_no: null, doc_type: 'outbound_request' },
+      []
+    )
+    expect(pres.badges.map((b) => b.label)).toEqual(['취소 완료됨'])
+  })
+})
+
+describe('admin delete confirm label (first presentation badge)', () => {
+  it('matches getApprovalDocDetailedStatusLabel when both derive from the same single-badge presentation', () => {
+    const cases: Array<{
+      doc: Parameters<typeof getApprovalDocDetailedStatusPresentation>[0]
+      lines: Parameters<typeof getApprovalDocDetailedStatusPresentation>[1]
+    }> = [
+      { doc: { status: 'draft', remarks: null, current_line_no: null, doc_type: 'draft_doc' }, lines: [] },
+      {
+        doc: { status: 'draft', remarks: '기안 회수됨', current_line_no: null, doc_type: 'draft_doc' },
+        lines: [],
+      },
+      {
+        doc: { status: 'rejected', remarks: '결재자 반려', current_line_no: null, doc_type: 'draft_doc' },
+        lines: [{ line_no: 1, approver_role: 'approver', status: 'rejected' }],
+      },
+      {
+        doc: { status: 'approved', remarks: '취소 요청 중', current_line_no: 1, doc_type: 'draft_doc' },
+        lines: [],
+      },
+      {
+        doc: { status: 'approved', remarks: '결재자 취소완료', current_line_no: 1, doc_type: 'outbound_request' },
+        lines: [],
+      },
+      {
+        doc: { status: 'rejected', remarks: '취소 완료(재고환원)', current_line_no: null, doc_type: 'outbound_request' },
+        lines: [],
+      },
+      {
+        doc: { status: 'in_review', remarks: null, current_line_no: 2, doc_type: 'draft_doc' },
+        lines: [
+          { line_no: 1, approver_role: 'approver', status: 'approved' },
+          { line_no: 2, approver_role: 'approver', status: 'pending' },
+        ],
+      },
+    ]
+    for (const { doc, lines } of cases) {
+      expect(adminDeleteConfirmStatusLabel(doc, lines)).toBe(getApprovalDocDetailedStatusLabel(doc, lines))
+    }
+  })
+
+  it('uses first unified badge same as getUnifiedApprovalWorkflowBadges for non-remark overrides', () => {
+    const doc = { status: 'submitted' as const, remarks: null, current_line_no: 1, doc_type: 'draft_doc' as const }
+    const lines = [
+      { line_no: 1, approver_role: 'approver', status: 'pending' },
+      { line_no: 2, approver_role: 'approver', status: 'waiting' },
+    ]
+    const unified = getUnifiedApprovalWorkflowBadges(doc, lines)[0]?.label
+    expect(adminDeleteConfirmStatusLabel(doc, lines)).toBe(unified)
+    expect(getApprovalDocDetailedStatusPresentation(doc, lines).badges[0]?.label).toBe(unified)
   })
 })
 

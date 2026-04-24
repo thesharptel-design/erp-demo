@@ -1,0 +1,304 @@
+import { notFound, redirect } from 'next/navigation'
+import type { SupabaseClient } from '@supabase/supabase-js'
+import ApprovalActionButtons from '@/components/ApprovalActionButtons'
+import ApprovalDocumentPaperView from '@/components/approvals/ApprovalDocumentPaperView'
+import ApprovalLineOpinionsBlock from '@/components/approvals/ApprovalLineOpinionsBlock'
+import ApprovalShellListNav from '@/components/approvals/ApprovalShellListNav'
+import { selectApprovalOpinionRows } from '@/lib/approval-line-opinions'
+import { getDocTypeLabel, getUnifiedApprovalWorkflowBadges, type ApprovalDocLike } from '@/lib/approval-status'
+import {
+  canViewApprovalDoc,
+  cooperatorReadBadge,
+  getActionLabel,
+  getDetailLineStatus,
+  getIsAdmin,
+} from '@/lib/approval-document-detail-helpers'
+import { formatWriterDepartmentLabel } from '@/lib/approval-draft'
+import { isProbablyRichHtml } from '@/lib/html-content'
+
+type ApprovalDoc = {
+  id: number
+  doc_no: string
+  doc_type: string
+  title: string
+  content: string | null
+  execution_start_date: string | null
+  execution_end_date: string | null
+  cooperation_dept: string | null
+  agreement_text: string | null
+  status: string
+  current_line_no: number | null
+  drafted_at: string
+  submitted_at: string | null
+  completed_at: string | null
+  remarks: string | null
+  writer_id: string
+  dept_id: number
+}
+
+type ApprovalLine = {
+  id: number
+  approval_doc_id: number
+  line_no: number
+  approver_id: string
+  approver_role: string
+  status: string
+  acted_at?: string | null
+  opinion?: string | null
+}
+
+type ApprovalParticipant = {
+  user_id: string
+  role: string
+  line_no: number
+}
+
+type AppUserProfile = {
+  id: string
+  user_name: string | null
+  dept_id: number | null
+  department?: string | null
+  user_kind?: string | null
+  training_program?: string | null
+  school_name?: string | null
+  teacher_subject?: string | null
+  role_name: string | null
+  seal_image_path: string | null
+}
+
+export async function getApprovalDetail(supabase: SupabaseClient, id: string) {
+  const docId = Number(id)
+  if (Number.isNaN(docId)) return null
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  const currentUserId = user?.id ?? null
+
+  const [
+    { data: doc, error: docError },
+    { data: users },
+    { data: departments },
+    { data: lines },
+    { data: histories },
+    { data: participants },
+  ] = await Promise.all([
+    supabase.from('approval_docs').select('*').eq('id', docId).single(),
+    supabase
+      .from('app_users')
+      .select(
+        'id, user_name, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, seal_image_path'
+      ),
+    supabase.from('departments').select('id, dept_name'),
+    supabase.from('approval_lines').select('*').eq('approval_doc_id', docId).order('line_no'),
+    supabase.from('approval_histories').select('*').eq('approval_doc_id', docId).order('action_at'),
+    supabase.from('approval_participants').select('user_id, role, line_no').eq('approval_doc_id', docId).order('line_no'),
+  ])
+
+  if (docError) return null
+
+  const isAdmin = getIsAdmin((users ?? []) as { id: string; role_name?: string | null }[], currentUserId)
+  const canView = canViewApprovalDoc({
+    isAdmin,
+    currentUserId,
+    writerId: (doc as ApprovalDoc).writer_id,
+    lines: lines ?? [],
+    participants: participants ?? [],
+  })
+  if (!canView) return null
+
+  return {
+    doc: doc as ApprovalDoc,
+    users: (users as AppUserProfile[]) ?? [],
+    departments: departments ?? [],
+    lines: (lines as ApprovalLine[]) ?? [],
+    participants: (participants as ApprovalParticipant[]) ?? [],
+    histories: histories ?? [],
+    currentUserId,
+    currentUserRole: isAdmin ? 'admin' : 'user',
+  }
+}
+
+type ShellMode = 'app' | 'bare'
+
+export async function ApprovalDetailShared({
+  supabase,
+  id,
+  shellMode,
+}: {
+  supabase: SupabaseClient
+  id: string
+  shellMode: ShellMode
+}) {
+  const docId = Number(id)
+  if (Number.isNaN(docId)) notFound()
+
+  const { data: head } = await supabase.from('approval_docs').select('id, doc_type').eq('id', docId).single()
+  if (!head) notFound()
+  if (head.doc_type === 'outbound_request') {
+    const { data: req } = await supabase.from('outbound_requests').select('id').eq('approval_doc_id', docId).maybeSingle()
+    if (req?.id != null) {
+      redirect(shellMode === 'bare' ? `/outbound-requests/view/${req.id}` : `/outbound-requests/${req.id}`)
+    }
+  }
+
+  const result = await getApprovalDetail(supabase, id)
+
+  if (!result) notFound()
+
+  const { doc, users, departments, lines, participants, histories } = result
+
+  const userMap = new Map(users.map((u) => [u.id, u]))
+  const deptMap = new Map(departments.map((d: { id: number; dept_name: string }) => [d.id, d.dept_name]))
+  const draftedDate = new Date(doc.drafted_at).toISOString().split('T')[0]
+  const lineMapByNo = new Map(lines.map((line) => [line.line_no, line]))
+  const displayLines =
+    participants.length > 0
+      ? participants.map((participant) => {
+          const matchedLine = lineMapByNo.get(participant.line_no)
+          return {
+            line_no: participant.line_no,
+            approver_id: participant.user_id,
+            approver_role: participant.role,
+            status: matchedLine?.status ?? 'waiting',
+            acted_at: matchedLine?.acted_at ?? null,
+            opinion: matchedLine?.opinion ?? null,
+          }
+        })
+      : lines.map((line) => ({
+          line_no: line.line_no,
+          approver_id: line.approver_id,
+          approver_role: line.approver_role,
+          status: line.status,
+          acted_at: line.acted_at ?? null,
+          opinion: line.opinion ?? null,
+        }))
+  const cooperativeLines = displayLines.filter((line) => line.approver_role === 'cooperator')
+  const writerProfile = userMap.get(doc.writer_id)
+  const sealUrlMap = new Map<string, string>()
+  for (const user of users) {
+    if (!user.seal_image_path) continue
+    const { data } = supabase.storage.from('user-seals').getPublicUrl(user.seal_image_path)
+    if (data?.publicUrl) {
+      sealUrlMap.set(user.id, data.publicUrl)
+    }
+  }
+
+  const writerName = writerProfile?.user_name || doc.writer_id.slice(0, 8)
+  const writerDeptName = formatWriterDepartmentLabel(writerProfile, deptMap, { docDeptId: doc.dept_id })
+  const approverLines = displayLines
+    .filter((line) => line.approver_role === 'approver')
+    .sort((a, b) => a.line_no - b.line_no)
+  const approverColumns = approverLines.map((line) => {
+    const profile = userMap.get(line.approver_id)
+    const userName = profile?.user_name ?? '—'
+    return {
+      id: `${line.line_no}-${line.approver_id}`,
+      name: userName,
+      sealUrl: sealUrlMap.get(line.approver_id) ?? null,
+      status: getDetailLineStatus(line.approver_role, line.status),
+      actedAt: line.acted_at,
+      showSeal: line.status === 'approved',
+    }
+  })
+  const cooperativeRows = cooperativeLines.map((line) => {
+    const profile = userMap.get(line.approver_id)
+    const dept = formatWriterDepartmentLabel(profile, deptMap)
+    return {
+      id: `coop-${line.line_no}-${line.approver_id}`,
+      dept,
+      name: profile?.user_name ?? '—',
+      readStatus: cooperatorReadBadge(line.status),
+      opinionText: line.opinion,
+    }
+  })
+  const reviewerNames = participants
+    .filter((p) => p.role === 'reviewer')
+    .map((p) => userMap.get(p.user_id)?.user_name)
+    .filter(Boolean)
+    .join(', ')
+  const referenceText = reviewerNames || doc.cooperation_dept || ''
+  const contentRaw = doc.content ?? ''
+  const contentIsHtml = Boolean(contentRaw && isProbablyRichHtml(contentRaw))
+
+  const userNameById = new Map(users.map((u) => [u.id, u.user_name]))
+  const workflowDoc: ApprovalDocLike = doc
+  const workflowLines = lines.map((l) => ({
+    line_no: l.line_no,
+    approver_role: l.approver_role,
+    status: l.status,
+  }))
+  const docStatusBand = getUnifiedApprovalWorkflowBadges(workflowDoc, workflowLines)[0]!
+
+  const opinionRows = selectApprovalOpinionRows(
+    lines.map((l) => ({
+      id: l.id,
+      line_no: l.line_no,
+      approver_id: l.approver_id,
+      approver_role: l.approver_role,
+      status: l.status,
+      opinion: l.opinion ?? null,
+      acted_at: l.acted_at ?? null,
+    })),
+    userNameById
+  )
+
+  const listBare = shellMode === 'bare'
+
+  return (
+    <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+      <ApprovalDocumentPaperView
+        docStatusLabel={docStatusBand.label}
+        docStatusClassName={docStatusBand.className}
+        showCancelRequestBadge={Boolean(doc.remarks?.includes('취소 요청'))}
+        writerName={writerName}
+        writerDeptName={writerDeptName}
+        draftedDate={draftedDate}
+        docNo={doc.doc_no}
+        writerSealUrl={sealUrlMap.get(doc.writer_id) ?? null}
+        approverColumns={approverColumns}
+        cooperators={cooperativeRows}
+        docTypeLabel={getDocTypeLabel(doc.doc_type)}
+        referenceText={referenceText}
+        executionText={`${doc.execution_start_date || '-'} ~ ${doc.execution_end_date || '-'}`}
+        agreementText={doc.agreement_text}
+        title={doc.title}
+        contentHtml={contentRaw}
+        contentIsHtml={contentIsHtml}
+        drafterStatus={getDetailLineStatus('drafter', 'approved')}
+        drafterActedAt={doc.drafted_at}
+        afterBodySlot={opinionRows.length > 0 ? <ApprovalLineOpinionsBlock rows={opinionRows} /> : undefined}
+      />
+
+      <div className="mt-6 space-y-4 border-t border-gray-200 pt-4">
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
+          <p className="mb-2 text-[11px] font-black uppercase tracking-wider text-gray-500">최근 처리 이력</p>
+          <div className="flex flex-wrap gap-x-6 gap-y-2">
+            {histories.length === 0 ? (
+              <p className="text-xs font-bold text-gray-400">처리 이력이 없습니다.</p>
+            ) : (
+              histories
+                .slice(-5)
+                .reverse()
+                .map((h: { id: number; action_type: string; actor_id: string; action_at: string }) => (
+                  <div key={h.id} className="min-w-[140px] border-l-2 border-gray-300 pl-2">
+                    <p className="text-xs font-black text-gray-800">{getActionLabel(h.action_type)}</p>
+                    <p className="text-[10px] font-bold text-gray-500">
+                      {userMap.get(h.actor_id)?.user_name ?? '-'} · {new Date(h.action_at).toLocaleString('ko-KR')}
+                    </p>
+                  </div>
+                ))
+            )}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <ApprovalShellListNav href="/approvals" popupListBehavior={listBare}>
+            목록
+          </ApprovalShellListNav>
+          <ApprovalActionButtons doc={doc} lines={lines} participants={participants} />
+        </div>
+      </div>
+    </div>
+  )
+}

@@ -294,7 +294,10 @@ export default function ApprovalDocumentPaperView({
           </div>
           {afterBodySlot ? (
             <>
-              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">의견·반려</div>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">
+                의견
+                <span className="mt-0.5 block text-[10px] font-bold normal-case text-gray-500">결재·협조·참조</span>
+              </div>
               <div className="border-b px-3 py-2">{afterBodySlot}</div>
             </>
           ) : null}

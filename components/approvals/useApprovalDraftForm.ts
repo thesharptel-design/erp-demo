@@ -6,11 +6,13 @@ import {
   buildReferenceSummaryForDraft,
   createApprovalDraft,
   deleteWebGeneralDraft,
+  deleteWebGeneralDraftWithRetry,
   fetchWebGeneralDraftBundle,
   getApprovalCreateErrorMessage,
   syncWebGeneralDraft,
   WEB_GENERAL_DRAFT_REMARKS,
 } from '@/lib/approval-draft'
+import { toast } from 'sonner'
 import type { ApprovalRole } from '@/lib/approval-roles'
 import type { ApprovalDraftAppUser, ApprovalOrderItem } from '@/components/approvals/ApprovalDraftPaper'
 import { isHtmlContentEffectivelyEmpty } from '@/lib/html-content'
@@ -488,7 +490,7 @@ export function useApprovalDraftForm({
 
     setIsSaving(true)
     try {
-      await createApprovalDraft({
+      const { leftoverDraftIdToDelete } = await createApprovalDraft({
         supabase,
         docType,
         title,
@@ -501,12 +503,21 @@ export function useApprovalDraftForm({
         cooperationDept: referenceSummary,
         agreementText,
         remarks,
+        promoteDraftDocId: enableServerDraft ? serverDraftDocId : undefined,
+        draftRemarksTag: webDraftRemarksTag,
       })
-      if (enableServerDraft && serverDraftDocId != null && writerId) {
-        try {
-          await deleteWebGeneralDraft(supabase as any, serverDraftDocId, writerId, webDraftRemarksTag)
-        } catch {
-          /* 상신은 성공했으므로 임시문서 삭제 실패는 무시 */
+      if (leftoverDraftIdToDelete != null && writerId) {
+        const delResult = await deleteWebGeneralDraftWithRetry(
+          supabase as any,
+          leftoverDraftIdToDelete,
+          writerId,
+          webDraftRemarksTag
+        )
+        if (!delResult.ok) {
+          toast.warning(
+            '상신은 완료되었으나 서버 임시 문서 삭제에 실패했습니다. 통합 문서함에서 임시 문서를 직접 삭제해 주세요.',
+            { duration: 10_000 }
+          )
         }
       }
       clearSavedDraft()

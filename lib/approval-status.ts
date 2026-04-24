@@ -46,6 +46,16 @@ export const APPROVAL_INBOX_STATUS_FILTER_OPTIONS = [
   { value: '취소', label: '취소·환원(비고)', keywords: ['취소', '환원'] },
 ]
 
+/** `ApprovalActionButtons` 회수 처리와 동일한 비고 문구 (RLS·삭제 조건과 일치해야 함) */
+export const APPROVAL_RECALL_REMARK_MARKER = '기안 회수됨'
+
+/** 기안자가 문서를 삭제할 수 있는 경우: 반려 종료, 또는 회수로 임시저장 복귀 */
+export function canWriterDeleteApprovalDoc(doc: Pick<ApprovalDocLike, 'status' | 'remarks'>): boolean {
+  if (doc.status === 'rejected') return true
+  if (doc.status === 'draft' && (doc.remarks || '').includes(APPROVAL_RECALL_REMARK_MARKER)) return true
+  return false
+}
+
 export function getDocTypeLabel(docType: string | null | undefined) {
   switch (docType ?? '') {
     case 'draft_doc':
@@ -71,6 +81,16 @@ export function getDocDetailHref(doc: ApprovalDocLike & { id: number }) {
   return `/approvals/${doc.id}`
 }
 
+/** 팝업(베어 셸) 상세: 사이드바 없이 동일 크기 창으로 연다. */
+export function getDocDetailViewHref(doc: ApprovalDocLike & { id: number }) {
+  if (doc.doc_type === 'outbound_request' && doc.outbound_requests) {
+    const rows = Array.isArray(doc.outbound_requests) ? doc.outbound_requests : [doc.outbound_requests]
+    const rid = rows[0]?.id
+    if (rid != null) return `/outbound-requests/view/${rid}`
+  }
+  return `/approvals/view/${doc.id}`
+}
+
 const badge = (classes: string) =>
   `inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-black border ${classes}`
 
@@ -91,7 +111,7 @@ export function getUnifiedApprovalWorkflowBadges(
   const one = (label: string, cls: string): ApprovalStatusBadge[] => [{ label, className: badge(cls) }]
 
   const remarks = doc.remarks || ''
-  if (doc.status === 'draft' && remarks.includes('기안 회수됨')) {
+  if (doc.status === 'draft' && remarks.includes(APPROVAL_RECALL_REMARK_MARKER)) {
     return one('상신취소·작성복귀', 'bg-amber-50 text-amber-900 border-amber-400 font-black')
   }
   if (doc.status === 'draft') return one('임시저장', 'bg-gray-100 text-gray-500 font-bold border-gray-200')
@@ -142,7 +162,7 @@ export function getApprovalDocDetailedStatusLabel(
   lines?: ApprovalWorkflowLineInput[] | null
 ): string {
   const remarks = doc.remarks || ''
-  if (doc.status === 'draft' && remarks.includes('기안 회수됨')) return '상신취소·작성복귀'
+  if (doc.status === 'draft' && remarks.includes(APPROVAL_RECALL_REMARK_MARKER)) return '상신취소·작성복귀'
   if (remarks.includes('취소 요청 중')) return '기안자 취소요청'
   if (remarks.includes('취소완료') && !remarks.includes('재고환원')) return remarks
   if (remarks.includes('취소승인')) return remarks
@@ -162,7 +182,7 @@ export function getApprovalDocDetailedStatusPresentation(
     badges: [{ label, className: badge(className) }],
   })
 
-  if (doc.status === 'draft' && remarks.includes('기안 회수됨')) {
+  if (doc.status === 'draft' && remarks.includes(APPROVAL_RECALL_REMARK_MARKER)) {
     return one('상신취소·작성복귀', 'bg-amber-50 text-amber-900 border-amber-400 font-black')
   }
 
@@ -324,7 +344,7 @@ export function formatApprovalProgressChain(doc: ApprovalProgressDocInput, lines
 
   if (doc.status === 'draft') {
     const r = doc.remarks || ''
-    if (r.includes('기안 회수됨')) return '기안회수(상신취소·작성복귀)'
+    if (r.includes(APPROVAL_RECALL_REMARK_MARKER)) return '기안회수(상신취소·작성복귀)'
     return '임시저장'
   }
 

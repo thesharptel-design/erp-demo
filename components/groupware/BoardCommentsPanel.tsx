@@ -83,6 +83,8 @@ function mapCommentRow(c: Record<string, unknown>): BoardCommentRow {
 type Props = {
   postId: string
   currentUserId: string | null
+  /** role `admin`만: 타인 댓글 삭제 버튼 */
+  isBoardDeleteAdmin?: boolean
   /** true면 작성자명을 DB가 아닌 익명_난수로 표시 */
   anonymousBoard?: boolean
   onMetaChange?: () => void
@@ -91,6 +93,7 @@ type Props = {
 export default function BoardCommentsPanel({
   postId,
   currentUserId,
+  isBoardDeleteAdmin = false,
   anonymousBoard = false,
   onMetaChange,
 }: Props) {
@@ -263,7 +266,8 @@ export default function BoardCommentsPanel({
   }
 
   const removeComment = async (id: number) => {
-    if (!confirm('이 댓글을 삭제할까요?')) return
+    if (!isBoardDeleteAdmin) return
+    if (!confirm('관리자 권한으로 이 댓글을 삭제할까요?')) return
     const hasReplies = commentHasReplies(id, rows)
     if (hasReplies) {
       const { error } = await supabase
@@ -369,28 +373,28 @@ export default function BoardCommentsPanel({
                       </button>
                     ) : null}
                     {isMine ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingId(c.id)
-                            setEditBody(c.body)
-                            setReplyingTo(null)
-                          }}
-                          className="inline-flex items-center gap-0.5 font-bold text-gray-600 hover:text-blue-700"
-                        >
-                          <Pencil className="h-3.5 w-3.5" aria-hidden />
-                          수정
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void removeComment(c.id)}
-                          className="inline-flex items-center gap-0.5 font-bold text-gray-600 hover:text-red-600"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                          삭제
-                        </button>
-                      </>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditingId(c.id)
+                          setEditBody(c.body)
+                          setReplyingTo(null)
+                        }}
+                        className="inline-flex items-center gap-0.5 font-bold text-gray-600 hover:text-blue-700"
+                      >
+                        <Pencil className="h-3.5 w-3.5" aria-hidden />
+                        수정
+                      </button>
+                    ) : null}
+                    {isBoardDeleteAdmin ? (
+                      <button
+                        type="button"
+                        onClick={() => void removeComment(c.id)}
+                        className="inline-flex items-center gap-0.5 font-bold text-gray-600 hover:text-red-600"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                        삭제
+                      </button>
                     ) : null}
                   </div>
                 </div>

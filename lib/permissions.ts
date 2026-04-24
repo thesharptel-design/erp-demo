@@ -52,6 +52,15 @@ export function isSystemAdminUser(
   return Boolean(user.can_manage_permissions) || Boolean(user.can_admin_manage)
 }
 
+/**
+ * ERP에서 role 슬러그가 `admin`인 계정만 (게시판 타인 글/댓글 삭제 등 최고 권한 UI용).
+ * `can_admin_manage` 등 플래그만으로는 true가 되지 않습니다.
+ */
+export function isErpRoleAdminUser(user: Pick<CurrentUserPermissions, 'role_name'> | null): boolean {
+  if (!user) return false
+  return isAdminRole(user.role_name)
+}
+
 /** System Admin 이상: 품목 마스터 등록·수정·삭제 (role admin 또는 시스템 관리 플래그). */
 export function canEditItemsMaster(
   user: Pick<CurrentUserPermissions, 'role_name' | 'can_admin_manage'> | null

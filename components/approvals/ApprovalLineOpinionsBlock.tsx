@@ -3,7 +3,11 @@ import type { ApprovalOpinionRowVm } from '@/lib/approval-line-opinions'
 export default function ApprovalLineOpinionsBlock({ rows }: { rows: ApprovalOpinionRowVm[] }) {
   if (rows.length === 0) return null
   return (
-    <div className="overflow-x-auto rounded-lg border border-gray-300 bg-white">
+    <div className="space-y-2">
+      <p className="text-[11px] font-bold leading-snug text-gray-600">
+        승인·반려·협조·참조 처리 시 입력한 의견만 표시됩니다. (구분: 결재 / 협조 / 참조)
+      </p>
+      <div className="overflow-x-auto rounded-lg border border-gray-300 bg-white">
       <table className="w-full min-w-[520px] border-collapse text-left text-xs">
         <thead className="border-b border-gray-200 bg-gray-100">
           <tr>
@@ -30,6 +34,7 @@ export default function ApprovalLineOpinionsBlock({ rows }: { rows: ApprovalOpin
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   )
 }

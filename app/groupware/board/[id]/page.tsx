@@ -6,6 +6,7 @@ import {
   getBoardCategoryLabel,
   isAnonymousBoardCategory,
 } from '@/lib/groupware-board'
+import { isErpRoleAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
 import { ThumbsUp } from 'lucide-react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -53,6 +54,8 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
   const [loading, setLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+  /** 글/댓글 삭제: role `admin`만 */
+  const [isRoleAdmin, setIsRoleAdmin] = useState(false)
   const [likedPost, setLikedPost] = useState(false)
 
   const resolveId = useCallback(async () => {
@@ -110,6 +113,13 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
           return
         }
         setCurrentUserId(session.user.id)
+
+        const { data: profile } = await supabase
+          .from('app_users')
+          .select('role_name')
+          .eq('id', session.user.id)
+          .single()
+        setIsRoleAdmin(isErpRoleAdminUser(profile as Pick<CurrentUserPermissions, 'role_name'> | null))
 
         const { data: row, error: fetchError } = await supabase
           .from('board_posts')
@@ -206,7 +216,8 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
   }
 
   const deletePost = async () => {
-    if (!post || !confirm('이 글을 삭제할까요?')) return
+    if (!post || !isRoleAdmin) return
+    if (!confirm('이 글을 삭제할까요? (댓글·추천 등 연관 데이터도 함께 삭제될 수 있습니다.)')) return
     const { error } = await supabase.from('board_posts').delete().eq('id', post.id)
     if (error) return
     router.replace('/groupware/board')
@@ -305,17 +316,25 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
           ) : null}
         </div>
 
-        {isAuthor ? (
+        {isAuthor || isRoleAdmin ? (
           <div className="mt-4 flex justify-end gap-3 border-b border-gray-100 pb-4 text-sm">
-            <Link
-              href={`/groupware/board/${post.id}/edit`}
-              className="font-bold text-gray-600 hover:text-blue-600 hover:underline"
-            >
-              수정
-            </Link>
-            <button type="button" onClick={() => void deletePost()} className="font-bold text-gray-600 hover:text-red-600">
-              삭제
-            </button>
+            {isAuthor ? (
+              <Link
+                href={`/groupware/board/${post.id}/edit`}
+                className="font-bold text-gray-600 hover:text-blue-600 hover:underline"
+              >
+                수정
+              </Link>
+            ) : null}
+            {isRoleAdmin ? (
+              <button
+                type="button"
+                onClick={() => void deletePost()}
+                className="font-bold text-gray-600 hover:text-red-600"
+              >
+                삭제
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -332,6 +351,7 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
       <BoardCommentsPanel
         postId={post.id}
         currentUserId={currentUserId}
+        isBoardDeleteAdmin={isRoleAdmin}
         anonymousBoard={isAnonymousBoardCategory(post.category)}
         onMetaChange={() => void refreshPostMeta(post.id)}
       />

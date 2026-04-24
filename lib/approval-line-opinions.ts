@@ -20,7 +20,10 @@ function lineStatusLabel(status: string) {
   return status || '—'
 }
 
-/** `approval_lines` 중 의견(opinion)이 있는 행만, 결재·협조 상세 용지·표시용 */
+/**
+ * `approval_lines` 중 `opinion`이 공백만이 아닌 행만 반환합니다 (빈 승인 의견은 제외).
+ * 상세 페이지는 `approval_lines`를 `select('*')`로 불러온 뒤 이 함수에 넘기면 저장 값과 일치합니다.
+ */
 export function selectApprovalOpinionRows(
   lines: Array<{
     id: number

@@ -28,6 +28,50 @@ export type CreateApprovalDraftInput = {
   cooperationDept?: string
   agreementText?: string
   remarks?: string
+  /** 있으면 새 행을 만들지 않고 해당 임시 행을 상신 상태로 승격합니다. */
+  promoteDraftDocId?: number | null
+  /** `promoteDraftDocId` 검증용 — `syncWebGeneralDraft`에 쓴 `remarksTag`와 동일해야 합니다. */
+  draftRemarksTag?: string
+}
+
+export type CreateApprovalDraftResult = {
+  docId: number
+  docNo: string
+  /** 상신은 신규 insert로 끝났고 예전 임시 행 id가 남아 있으면 삭제 재시도 대상 */
+  leftoverDraftIdToDelete: number | null
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+/**
+ * 상신 직후 임시 행 삭제가 네트워크 등으로 실패할 때 짧게 재시도합니다.
+ */
+export async function deleteWebGeneralDraftWithRetry(
+  supabase: SupabaseLike,
+  draftDocId: number,
+  writerId: string,
+  remarksTag: string = WEB_GENERAL_DRAFT_REMARKS,
+  options?: { maxAttempts?: number; baseDelayMs?: number }
+): Promise<{ ok: true } | { ok: false; error: unknown }> {
+  const maxAttempts = options?.maxAttempts ?? 3
+  const baseDelayMs = options?.baseDelayMs ?? 400
+  let lastError: unknown
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      await deleteWebGeneralDraft(supabase, draftDocId, writerId, remarksTag)
+      return { ok: true }
+    } catch (e) {
+      lastError = e
+      if (attempt < maxAttempts - 1) {
+        await sleep(baseDelayMs * 2 ** attempt)
+      }
+    }
+  }
+  return { ok: false, error: lastError }
 }
 
 export const APPROVAL_DRAFT_DOC_TYPE_OPTIONS = [
@@ -63,7 +107,9 @@ export function getApprovalCreateErrorMessage(error: SupabaseErrorLike) {
   return '기안서 저장 중 오류가 발생했습니다. 다시 시도해 주세요.'
 }
 
-export async function createApprovalDraft(input: CreateApprovalDraftInput) {
+async function insertNewApprovalDocument(
+  input: Omit<CreateApprovalDraftInput, 'promoteDraftDocId' | 'draftRemarksTag'>
+): Promise<{ docId: number; docNo: string }> {
   const {
     supabase,
     docType,
@@ -132,6 +178,144 @@ export async function createApprovalDraft(input: CreateApprovalDraftInput) {
   })
 
   return { docId: docData.id, docNo }
+}
+
+/**
+ * 임시 `approval_docs` 행을 그대로 상신(APP 번호)으로 전환합니다. 조건이 맞지 않으면 `null`.
+ */
+async function promoteWebGeneralDraftToSubmitted(
+  input: CreateApprovalDraftInput & { promoteDraftDocId: number; draftRemarksTag: string }
+): Promise<{ docId: number; docNo: string } | null> {
+  const {
+    supabase,
+    promoteDraftDocId,
+    draftRemarksTag,
+    docType,
+    title,
+    content,
+    writerId,
+    writerDeptId,
+    approvalOrder,
+    executionStartDate,
+    executionEndDate,
+    cooperationDept,
+    agreementText,
+    remarks = '웹 등록 문서',
+  } = input
+
+  const docNo = await generateNextAppDocNo(supabase as any)
+  const now = new Date().toISOString()
+
+  const { data: updated, error: upErr } = await supabase
+    .from('approval_docs')
+    .update({
+      doc_no: docNo,
+      doc_type: docType,
+      title: title.trim(),
+      content: content.trim(),
+      dept_id: writerDeptId,
+      execution_start_date: executionStartDate || null,
+      execution_end_date: executionEndDate || null,
+      cooperation_dept: cooperationDept?.trim() || null,
+      agreement_text: agreementText?.trim() || null,
+      status: 'submitted',
+      current_line_no: 1,
+      submitted_at: now,
+      remarks,
+    })
+    .eq('id', promoteDraftDocId)
+    .eq('writer_id', writerId)
+    .eq('status', 'draft')
+    .eq('remarks', draftRemarksTag)
+    .neq('doc_type', 'outbound_request')
+    .select('id')
+    .maybeSingle()
+
+  if (upErr) throw upErr
+  if (!updated?.id) return null
+
+  const docId = updated.id as number
+
+  const { error: delLines } = await supabase.from('approval_lines').delete().eq('approval_doc_id', docId)
+  if (delLines) throw delLines
+  const { error: delParts } = await supabase.from('approval_participants').delete().eq('approval_doc_id', docId)
+  if (delParts) throw delParts
+
+  const participants = normalizeParticipants(
+    approvalOrder.map((line) => ({ role: line.role, userId: line.userId }))
+  )
+  const linesToInsert = buildApprovalLines(docId, participants)
+  const participantRows = buildApprovalParticipantsRows(docId, participants)
+
+  if (linesToInsert.length > 0) {
+    const { error: linesError } = await supabase.from('approval_lines').insert(linesToInsert)
+    if (linesError) throw linesError
+  }
+  if (participantRows.length > 0) {
+    const { error: participantsError } = await supabase
+      .from('approval_participants')
+      .insert(participantRows)
+    if (participantsError) throw participantsError
+  }
+
+  await supabase.from('approval_histories').insert({
+    approval_doc_id: docId,
+    actor_id: writerId,
+    action_type: 'submit',
+    action_comment: '기안서 상신',
+    action_at: now,
+  })
+
+  return { docId, docNo }
+}
+
+export async function createApprovalDraft(input: CreateApprovalDraftInput): Promise<CreateApprovalDraftResult> {
+  const {
+    promoteDraftDocId,
+    draftRemarksTag = WEB_GENERAL_DRAFT_REMARKS,
+    supabase,
+    docType,
+    title,
+    content,
+    writerId,
+    writerDeptId,
+    approvalOrder,
+    executionStartDate,
+    executionEndDate,
+    cooperationDept,
+    agreementText,
+    remarks,
+  } = input
+
+  const baseInsertInput = {
+    supabase,
+    docType,
+    title,
+    content,
+    writerId,
+    writerDeptId,
+    approvalOrder,
+    executionStartDate,
+    executionEndDate,
+    cooperationDept,
+    agreementText,
+    remarks,
+  }
+
+  if (promoteDraftDocId != null) {
+    const promoted = await promoteWebGeneralDraftToSubmitted({
+      ...input,
+      promoteDraftDocId,
+      draftRemarksTag,
+    })
+    if (promoted) {
+      return { ...promoted, leftoverDraftIdToDelete: null }
+    }
+  }
+
+  const inserted = await insertNewApprovalDocument(baseInsertInput)
+  const leftoverDraftIdToDelete = promoteDraftDocId != null ? promoteDraftDocId : null
+  return { ...inserted, leftoverDraftIdToDelete }
 }
 
 /** 일반기안 웹 임시저장(approval_docs status=draft) 식별용 remarks — 목록/삭제 시 사용 */

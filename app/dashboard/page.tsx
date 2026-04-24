@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { getApprovalDocDetailedStatusPresentation, getDocDetailHref } from '@/lib/approval-status';
+import { openApprovalDocDetailViewPopup } from '@/lib/approval-popup';
+import { getApprovalDocDetailedStatusPresentation, getDocDetailViewHref } from '@/lib/approval-status';
 import type { ApprovalDocLike } from '@/lib/approval-status';
 
 // --- 타입 정의 ---
@@ -290,7 +291,17 @@ export default function DashboardPage() {
                   null
                 )
                 return (
-                  <Link key={doc.id} href={getDocDetailHref(doc as unknown as ApprovalDocLike & { id: number })} className="flex justify-between items-center p-3 rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all">
+                  <a
+                    key={doc.id}
+                    href={getDocDetailViewHref(doc as unknown as ApprovalDocLike & { id: number })}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                      if (e.button !== 0) return;
+                      e.preventDefault();
+                      openApprovalDocDetailViewPopup(doc as unknown as ApprovalDocLike & { id: number });
+                    }}
+                    className="flex justify-between items-center p-3 rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all"
+                  >
                     <div className="min-w-0 flex-1 pr-2">
                       <p className="text-[10px] font-bold text-gray-400 truncate">{doc.doc_no}</p>
                       <p className="text-xs font-black text-gray-900 mt-0.5 truncate">{doc.title}</p>
@@ -302,7 +313,7 @@ export default function DashboardPage() {
                         </span>
                       ))}
                     </div>
-                  </Link>
+                  </a>
                 )
               })
             }

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { formatWriterDepartmentLabel } from '@/lib/approval-draft'
+import { canWriterDeleteApprovalDoc } from '@/lib/approval-status'
 import { normalizeApprovalRole, type ApprovalRole } from '@/lib/approval-roles'
 import { buildApprovalLines, buildApprovalParticipantsRows, normalizeParticipants } from '@/lib/approval-participants'
 import { executionDateForDb, isCompleteValidExecutionDate } from '@/lib/execution-date-input'
@@ -25,6 +26,7 @@ type ApprovalDoc = {
   agreement_text: string | null
   status: string
   current_line_no: number | null
+  remarks: string | null
   writer_id: string
   dept_id: number | null
 }
@@ -128,6 +130,9 @@ export default function EditApprovalPage({
     { id: 'initial-approver', role: 'approver', userId: '' },
   ])
   const [docStatus, setDocStatus] = useState('draft')
+  const [docRemarks, setDocRemarks] = useState<string | null>(null)
+  const [isCurrentWriter, setIsCurrentWriter] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const [users, setUsers] = useState<AppUser[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
@@ -324,6 +329,8 @@ export default function EditApprovalPage({
       setAgreementText(typedDoc.agreement_text ?? '')
       setWriterId(typedDoc.writer_id)
       setDocStatus(typedDoc.status)
+      setDocRemarks(typedDoc.remarks ?? null)
+      setIsCurrentWriter(Boolean(currentUserId && typedDoc.writer_id === currentUserId))
 
       const initialOrderFromParticipants: ApprovalOrderItem[] = (participantRows || [])
         .map((participant, index) => {
@@ -377,6 +384,38 @@ export default function EditApprovalPage({
 
   // draft / rejected 만 수정 가능
   const canEdit = ['draft', 'rejected'].includes(docStatus)
+  const canWriterDelete =
+    isCurrentWriter &&
+    canWriterDeleteApprovalDoc({ status: docStatus, remarks: docRemarks })
+
+  async function handleWriterDelete() {
+    if (!docId || !canWriterDelete) return
+    if (
+      !confirm(
+        '이 기안서를 완전히 삭제합니다. 연결된 출고 요청·결재선·이력도 함께 삭제되며 복구할 수 없습니다. 계속하시겠습니까?'
+      )
+    ) {
+      return
+    }
+    setIsDeleting(true)
+    setErrorMessage('')
+    const { error } = await supabase.from('approval_docs').delete().eq('id', docId)
+    setIsDeleting(false)
+    if (error) {
+      setErrorMessage(getApprovalEditErrorMessage(error))
+      return
+    }
+    const listHref = docType === 'outbound_request' ? '/outbound-requests' : '/approvals'
+    try {
+      if (typeof window !== 'undefined' && window.opener && !window.opener.closed) {
+        window.opener.location.reload()
+      }
+    } catch {
+      /* ignore */
+    }
+    router.push(listHref)
+    router.refresh()
+  }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -760,7 +799,7 @@ export default function EditApprovalPage({
           </div>
         )}
 
-        <div className="mt-6 flex gap-3">
+        <div className="mt-6 flex flex-wrap items-center gap-3">
           <button
             type="submit"
             disabled={isSaving || !canEdit || !writerHasApprovalRight}
@@ -775,6 +814,17 @@ export default function EditApprovalPage({
           >
             상세로
           </Link>
+
+          {canWriterDelete && (
+            <button
+              type="button"
+              onClick={() => void handleWriterDelete()}
+              disabled={isDeleting || isSaving}
+              className="rounded-xl border-2 border-red-700 bg-red-50 px-4 py-2 text-sm font-bold text-red-800 hover:bg-red-100 disabled:opacity-50"
+            >
+              {isDeleting ? '삭제 중…' : '문서 삭제'}
+            </button>
+          )}
         </div>
       </form>
     </div>

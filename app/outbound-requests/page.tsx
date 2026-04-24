@@ -1,11 +1,11 @@
 'use client'
 
-import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/database.types'
 import { getOutboundRequestRowPresentation } from '@/lib/approval-status'
 import type { ApprovalDocLike, ApprovalLineLike } from '@/lib/approval-status'
+import { openApprovalShellPopup, openOutboundRequestDetailViewPopup } from '@/lib/approval-popup'
 
 type OutboundRequestRow = Database['public']['Tables']['outbound_requests']['Row'] & {
   approval_doc?: (ApprovalDocLike & { approval_lines?: ApprovalLineLike[] }) | null
@@ -154,16 +154,7 @@ export default function OutboundRequestsPage() {
   }, [customers])
 
   const openOutboundDraftPopup = useCallback(() => {
-    const popup = window.open(
-      '/outbound-requests/new',
-      'outboundRequestDraftPopup',
-      'popup=yes,width=1280,height=920,scrollbars=yes,resizable=yes'
-    )
-    if (!popup) {
-      window.location.href = '/outbound-requests/new'
-      return
-    }
-    popup.focus()
+    openApprovalShellPopup('/outbound-requests/new', 'outboundRequestDraftPopup')
   }, [])
 
   return (
@@ -230,12 +221,18 @@ export default function OutboundRequestsPage() {
                   return (
                     <tr key={request.id} className="hover:bg-gray-50 transition-colors">
                       <td className="px-5 py-4">
-                        <Link
-                          href={`/outbound-requests/${request.id}`}
+                        <a
+                          href={`/outbound-requests/view/${request.id}`}
+                          onClick={(e) => {
+                            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+                            if (e.button !== 0) return
+                            e.preventDefault()
+                            openOutboundRequestDetailViewPopup(request.id)
+                          }}
                           className="font-black text-blue-600 hover:text-blue-800 transition-colors"
                         >
                           {request.req_no || `REQ-${request.id}`}
-                        </Link>
+                        </a>
                       </td>
                       <td className="px-5 py-4">
                         <span className={statusInfo.className}>{statusInfo.label}</span>

@@ -221,6 +221,14 @@ export type Database = {
         Args: { p_doc_id: number }
         Returns: undefined
       }
+      admin_delete_approval_doc: {
+        Args: { p_doc_id: number }
+        Returns: undefined
+      }
+      is_approval_admin: {
+        Args: { p_uid: string }
+        Returns: boolean
+      }
       next_employee_no: {
         Args: { p_now?: string }
         Returns: string

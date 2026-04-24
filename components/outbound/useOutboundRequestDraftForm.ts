@@ -6,11 +6,13 @@ import { buildReferenceSummaryForDraft, formatWriterDepartmentLabel } from '@/li
 import {
   createOutboundRequestApproval,
   deleteWebOutboundDraft,
+  deleteWebOutboundDraftWithRetry,
   fetchOutboundWebDraftBundle,
   getOutboundApprovalCreateErrorMessage,
   syncOutboundWebDraft,
   WEB_OUTBOUND_DRAFT_REMARKS,
 } from '@/lib/outbound-request-draft'
+import { toast } from 'sonner'
 import type { ApprovalRole } from '@/lib/approval-roles'
 import type { ApprovalDraftAppUser, ApprovalOrderItem } from '@/components/approvals/ApprovalDraftPaper'
 import { isHtmlContentEffectivelyEmpty } from '@/lib/html-content'
@@ -648,7 +650,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         .map((r) => ({ item_id: Number(r.item_id), qty: Number(r.quantity) }))
         .filter((r) => Number.isFinite(r.item_id) && r.item_id > 0 && Number.isFinite(r.qty) && r.qty >= 1)
 
-      const { outboundRequestId } = await createOutboundRequestApproval({
+      const { outboundRequestId, leftoverDraftIdToDelete } = await createOutboundRequestApproval({
         supabase,
         title,
         content,
@@ -662,12 +664,21 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         cooperationDept: referenceSummary,
         agreementText,
         mode: 'submit',
+        promoteDraftDocId: enableServerDraft ? serverDraftDocId : undefined,
+        draftRemarksTag: webDraftRemarksTag,
       })
-      if (enableServerDraft && serverDraftDocId != null && writerId) {
-        try {
-          await deleteWebOutboundDraft(supabase as any, serverDraftDocId, writerId, webDraftRemarksTag)
-        } catch {
-          /* 상신은 성공했으므로 임시문서 삭제 실패는 무시 */
+      if (leftoverDraftIdToDelete != null && writerId) {
+        const delResult = await deleteWebOutboundDraftWithRetry(
+          supabase as any,
+          leftoverDraftIdToDelete,
+          writerId,
+          webDraftRemarksTag
+        )
+        if (!delResult.ok) {
+          toast.warning(
+            '상신은 완료되었으나 서버 임시 문서 삭제에 실패했습니다. 출고 요청 목록에서 임시 문서를 직접 삭제해 주세요.',
+            { duration: 10_000 }
+          )
         }
       }
       clearSavedDraft()

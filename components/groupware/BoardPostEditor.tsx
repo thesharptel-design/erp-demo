@@ -2,7 +2,8 @@
 
 import ApprovalDraftRichEditor from '@/components/approvals/ApprovalDraftRichEditor'
 import { Paperclip } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { useCallback, useState, type ReactNode } from 'react'
+import { supabase } from '@/lib/supabase'
 
 export type BoardCategoryOption = {
   value: string
@@ -26,9 +27,20 @@ export type BoardPostEditorProps = {
   onIsNoticeChange?: (value: boolean) => void
   /** 하단 버튼 줄(저장·취소 등) */
   footer?: ReactNode
+  /** role `admin` 전용: PDF 링크 추출 버튼 표시 */
+  canExtractPdfLinks?: boolean
   titlePlaceholder?: string
   bodyPlaceholder?: string
   categoryLabel?: string
+}
+
+function escapeHtmlText(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
 }
 
 export default function BoardPostEditor({
@@ -44,12 +56,88 @@ export default function BoardPostEditor({
   isNotice,
   onIsNoticeChange,
   footer,
+  canExtractPdfLinks = false,
   titlePlaceholder = '제목을 입력하세요',
   bodyPlaceholder = '내용을 입력하세요',
   categoryLabel = '분류',
 }: BoardPostEditorProps) {
   const categoryId = 'board-post-category'
   const titleId = 'board-post-title'
+  const [isExtractingPdfLinks, setIsExtractingPdfLinks] = useState(false)
+  const [pdfExtractMessage, setPdfExtractMessage] = useState('')
+
+  const handlePdfFilePick = useCallback(
+    async (file: File | null) => {
+      if (!file || disabled || !canExtractPdfLinks) return
+
+      setPdfExtractMessage('')
+      setIsExtractingPdfLinks(true)
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+        if (!session?.access_token) {
+          throw new Error('로그인 세션이 만료되어 PDF 링크 추출을 진행할 수 없습니다.')
+        }
+
+        const formData = new FormData()
+        formData.append('file', file)
+        const response = await fetch('/api/groupware/board/attachments/extract-links', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: formData,
+        })
+        const payload = await response.json().catch(() => null)
+        if (!response.ok) {
+          throw new Error(payload?.error ?? 'PDF 링크 추출에 실패했습니다.')
+        }
+
+        const links = Array.isArray(payload?.links)
+          ? payload.links.filter((v: unknown): v is string => typeof v === 'string' && v.trim().length > 0)
+          : []
+        const linkItems = Array.isArray(payload?.linkItems)
+          ? payload.linkItems
+            .map((item: unknown) => {
+              if (!item || typeof item !== 'object') return null
+              const record = item as { url?: unknown; title?: unknown }
+              if (typeof record.url !== 'string' || !record.url.trim()) return null
+              return {
+                url: record.url,
+                title: typeof record.title === 'string' && record.title.trim() ? record.title.trim() : record.url,
+              }
+            })
+            .filter((item: { url: string; title: string } | null): item is { url: string; title: string } => item != null)
+          : []
+
+        const escapedFileName = escapeHtmlText(file.name)
+        const linksHtml = (linkItems.length || links.length)
+          ? `<ol>${(linkItems.length ? linkItems : links.map((url: string) => ({ url, title: url })))
+            .map((item: { url: string; title: string }) => {
+              const safeUrl = escapeHtmlText(item.url)
+              const safeTitle = escapeHtmlText(item.title)
+              return `<li><a href="${safeUrl}" target="_blank" rel="noopener noreferrer">${safeTitle}</a><br/><span>${safeUrl}</span></li>`
+            })
+            .join('')}</ol>`
+          : '<p>PDF에서 링크를 찾지 못했습니다.</p>'
+
+        const block = `<p><strong>PDF 링크 추출: ${escapedFileName}</strong></p>${linksHtml}`
+        onBodyHtmlChange(bodyHtml.trim() ? `${bodyHtml}${block}` : block)
+        setPdfExtractMessage(
+          links.length
+            ? `PDF 링크 ${links.length}개를 본문에 추가했습니다.`
+            : '추출 가능한 링크가 없어 안내 문구만 추가했습니다.'
+        )
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'PDF 링크 추출 중 오류가 발생했습니다.'
+        setPdfExtractMessage(msg)
+      } finally {
+        setIsExtractingPdfLinks(false)
+      }
+    },
+    [bodyHtml, canExtractPdfLinks, disabled, onBodyHtmlChange]
+  )
 
   return (
     <div className="space-y-3 rounded-lg border border-gray-300 bg-white p-3 shadow-sm sm:p-4">
@@ -113,6 +201,32 @@ export default function BoardPostEditor({
               정보를 주지 않으면 텍스트만 붙여넣어집니다.
             </p>
             <p className="text-gray-500">별도 파일 첨부 UI는 다음 단계에서 연결할 수 있습니다.</p>
+            {canExtractPdfLinks ? (
+              <div className="pt-1">
+                <label className="inline-flex cursor-pointer items-center justify-center rounded border border-gray-300 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-100">
+                  {isExtractingPdfLinks ? 'PDF 링크 추출 중…' : 'PDF 업로드 후 링크 추출'}
+                  <input
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    className="hidden"
+                    disabled={disabled || isExtractingPdfLinks}
+                    onChange={(e) => {
+                      const selected = e.target.files?.[0] ?? null
+                      void handlePdfFilePick(selected)
+                      e.currentTarget.value = ''
+                    }}
+                  />
+                </label>
+                <p className="mt-1 text-[11px] text-gray-500">관리자(role: admin)만 사용할 수 있습니다. PDF 최대 10MB.</p>
+              </div>
+            ) : null}
+            {pdfExtractMessage ? (
+              <p
+                className={`text-[11px] font-bold ${pdfExtractMessage.includes('실패') || pdfExtractMessage.includes('오류') ? 'text-red-600' : 'text-blue-700'}`}
+              >
+                {pdfExtractMessage}
+              </p>
+            ) : null}
           </div>
         </div>
       </div>

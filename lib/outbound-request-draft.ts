@@ -1,5 +1,9 @@
 import { generateNextDroDocNo } from '@/lib/approval-doc-no'
-import { deleteWebGeneralDraft, getApprovalCreateErrorMessage } from '@/lib/approval-draft'
+import {
+  deleteWebGeneralDraft,
+  deleteWebGeneralDraftWithRetry,
+  getApprovalCreateErrorMessage,
+} from '@/lib/approval-draft'
 import type { ApprovalRole } from '@/lib/approval-roles'
 import {
   buildApprovalLines,
@@ -38,6 +42,17 @@ export type CreateOutboundRequestApprovalInput = {
   mode: 'draft' | 'submit'
   /** approval_docs.remarks */
   remarks?: string
+  /** `mode: 'submit'`일 때 임시 행을 신규 insert 대신 승격 */
+  promoteDraftDocId?: number | null
+  /** `promoteDraftDocId` 검증용 — `syncOutboundWebDraft`의 `remarksTag`와 동일 */
+  draftRemarksTag?: string
+}
+
+export type CreateOutboundRequestApprovalResult = {
+  docId: number
+  docNo: string
+  outboundRequestId: number
+  leftoverDraftIdToDelete: number | null
 }
 
 export type SyncOutboundWebDraftInput = {
@@ -57,10 +72,9 @@ export type SyncOutboundWebDraftInput = {
   remarksTag?: string
 }
 
-/**
- * 출고요청 + 결재 마스터(approval_docs doc_type=outbound_request) + 결재선 + 품목행을 한 번에 생성합니다.
- */
-export async function createOutboundRequestApproval(input: CreateOutboundRequestApprovalInput) {
+async function insertNewOutboundRequestApprovalBundle(
+  input: CreateOutboundRequestApprovalInput
+): Promise<{ docId: number; docNo: string; outboundRequestId: number }> {
   const {
     supabase,
     title,
@@ -169,6 +183,151 @@ export async function createOutboundRequestApproval(input: CreateOutboundRequest
   }
 
   return { docId, docNo, outboundRequestId: reqId }
+}
+
+async function promoteOutboundWebDraftToSubmitted(
+  input: CreateOutboundRequestApprovalInput & { promoteDraftDocId: number; draftRemarksTag: string }
+): Promise<{ docId: number; docNo: string; outboundRequestId: number } | null> {
+  const {
+    supabase,
+    promoteDraftDocId,
+    draftRemarksTag,
+    title,
+    content,
+    writerId,
+    writerDeptId,
+    warehouseId,
+    itemLines,
+    approvalOrder,
+    executionStartDate,
+    executionEndDate,
+    cooperationDept,
+    agreementText,
+    remarks = '웹 출고요청',
+  } = input
+
+  const docNo = await generateNextDroDocNo(supabase as any)
+  const now = new Date().toISOString()
+  const purposePlain = plainTextFromHtml(content).slice(0, 4000) || title.trim()
+  const reqDate = now.slice(0, 10)
+
+  const { data: updated, error: upErr } = await supabase
+    .from('approval_docs')
+    .update({
+      doc_no: docNo,
+      doc_type: 'outbound_request',
+      title: title.trim(),
+      content: content.trim(),
+      dept_id: writerDeptId,
+      execution_start_date: executionStartDate || null,
+      execution_end_date: executionEndDate || null,
+      cooperation_dept: cooperationDept?.trim() || null,
+      agreement_text: agreementText?.trim() || null,
+      status: 'submitted',
+      current_line_no: 1,
+      submitted_at: now,
+      remarks,
+    })
+    .eq('id', promoteDraftDocId)
+    .eq('writer_id', writerId)
+    .eq('status', 'draft')
+    .eq('remarks', draftRemarksTag)
+    .eq('doc_type', 'outbound_request')
+    .select('id')
+    .maybeSingle()
+
+  if (upErr) throw upErr
+  if (!updated?.id) return null
+
+  const docId = updated.id as number
+
+  const { error: delLines } = await supabase.from('approval_lines').delete().eq('approval_doc_id', docId)
+  if (delLines) throw delLines
+  const { error: delParts } = await supabase.from('approval_participants').delete().eq('approval_doc_id', docId)
+  if (delParts) throw delParts
+
+  const participants = normalizeParticipants(
+    approvalOrder.map((line) => ({ role: line.role, userId: line.userId }))
+  )
+  const linesToInsert = buildApprovalLines(docId, participants)
+  const participantRows = buildApprovalParticipantsRows(docId, participants)
+
+  if (linesToInsert.length > 0) {
+    const { error: linesError } = await supabase.from('approval_lines').insert(linesToInsert)
+    if (linesError) throw linesError
+  }
+  if (participantRows.length > 0) {
+    const { error: participantsError } = await supabase.from('approval_participants').insert(participantRows)
+    if (participantsError) throw participantsError
+  }
+
+  const { data: reqRow, error: reqFetchErr } = await supabase
+    .from('outbound_requests')
+    .select('id')
+    .eq('approval_doc_id', docId)
+    .maybeSingle()
+  if (reqFetchErr) throw reqFetchErr
+  if (!reqRow?.id) throw new Error('연결된 출고요청 행을 찾을 수 없습니다.')
+
+  const reqId = reqRow.id as number
+
+  const { error: reqUp } = await supabase
+    .from('outbound_requests')
+    .update({
+      req_no: docNo,
+      req_date: reqDate,
+      purpose: purposePlain,
+      status: 'submitted',
+      warehouse_id: warehouseId,
+    })
+    .eq('id', reqId)
+  if (reqUp) throw reqUp
+
+  await upsertOutboundRequestItems(supabase, reqId, itemLines)
+
+  await supabase.from('approval_histories').insert({
+    approval_doc_id: docId,
+    actor_id: writerId,
+    action_type: 'submit',
+    action_comment: '출고요청 상신',
+    action_at: now,
+  })
+
+  return { docId, docNo, outboundRequestId: reqId }
+}
+
+/**
+ * 출고요청 + 결재 마스터(approval_docs doc_type=outbound_request) + 결재선 + 품목행을 한 번에 생성합니다.
+ */
+export async function createOutboundRequestApproval(
+  input: CreateOutboundRequestApprovalInput
+): Promise<CreateOutboundRequestApprovalResult> {
+  const { mode, promoteDraftDocId, draftRemarksTag = WEB_OUTBOUND_DRAFT_REMARKS } = input
+
+  if (mode === 'submit' && promoteDraftDocId != null) {
+    const promoted = await promoteOutboundWebDraftToSubmitted({
+      ...input,
+      promoteDraftDocId,
+      draftRemarksTag,
+    })
+    if (promoted) {
+      return { ...promoted, leftoverDraftIdToDelete: null }
+    }
+  }
+
+  const inserted = await insertNewOutboundRequestApprovalBundle(input)
+  const leftoverDraftIdToDelete = mode === 'submit' && promoteDraftDocId != null ? promoteDraftDocId : null
+  return { ...inserted, leftoverDraftIdToDelete }
+}
+
+export async function deleteWebOutboundDraftWithRetry(
+  supabase: SupabaseLike,
+  draftDocId: number,
+  writerId: string,
+  remarksTag: string = WEB_OUTBOUND_DRAFT_REMARKS,
+  options?: { maxAttempts?: number; baseDelayMs?: number }
+) {
+  return deleteWebGeneralDraftWithRetry(supabase, draftDocId, writerId, remarksTag, options)
 }
 
 async function upsertOutboundRequestItems(

@@ -1,16 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
 import SearchableCombobox from '@/components/SearchableCombobox';
 import { APPROVAL_DRAFT_DOC_TYPE_OPTIONS } from '@/lib/approval-draft';
+import { openApprovalShellPopup, openApprovalDocDetailViewPopup } from '@/lib/approval-popup';
 import {
   APPROVAL_INBOX_STATUS_FILTER_OPTIONS,
   formatApprovalProgressChain,
   formatInboxApproverLineDisplay,
   getApprovalDocDetailedStatusPresentation,
-  getDocDetailHref,
+  getDocDetailViewHref,
   getDocTypeLabel,
   getWriterName,
 } from '@/lib/approval-status';
@@ -379,31 +379,11 @@ export default function ApprovalsPage() {
   };
 
   const openDraftPopup = () => {
-    const popup = window.open(
-      '/approvals/new',
-      'approvalDraftPopup',
-      'popup=yes,width=1280,height=920,scrollbars=yes,resizable=yes'
-    );
-
-    if (!popup) {
-      window.location.href = '/approvals/new';
-      return;
-    }
-    popup.focus();
+    openApprovalShellPopup('/approvals/new', 'approvalDraftPopup');
   };
 
   const openOutboundDraftPopup = () => {
-    const popup = window.open(
-      '/outbound-requests/new',
-      'outboundRequestDraftPopup',
-      'popup=yes,width=1280,height=920,scrollbars=yes,resizable=yes'
-    );
-
-    if (!popup) {
-      window.location.href = '/outbound-requests/new';
-      return;
-    }
-    popup.focus();
+    openApprovalShellPopup('/outbound-requests/new', 'outboundRequestDraftPopup');
   };
 
   const colCount = 7;
@@ -661,13 +641,19 @@ export default function ApprovalsPage() {
                   return (
                     <tr key={doc.id} className="group transition-colors hover:bg-gray-50">
                       <td className="px-4 py-4 font-black">
-                        <Link
-                          href={getDocDetailHref(doc)}
+                        <a
+                          href={getDocDetailViewHref(doc)}
+                          onClick={(e) => {
+                            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                            if (e.button !== 0) return;
+                            e.preventDefault();
+                            openApprovalDocDetailViewPopup(doc);
+                          }}
                           className="block min-w-0 truncate text-blue-600 hover:underline"
                           title={inboxDisplayText(doc.doc_no)}
                         >
                           {inboxDisplayText(doc.doc_no)}
-                        </Link>
+                        </a>
                       </td>
                       <td className="px-2 py-4 text-center text-xs font-bold text-gray-600">
                         <InboxTruncated text={typeLabel} className="mx-auto max-w-full" />
