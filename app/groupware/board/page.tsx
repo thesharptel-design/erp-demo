@@ -10,6 +10,8 @@ import {
   boardAnonymousDisplayName,
   getBoardCategoryLabel,
   isAnonymousBoardCategory,
+  resolveBoardAuthorMeta,
+  type BoardAuthorMeta,
   type BoardCategoryValue,
 } from '@/lib/groupware-board'
 
@@ -26,47 +28,17 @@ type BoardPostListRow = {
   author_id: string
 }
 
+type BoardSequenceRow = {
+  id: string
+  created_at: string
+}
+
 type AppUserProfileRow = {
   id: string
   user_name: string | null
   user_kind: 'student' | 'teacher' | 'staff' | null
   department: string | null
-  role_name: string | null
   can_manage_permissions: boolean | null
-  can_admin_manage: boolean | null
-}
-
-type AuthorProfileMeta = {
-  name: string
-  icon: string
-}
-
-function resolveStaffIconByDepartment(department: string | null | undefined): string {
-  const dept = String(department ?? '').trim()
-  if (!dept) return '👔'
-  if (dept.includes('영업') || dept.includes('구매')) return '💼'
-  if (dept.includes('자재')) return '📦'
-  if (dept.includes('생산')) return '🏭'
-  if (dept.includes('품질') || dept.toUpperCase().includes('QC')) return '🧪'
-  return '👔'
-}
-
-function resolveAuthorMeta(profile: AppUserProfileRow): AuthorProfileMeta {
-  const isSystemAdmin = Boolean(profile.can_manage_permissions)
-
-  if (isSystemAdmin) {
-    return { name: profile.user_name?.trim() || '—', icon: '🛡️' }
-  }
-
-  if (profile.user_kind === 'student') {
-    return { name: profile.user_name?.trim() || '—', icon: '🎓' }
-  }
-
-  if (profile.user_kind === 'teacher') {
-    return { name: profile.user_name?.trim() || '—', icon: '🧑‍🏫' }
-  }
-
-  return { name: profile.user_name?.trim() || '—', icon: resolveStaffIconByDepartment(profile.department) }
 }
 
 function formatListDate(iso: string): string {
@@ -88,7 +60,8 @@ function formatListDate(iso: string): string {
 export default function GroupwareBoardListPage() {
   const [tab, setTab] = useState<string>('')
   const [rows, setRows] = useState<BoardPostListRow[]>([])
-  const [authorMetaById, setAuthorMetaById] = useState<Record<string, AuthorProfileMeta>>({})
+  const [postSequenceById, setPostSequenceById] = useState<Record<string, number>>({})
+  const [authorMetaById, setAuthorMetaById] = useState<Record<string, BoardAuthorMeta>>({})
   const [loading, setLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
   const [hasSession, setHasSession] = useState<boolean | null>(null)
@@ -105,6 +78,7 @@ export default function GroupwareBoardListPage() {
       setHasSession(Boolean(session))
       if (!session) {
         setRows([])
+        setPostSequenceById({})
         setAuthorMetaById({})
         setIsRoleAdmin(false)
         setLoading(false)
@@ -121,6 +95,20 @@ export default function GroupwareBoardListPage() {
           profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
         )
       )
+
+      const { data: sequenceRows, error: sequenceError } = await supabase
+        .from('board_posts')
+        .select('id, created_at')
+        .order('created_at', { ascending: true })
+        .order('id', { ascending: true })
+
+      if (sequenceError) throw sequenceError
+
+      const sequenceMap: Record<string, number> = {}
+      ;((sequenceRows ?? []) as BoardSequenceRow[]).forEach((item, index) => {
+        sequenceMap[item.id] = index + 1
+      })
+      setPostSequenceById(sequenceMap)
 
       let q = supabase
         .from('board_posts')
@@ -149,20 +137,21 @@ export default function GroupwareBoardListPage() {
 
       const { data: users, error: usersError } = await supabase
         .from('app_users')
-        .select('id, user_name, user_kind, department, role_name, can_manage_permissions, can_admin_manage')
+        .select('id, user_name, user_kind, department, can_manage_permissions')
         .in('id', ids)
 
       if (usersError) throw usersError
 
-      const map: Record<string, AuthorProfileMeta> = {}
+      const map: Record<string, BoardAuthorMeta> = {}
       for (const u of (users ?? []) as AppUserProfileRow[]) {
-        map[u.id] = resolveAuthorMeta(u)
+        map[u.id] = resolveBoardAuthorMeta(u)
       }
       setAuthorMetaById(map)
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : '목록을 불러오지 못했습니다.'
       setErrorMessage(msg)
       setRows([])
+      setPostSequenceById({})
       setAuthorMetaById({})
     } finally {
       setLoading(false)
@@ -177,7 +166,7 @@ export default function GroupwareBoardListPage() {
   const filteredNormal = useMemo(() => rows.filter((r) => !r.is_notice), [rows])
   const displayRows = useMemo(() => [...filteredNotice, ...filteredNormal], [filteredNotice, filteredNormal])
 
-  const tableColSpan = 6 + (isRoleAdmin ? 1 : 0)
+  const tableColSpan = 7 + (isRoleAdmin ? 1 : 0)
 
   const deletePostFromList = useCallback(
     async (postId: string, title: string) => {
@@ -257,6 +246,9 @@ export default function GroupwareBoardListPage() {
         <table className="min-w-[760px] w-full border-collapse text-left text-xs sm:text-sm">
           <thead>
             <tr className="border-b border-gray-200 bg-gray-50 text-gray-600">
+              <th scope="col" className="whitespace-nowrap px-2 py-2 text-right font-bold sm:px-3">
+                번호
+              </th>
               <th scope="col" className="whitespace-nowrap px-2 py-2 font-bold sm:px-3">
                 분류
               </th>
@@ -304,12 +296,16 @@ export default function GroupwareBoardListPage() {
               displayRows.map((row) => {
                 const notice = row.is_notice
                 const catLabel = getBoardCategoryLabel(row.category)
+                const postNo = postSequenceById[row.id]
                 const authorMeta = authorMetaById[row.author_id] ?? { name: '—', icon: '👤' }
                 const author = isAnonymousBoardCategory(row.category)
                   ? boardAnonymousDisplayName(row.author_id, row.id)
                   : `${authorMeta.icon} ${authorMeta.name}`
                 return (
                   <tr key={row.id} className="hover:bg-gray-50/80">
+                    <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-gray-600 sm:px-3">
+                      {postNo ?? '-'}
+                    </td>
                     <td className="whitespace-nowrap px-2 py-2 sm:px-3">
                       <span
                         className={

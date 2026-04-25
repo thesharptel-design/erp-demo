@@ -27,7 +27,7 @@ function normalizePermissionPayload(raw: Record<string, unknown>) {
   const canMaterialManage = asBool(raw.can_material_manage) || asBool(raw.can_receive_stock);
   const canProductionManage = asBool(raw.can_production_manage) || asBool(raw.can_prod_complete);
   const canQcManage = asBool(raw.can_qc_manage) || asBool(raw.can_approve);
-  const canAdminManage = asBool(raw.can_admin_manage) || asBool(raw.can_manage_permissions);
+  const canAdminManage = false;
   const canManageMaster = asBool(raw.can_manage_master);
   const canManagePermissions = asBool(raw.can_manage_permissions);
 

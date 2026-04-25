@@ -5,6 +5,7 @@ import {
   boardAnonymousDisplayName,
   getBoardCategoryLabel,
   isAnonymousBoardCategory,
+  resolveBoardAuthorMeta,
 } from '@/lib/groupware-board'
 import { isErpRoleAdminUser, isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
 import { ThumbsUp } from 'lucide-react'
@@ -31,7 +32,13 @@ type BoardPostDetail = {
   has_attachments: boolean
 }
 
-type AuthorRow = { id: string; user_name: string | null }
+type AuthorRow = {
+  id: string
+  user_name: string | null
+  user_kind: 'student' | 'teacher' | 'staff' | null
+  department: string | null
+  can_manage_permissions: boolean | null
+}
 
 function formatDetailDate(iso: string): string {
   try {
@@ -166,12 +173,13 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
         } else {
           const { data: author } = await supabase
             .from('app_users')
-            .select('id, user_name')
+            .select('id, user_name, user_kind, department, can_manage_permissions')
             .eq('id', typed.author_id)
             .maybeSingle()
           if (cancelled) return
           if (author) {
-            setAuthorName((author as AuthorRow).user_name?.trim() || '—')
+            const meta = resolveBoardAuthorMeta(author as AuthorRow)
+            setAuthorName(`${meta.icon} ${meta.name}`)
           } else {
             setAuthorName('—')
           }

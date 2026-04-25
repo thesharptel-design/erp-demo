@@ -86,15 +86,15 @@ const USER_KIND_OPTIONS: { value: UserKind; label: string }[] = [
   { value: 'teacher', label: '교사' },
   { value: 'student', label: '학생' },
 ];
-const PERMISSION_FIELDS: { key: PermissionKey; label: string }[] = [
+const PERMISSION_FIELDS: { key: PermissionKey; label: string; disabled?: boolean }[] = [
   { key: 'can_manage_master', label: '기준정보' },
   { key: 'can_sales_manage', label: '영업/구매' },
   { key: 'can_material_manage', label: '자재/재고' },
   { key: 'can_production_manage', label: '생산/BOM' },
   { key: 'can_qc_manage', label: '품질(QC)' },
-  { key: 'can_admin_manage', label: '경영/관리' },
+  { key: 'can_admin_manage', label: '경영/관리 (미사용)', disabled: true },
   { key: 'can_manage_permissions', label: '시스템관리' },
-  { key: 'can_approval_participate', label: '결재 참여' },
+  { key: 'can_approval_participate', label: '결재권권한' },
 ];
 
 const EMPTY_EDIT_FORM: EditForm = {
@@ -384,6 +384,7 @@ export default function UserPermissionsPage() {
   };
 
   const togglePermission = async (user: AppUser, key: PermissionKey) => {
+    if (key === 'can_admin_manage') return;
     setSavingUserId(user.id);
     try {
       const nextPermissions: Record<PermissionKey, boolean> = {
@@ -630,8 +631,7 @@ export default function UserPermissionsPage() {
                 const assignedWarehouseIds = userWarehouseMap[user.id] ?? [];
                 const isSystemAdmin =
                   user.role_name?.toLowerCase() === 'admin' ||
-                  user.can_manage_permissions === true ||
-                  user.can_admin_manage === true;
+                  user.can_manage_permissions === true;
                 return (
                   <tr key={user.id} className={`align-top hover:bg-blue-50/40 ${!user.is_active ? 'bg-gray-50 opacity-70' : ''}`}>
                     <td className="px-3 py-3 text-center">
@@ -693,7 +693,7 @@ export default function UserPermissionsPage() {
                                 <input
                                   type="checkbox"
                                   checked={checked}
-                                  disabled={isSaving}
+                                  disabled={isSaving || field.disabled}
                                   onChange={() => void togglePermission(user, field.key)}
                                   className="h-4 w-4 cursor-pointer accent-black disabled:cursor-not-allowed"
                                 />
@@ -942,7 +942,7 @@ export default function UserPermissionsPage() {
 
               <div className="rounded-xl border-2 border-gray-100 p-4">
                 <label className="flex items-center justify-between text-sm font-black">
-                  <span>결재 참여 가능</span>
+                  <span>결재권권한</span>
                   <input
                     type="checkbox"
                     checked={editForm.can_approval_participate}

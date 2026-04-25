@@ -22,6 +22,18 @@ export type BoardCategoryValue =
   | typeof BOARD_CATEGORY_VALUE_QNA
   | typeof BOARD_CATEGORY_VALUE_ANONYMOUS
 
+export type BoardAuthorProfileLike = {
+  user_name: string | null
+  user_kind: 'student' | 'teacher' | 'staff' | null
+  department: string | null
+  can_manage_permissions: boolean | null
+}
+
+export type BoardAuthorMeta = {
+  name: string
+  icon: string
+}
+
 /** 글쓰기·수정 분류 순서: 일반 → 자유 → 사내소식 → ERP → Q&A → 익명 */
 export const BOARD_CATEGORY_OPTIONS: { value: BoardCategoryValue; label: string }[] = [
   { value: BOARD_CATEGORY_VALUE_GENERAL, label: '일반' },
@@ -62,4 +74,33 @@ export function boardAnonymousDisplayName(authorId: string, postId: string): str
 
 export function isAnonymousBoardCategory(category: string | null | undefined): boolean {
   return category === BOARD_CATEGORY_VALUE_ANONYMOUS
+}
+
+export function resolveStaffIconByDepartment(department: string | null | undefined): string {
+  const dept = String(department ?? '').trim()
+  if (!dept) return '👔'
+  if (dept.includes('영업') || dept.includes('구매')) return '💼'
+  if (dept.includes('자재')) return '📦'
+  if (dept.includes('생산')) return '🏭'
+  if (dept.includes('품질') || dept.toUpperCase().includes('QC')) return '🧪'
+  return '👔'
+}
+
+export function resolveBoardAuthorMeta(profile: BoardAuthorProfileLike): BoardAuthorMeta {
+  if (Boolean(profile.can_manage_permissions)) {
+    return { name: profile.user_name?.trim() || '—', icon: '🛡️' }
+  }
+
+  if (profile.user_kind === 'student') {
+    return { name: profile.user_name?.trim() || '—', icon: '🎓' }
+  }
+
+  if (profile.user_kind === 'teacher') {
+    return { name: profile.user_name?.trim() || '—', icon: '🧑‍🏫' }
+  }
+
+  return {
+    name: profile.user_name?.trim() || '—',
+    icon: resolveStaffIconByDepartment(profile.department),
+  }
 }

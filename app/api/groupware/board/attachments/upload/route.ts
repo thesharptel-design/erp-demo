@@ -9,7 +9,6 @@ const PDF_MIME_TYPES = new Set(['application/pdf'])
 type AppUserProfile = {
   role_name: string | null
   can_manage_permissions?: boolean | null
-  can_admin_manage?: boolean | null
 }
 
 function sanitizeFileName(fileName: string): string {
@@ -32,7 +31,7 @@ function isPdfFile(file: File): boolean {
 function isSystemAdminProfile(profile: AppUserProfile | null): boolean {
   if (!profile) return false
   if (String(profile.role_name ?? '').toLowerCase() === 'admin') return true
-  return Boolean(profile.can_manage_permissions) || Boolean(profile.can_admin_manage)
+  return Boolean(profile.can_manage_permissions)
 }
 
 export async function POST(request: NextRequest) {
@@ -63,7 +62,7 @@ export async function POST(request: NextRequest) {
 
     const { data: profile, error: profileError } = await adminClient
       .from('app_users')
-      .select('role_name, can_manage_permissions, can_admin_manage')
+      .select('role_name, can_manage_permissions')
       .eq('id', user.id)
       .single()
     if (profileError || !profile) {

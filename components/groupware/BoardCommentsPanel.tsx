@@ -8,7 +8,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import { boardAnonymousDisplayName } from '@/lib/groupware-board'
+import { boardAnonymousDisplayName, resolveBoardAuthorMeta, type BoardAuthorMeta } from '@/lib/groupware-board'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 
@@ -22,6 +22,14 @@ export type BoardCommentRow = {
   like_count: number
   is_deleted: boolean
   modified_after_reply: boolean
+}
+
+type AppUserProfileRow = {
+  id: string
+  user_name: string | null
+  user_kind: 'student' | 'teacher' | 'staff' | null
+  department: string | null
+  can_manage_permissions: boolean | null
 }
 
 type OrderedComment = BoardCommentRow & { depth: number }
@@ -98,7 +106,7 @@ export default function BoardCommentsPanel({
   onMetaChange,
 }: Props) {
   const [rows, setRows] = useState<BoardCommentRow[]>([])
-  const [names, setNames] = useState<Record<string, string>>({})
+  const [authorMetaById, setAuthorMetaById] = useState<Record<string, BoardAuthorMeta>>({})
   const [myCommentLikes, setMyCommentLikes] = useState<Set<number>>(new Set())
   const [loading, setLoading] = useState(true)
   const [topBody, setTopBody] = useState('')
@@ -131,21 +139,23 @@ export default function BoardCommentsPanel({
 
       const ids = [...new Set(list.map((c) => c.author_id))]
       if (ids.length === 0) {
-        setNames({})
+        setAuthorMetaById({})
       } else if (anonymousBoard) {
-        const map: Record<string, string> = {}
+        const map: Record<string, BoardAuthorMeta> = {}
         for (const aid of ids) {
-          map[aid] = boardAnonymousDisplayName(aid, postId)
+          map[aid] = { name: boardAnonymousDisplayName(aid, postId), icon: '' }
         }
-        setNames(map)
+        setAuthorMetaById(map)
       } else {
-        const { data: users } = await supabase.from('app_users').select('id, user_name').in('id', ids)
-        const map: Record<string, string> = {}
-        for (const u of users ?? []) {
-          const row = u as { id: string; user_name: string | null }
-          map[row.id] = row.user_name?.trim() || '—'
+        const { data: users } = await supabase
+          .from('app_users')
+          .select('id, user_name, user_kind, department, can_manage_permissions')
+          .in('id', ids)
+        const map: Record<string, BoardAuthorMeta> = {}
+        for (const u of (users ?? []) as AppUserProfileRow[]) {
+          map[u.id] = resolveBoardAuthorMeta(u)
         }
-        setNames(map)
+        setAuthorMetaById(map)
       }
 
       if (currentUserId && list.length > 0) {
@@ -331,7 +341,7 @@ export default function BoardCommentsPanel({
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="flex min-w-0 flex-1 items-center gap-2">
                     <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-200 text-[10px] font-bold text-gray-600">
-                      {(names[c.author_id] || '?').replace(/^익명_/, '').slice(0, 1) || '?'}
+                      {(authorMetaById[c.author_id]?.name || '?').replace(/^익명_/, '').slice(0, 1) || '?'}
                     </div>
                     <div className="min-w-0">
                       <span
@@ -341,7 +351,9 @@ export default function BoardCommentsPanel({
                             : 'text-sm font-bold text-gray-900'
                         }
                       >
-                        {names[c.author_id] || '—'}
+                        {anonymousBoard
+                          ? (authorMetaById[c.author_id]?.name || '—')
+                          : `${authorMetaById[c.author_id]?.icon ?? '👤'} ${authorMetaById[c.author_id]?.name || '—'}`}
                       </span>
                       <span className="ml-2 text-xs text-gray-400">{formatCommentTime(c.created_at)}</span>
                     </div>

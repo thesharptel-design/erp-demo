@@ -11,13 +11,12 @@ const FETCH_TITLE_TIMEOUT_MS = 5000
 type AdminProfile = {
   role_name: string | null
   can_manage_permissions?: boolean | null
-  can_admin_manage?: boolean | null
 }
 
 function isSystemAdminProfile(profile: AdminProfile | null): boolean {
   if (!profile) return false
   if (String(profile.role_name ?? '').toLowerCase() === 'admin') return true
-  return Boolean(profile.can_manage_permissions) || Boolean(profile.can_admin_manage)
+  return Boolean(profile.can_manage_permissions)
 }
 
 function isHttpUrl(value: unknown): value is string {
@@ -157,7 +156,7 @@ export async function POST(request: NextRequest) {
 
     const { data: profile, error: profileError } = await adminClient
       .from('app_users')
-      .select('role_name, can_manage_permissions, can_admin_manage')
+      .select('role_name, can_manage_permissions')
       .eq('id', user.id)
       .single()
     if (profileError || !isSystemAdminProfile((profile ?? null) as AdminProfile | null)) {

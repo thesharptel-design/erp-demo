@@ -50,12 +50,11 @@ export function isSystemAdminUser(
 ): boolean {
   if (!user) return false
   if (isAdminRole(user.role_name)) return true
-  return Boolean(user.can_manage_permissions) || Boolean(user.can_admin_manage)
+  return Boolean(user.can_manage_permissions)
 }
 
 /**
- * ERP 최고 권한: `role_name = admin` 과 동일하게 시스템 관리자(`can_manage_permissions` / `can_admin_manage`) 포함.
- * (게시판 삭제·공지·대시보드 일정 등 기존 role-admin UI·RLS와 맞춤.)
+ * ERP 최고 권한: `role_name = admin` 과 동일하게 시스템 관리자(`can_manage_permissions`) 포함.
  */
 export function isErpRoleAdminUser(
   user: Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
@@ -120,7 +119,7 @@ export function hasManagePermission(
     case 'can_qc_manage':
       return Boolean(user.can_qc_manage) || Boolean(user.can_approve)
     case 'can_admin_manage':
-      return Boolean(user.can_admin_manage) || Boolean(user.can_manage_permissions)
+      return Boolean(user.can_admin_manage)
     case 'can_manage_permissions':
       return Boolean(user.can_manage_permissions)
     default:

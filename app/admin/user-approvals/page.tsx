@@ -54,15 +54,15 @@ const USER_KIND_COLUMN_ALIASES: Record<string, UserKind> = {
   직원: 'staff',
 };
 
-const PERMISSION_FIELDS: { key: PermissionKey; label: string }[] = [
+const PERMISSION_FIELDS: { key: PermissionKey; label: string; disabled?: boolean }[] = [
   { key: 'can_manage_master', label: '기준정보' },
   { key: 'can_sales_manage', label: '영업/구매' },
   { key: 'can_material_manage', label: '자재/재고' },
   { key: 'can_production_manage', label: '생산/BOM' },
   { key: 'can_qc_manage', label: '품질(QC)' },
-  { key: 'can_admin_manage', label: '경영/관리' },
+  { key: 'can_admin_manage', label: '경영/관리 (미사용)', disabled: true },
   { key: 'can_manage_permissions', label: '시스템관리' },
-  { key: 'can_approval_participate', label: '결재 참여' },
+  { key: 'can_approval_participate', label: '결재권권한' },
 ];
 
 const EMPTY_PERMISSIONS: PermissionForm = {
@@ -314,7 +314,7 @@ export default function UserApprovalsPage() {
         권한_품질QC: 'N',
         권한_경영관리: 'N',
         권한_시스템관리: 'N',
-        권한_결재참여: 'Y',
+        권한_결재권권한: 'Y',
       },
       {
         이름: '김학생',
@@ -337,7 +337,7 @@ export default function UserApprovalsPage() {
         권한_품질QC: 'N',
         권한_경영관리: 'N',
         권한_시스템관리: 'N',
-        권한_결재참여: 'Y',
+        권한_결재권권한: 'Y',
       },
       {
         이름: '필독!',
@@ -360,7 +360,7 @@ export default function UserApprovalsPage() {
         권한_품질QC: 'Y/N',
         권한_경영관리: 'Y/N',
         권한_시스템관리: 'Y/N',
-        권한_결재참여: 'Y/N (미입력 시 Y)',
+        권한_결재권권한: 'Y/N (미입력 시 Y)',
       },
     ];
     const worksheet = XLSX.utils.json_to_sheet(templateData);
@@ -437,10 +437,14 @@ export default function UserApprovalsPage() {
           can_material_manage: parseBooleanCell(row['권한_자재재고']),
           can_production_manage: parseBooleanCell(row['권한_생산BOM']),
           can_qc_manage: parseBooleanCell(row['권한_품질QC']),
-          can_admin_manage: parseBooleanCell(row['권한_경영관리']),
+          can_admin_manage: false,
           can_manage_permissions: parseBooleanCell(row['권한_시스템관리']),
           can_approval_participate:
-            row['권한_결재참여'] === undefined ? true : parseBooleanCell(row['권한_결재참여']),
+            row['권한_결재권권한'] === undefined
+              ? row['권한_결재참여'] === undefined
+                ? true
+                : parseBooleanCell(row['권한_결재참여'])
+              : parseBooleanCell(row['권한_결재권권한']),
         };
 
         const res = await fetch('/api/admin/create-user', {
@@ -578,6 +582,7 @@ export default function UserApprovalsPage() {
                   <input
                     type="checkbox"
                     checked={newUser.permissions[field.key]}
+                    disabled={field.disabled}
                     onChange={(e) =>
                       setNewUser((prev) => ({
                         ...prev,

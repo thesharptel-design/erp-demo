@@ -102,8 +102,7 @@ function normalizeBulkPermissions(row: BulkCreateRow) {
     parseBoolean(row.can_production_manage) || parseBoolean(row.can_prod_complete)
   const canQcManage =
     parseBoolean(row.can_qc_manage) || parseBoolean(row.can_approve)
-  const canAdminManage =
-    parseBoolean(row.can_admin_manage) || parseBoolean(row.can_manage_permissions)
+  const canAdminManage = false
   const canManageMaster = parseBoolean(row.can_manage_master)
   const canManagePermissions = parseBoolean(row.can_manage_permissions)
   const canApprovalParticipate = row.can_approval_participate
