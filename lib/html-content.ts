@@ -18,6 +18,13 @@ export function isProbablyRichHtml(value: string): boolean {
   return /^<[\s\S]*>$/m.test(s) && /<\/?[a-z][\s\S]*>/i.test(s)
 }
 
+/**
+ * 텍스트가 없어도 본문으로 간주해야 하는 태그(표·미디어 등).
+ * TipTap 표는 빈 셀만 있어도 `plainTextFromHtml`이 빈 문자열이 되므로, 여기서 비어 있지 않다고 처리한다.
+ */
+const STRUCTURAL_NON_TEXT_HTML_RE =
+  /<\s*(table|img|video|iframe|canvas|svg|hr|object|embed|audio|picture)\b/i
+
 /** HTML에서 보이는 텍스트만 추출해 빈 본문 여부 판단 */
 export function plainTextFromHtml(html: string): string {
   if (typeof document !== 'undefined') {
@@ -33,5 +40,8 @@ export function plainTextFromHtml(html: string): string {
 }
 
 export function isHtmlContentEffectivelyEmpty(html: string): boolean {
+  const trimmed = html.trim()
+  if (!trimmed) return true
+  if (STRUCTURAL_NON_TEXT_HTML_RE.test(trimmed)) return false
   return plainTextFromHtml(html).length === 0
 }
