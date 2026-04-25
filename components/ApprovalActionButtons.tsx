@@ -14,6 +14,7 @@ import type { ApprovalDocLike, ApprovalLineLike } from '@/lib/approval-status';
 import type { Database } from '@/lib/database.types';
 import { logApprovalHistory, normalizeOptionalOpinionForHistory } from '@/lib/approval-history-log';
 import { getApprovalRoleLabel, isApprovalActionRole } from '@/lib/approval-roles';
+import { useSingleSubmit } from '@/hooks/useSingleSubmit';
 
 type AppUserRow = Database['public']['Tables']['app_users']['Row'];
 type SessionUser = { id: string };
@@ -81,7 +82,7 @@ export default function ApprovalActionButtons({
 }) {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
-  const [processing, setProcessing] = useState(false);
+  const { isSubmitting: processing, run: runSingleSubmit } = useSingleSubmit();
   const [opinion, setOpinion] = useState('');
   const [loading, setLoading] = useState(true);
   const [isApprovalAdmin, setIsApprovalAdmin] = useState(false);
@@ -205,62 +206,61 @@ export default function ApprovalActionButtons({
 
   const handleRecall = async () => {
     if (!confirm('기안을 회수하여 임시저장으로 되돌릴까요?')) return;
-    setProcessing(true);
-    try {
-      await updateDoc({ status: 'draft', remarks: APPROVAL_RECALL_REMARK_MARKER, current_line_no: 1 });
-      await supabase.from('approval_lines').update({ status: 'waiting', acted_at: null, opinion: null }).eq('approval_doc_id', doc.id);
-      await logApprovalHistory(supabase, {
-        approval_doc_id: doc.id,
-        actor_id: actorIdForHistory,
-        action_type: 'recall',
-        action_comment: '기안 회수',
-      });
-      alert('회수되었습니다.');
-      window.location.reload(); 
-    } catch (e: unknown) {
-      alert('오류: ' + formatClientError(e));
-    }
-    finally { setProcessing(false); }
+    await runSingleSubmit(async () => {
+      try {
+        await updateDoc({ status: 'draft', remarks: APPROVAL_RECALL_REMARK_MARKER, current_line_no: 1 });
+        await supabase.from('approval_lines').update({ status: 'waiting', acted_at: null, opinion: null }).eq('approval_doc_id', doc.id);
+        await logApprovalHistory(supabase, {
+          approval_doc_id: doc.id,
+          actor_id: actorIdForHistory,
+          action_type: 'recall',
+          action_comment: '기안 회수',
+        });
+        alert('회수되었습니다.');
+        window.location.reload();
+      } catch (e: unknown) {
+        alert('오류: ' + formatClientError(e));
+      }
+    });
   };
 
   const handleRequestCancel = async () => {
     const reason = prompt('취소 사유를 입력하세요 (필수):');
     if (!reason || reason.length < 2) return alert('사유를 입력해주세요.');
-    setProcessing(true);
-    try {
-      const trimmed = reason.trim()
-      const { error } = await supabase.rpc('request_approval_cancellation', {
-        p_doc_id: doc.id,
-        p_reason: trimmed,
-      })
-      if (error) {
-        if (isWriter && isMissingRequestApprovalCancellationRpc(error)) {
-          const lastLineNo = lastApprovedLine ? lastApprovedLine.line_no : orderedApprovalFlow.length
-          await updateDoc({
-            remarks: '취소 요청 중',
-            current_line_no: lastLineNo,
-          })
-        } else if (isMissingRequestApprovalCancellationRpc(error)) {
-          throw new Error(
-            '결재자 취소 요청은 DB에 함수 public.request_approval_cancellation 이 필요합니다. supabase db push(또는 마이그레이션 적용) 후 다시 시도하거나 관리자에게 문의하세요.'
-          )
-        } else {
-          throwIfSupabaseError(error)
+    await runSingleSubmit(async () => {
+      try {
+        const trimmed = reason.trim()
+        const { error } = await supabase.rpc('request_approval_cancellation', {
+          p_doc_id: doc.id,
+          p_reason: trimmed,
+        })
+        if (error) {
+          if (isWriter && isMissingRequestApprovalCancellationRpc(error)) {
+            const lastLineNo = lastApprovedLine ? lastApprovedLine.line_no : orderedApprovalFlow.length
+            await updateDoc({
+              remarks: '취소 요청 중',
+              current_line_no: lastLineNo,
+            })
+          } else if (isMissingRequestApprovalCancellationRpc(error)) {
+            throw new Error(
+              '결재자 취소 요청은 DB에 함수 public.request_approval_cancellation 이 필요합니다. supabase db push(또는 마이그레이션 적용) 후 다시 시도하거나 관리자에게 문의하세요.'
+            )
+          } else {
+            throwIfSupabaseError(error)
+          }
         }
+        await logApprovalHistory(supabase, {
+          approval_doc_id: doc.id,
+          actor_id: actorIdForHistory,
+          action_type: 'cancel_request',
+          action_comment: trimmed,
+        });
+        alert('결재권자에게 취소 요청이 전달되었습니다.');
+        window.location.reload();
+      } catch (e: unknown) {
+        alert('오류: ' + formatClientError(e));
       }
-      await logApprovalHistory(supabase, {
-        approval_doc_id: doc.id,
-        actor_id: actorIdForHistory,
-        action_type: 'cancel_request',
-        action_comment: trimmed,
-      });
-      alert('결재권자에게 취소 요청이 전달되었습니다.');
-      window.location.reload();
-    } catch (e: unknown) {
-      alert('오류: ' + formatClientError(e));
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   const handleDirectFinalCancel = async () => {
@@ -273,59 +273,58 @@ export default function ApprovalActionButtons({
     }
     const opinionInput = prompt('결재 취소 의견 (선택, 비우면 생략):');
     if (opinionInput === null) return;
-    setProcessing(true);
-    try {
-      // 렌더 시점 이후 상태가 바뀔 수 있으므로 클릭 시점 DB 상태를 다시 검증한다.
-      const { data: latestDoc, error: latestDocError } = await supabase
-        .from('approval_docs')
-        .select('status, remarks')
-        .eq('id', doc.id)
-        .single();
-      throwIfSupabaseError(latestDocError);
-      const latestStatus = String(latestDoc?.status ?? '');
-      const latestRemarks = String(latestDoc?.remarks ?? '');
-      if (latestStatus !== 'approved') {
-        const statusLabel = latestStatus || 'unknown';
-        alert(
-          `직접 결재취소는 최종승인 문서에서만 가능합니다. 현재 상태: ${statusLabel}\n` +
-            '문서 새로고침 후 "결재 취소 승인 요청" 흐름으로 진행해 주세요.'
-        );
-        return;
-      }
-      if (
-        latestRemarks.includes('취소 요청') ||
-        latestRemarks.includes('취소완료') ||
-        latestRemarks.includes('취소승인')
-      ) {
-        alert('이미 취소 프로세스가 진행 중입니다. 화면을 새로고침해 최신 상태를 확인해 주세요.');
-        return;
-      }
-
-      const { error } = await supabase.rpc('direct_cancel_final_approval', {
-        p_doc_id: doc.id,
-        p_opinion: opinionInput.trim(),
-      });
-      if (error) {
-        if (isMissingDirectCancelFinalApprovalRpc(error)) {
-          throw new Error(
-            'DB에 함수 public.direct_cancel_final_approval 이 필요합니다. supabase db push(또는 마이그레이션 적용) 후 다시 시도하세요.'
+    await runSingleSubmit(async () => {
+      try {
+        // 렌더 시점 이후 상태가 바뀔 수 있으므로 클릭 시점 DB 상태를 다시 검증한다.
+        const { data: latestDoc, error: latestDocError } = await supabase
+          .from('approval_docs')
+          .select('status, remarks')
+          .eq('id', doc.id)
+          .single();
+        throwIfSupabaseError(latestDocError);
+        const latestStatus = String(latestDoc?.status ?? '');
+        const latestRemarks = String(latestDoc?.remarks ?? '');
+        if (latestStatus !== 'approved') {
+          const statusLabel = latestStatus || 'unknown';
+          alert(
+            `직접 결재취소는 최종승인 문서에서만 가능합니다. 현재 상태: ${statusLabel}\n` +
+              '문서 새로고침 후 "결재 취소 승인 요청" 흐름으로 진행해 주세요.'
           );
+          return;
         }
-        throwIfSupabaseError(error);
+        if (
+          latestRemarks.includes('취소 요청') ||
+          latestRemarks.includes('취소완료') ||
+          latestRemarks.includes('취소승인')
+        ) {
+          alert('이미 취소 프로세스가 진행 중입니다. 화면을 새로고침해 최신 상태를 확인해 주세요.');
+          return;
+        }
+
+        const { error } = await supabase.rpc('direct_cancel_final_approval', {
+          p_doc_id: doc.id,
+          p_opinion: opinionInput.trim(),
+        });
+        if (error) {
+          if (isMissingDirectCancelFinalApprovalRpc(error)) {
+            throw new Error(
+              'DB에 함수 public.direct_cancel_final_approval 이 필요합니다. supabase db push(또는 마이그레이션 적용) 후 다시 시도하세요.'
+            );
+          }
+          throwIfSupabaseError(error);
+        }
+        await logApprovalHistory(supabase, {
+          approval_doc_id: doc.id,
+          actor_id: actorIdForHistory,
+          action_type: 'direct_cancel_final',
+          action_comment: normalizeOptionalOpinionForHistory(opinionInput.trim()),
+        });
+        alert('결재가 취소되었습니다.');
+        window.location.reload();
+      } catch (e: unknown) {
+        alert('오류: ' + formatClientError(e));
       }
-      await logApprovalHistory(supabase, {
-        approval_doc_id: doc.id,
-        actor_id: actorIdForHistory,
-        action_type: 'direct_cancel_final',
-        action_comment: normalizeOptionalOpinionForHistory(opinionInput.trim()),
-      });
-      alert('결재가 취소되었습니다.');
-      window.location.reload();
-    } catch (e: unknown) {
-      alert('오류: ' + formatClientError(e));
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   // 🌟 [핵심 로직 수정] 취소 릴레이 로직 완벽 교정
@@ -333,123 +332,124 @@ export default function ApprovalActionButtons({
     if (!activeLine) return;
     if (!opinion.trim()) return alert('취소 승인 의견을 아래 칸에 필수로 입력해주세요.');
 
-    setProcessing(true);
-    try {
-      // 문서 자체가 아직 승인되지 않고 '진행 중'일 때 취소하는 경우 (일반 반려와 동일하게 처리)
-      if (doc.status !== 'approved' && !doc.remarks?.includes('취소완료')) {
-        await updateActiveLineStatus(activeLine, { status: 'rejected', acted_at: new Date().toISOString(), opinion });
-        await updateDoc({ status: 'rejected', remarks: '결재 중 취소됨' });
-        await logApprovalHistory(supabase, {
-          approval_doc_id: doc.id,
-          actor_id: actorIdForHistory,
-          action_type: 'reject',
-          action_comment: opinion.trim(),
-        });
-        alert('문서가 종료되었습니다.');
-        router.push('/approvals');
-        return;
+    await runSingleSubmit(async () => {
+      try {
+        // 문서 자체가 아직 승인되지 않고 '진행 중'일 때 취소하는 경우 (일반 반려와 동일하게 처리)
+        if (doc.status !== 'approved' && !doc.remarks?.includes('취소완료')) {
+          await updateActiveLineStatus(activeLine, { status: 'rejected', acted_at: new Date().toISOString(), opinion });
+          await updateDoc({ status: 'rejected', remarks: '결재 중 취소됨' });
+          await logApprovalHistory(supabase, {
+            approval_doc_id: doc.id,
+            actor_id: actorIdForHistory,
+            action_type: 'reject',
+            action_comment: opinion.trim(),
+          });
+          alert('문서가 종료되었습니다.');
+          router.push('/approvals');
+          return;
+        }
+
+        // 이미 '최종 승인'된 문서를 역순으로 취소 릴레이 하는 경우
+        const roleName = getApprovalRoleLabel(activeLine.approver_role);
+        const now = new Date().toISOString();
+
+        // 현재 내 결재선 상태를 'cancelled'(취소됨)으로 업데이트
+        await updateActiveLineStatus(activeLine, { status: 'cancelled', acted_at: now, opinion });
+
+        // 역순: 큰 line_no → … → 가장 작은 line_no 다음은 기안자 최종 환원 (검토자 없이 결재자만 있어도 동일)
+        if (activeLine.line_no <= minLineNo) {
+          await updateDoc({ current_line_no: 0, remarks: `${roleName} 취소승인` });
+          await logApprovalHistory(supabase, {
+            approval_doc_id: doc.id,
+            actor_id: actorIdForHistory,
+            action_type: 'cancel_relay',
+            action_comment: `${roleName} 취소승인 · ${opinion.trim()}`,
+          });
+          alert('취소가 승인되어 기안자에게 최종 환원 권한이 넘어갔습니다.');
+        } else {
+          const nextLineNo = activeLine.line_no - 1;
+          await updateDoc({ current_line_no: nextLineNo, remarks: `${roleName} 취소완료` });
+          await logApprovalHistory(supabase, {
+            approval_doc_id: doc.id,
+            actor_id: actorIdForHistory,
+            action_type: 'cancel_relay',
+            action_comment: `${roleName} 취소완료(다음 차수로) · ${opinion.trim()}`,
+          });
+          alert('하위 결재자에게 취소 검토를 넘겼습니다.');
+        }
+        window.location.reload();
+      } catch (e: unknown) {
+        alert('오류: ' + formatClientError(e));
       }
-
-      // 이미 '최종 승인'된 문서를 역순으로 취소 릴레이 하는 경우
-      const roleName = getApprovalRoleLabel(activeLine.approver_role);
-      const now = new Date().toISOString();
-
-      // 현재 내 결재선 상태를 'cancelled'(취소됨)으로 업데이트
-      await updateActiveLineStatus(activeLine, { status: 'cancelled', acted_at: now, opinion });
-
-      // 역순: 큰 line_no → … → 가장 작은 line_no 다음은 기안자 최종 환원 (검토자 없이 결재자만 있어도 동일)
-      if (activeLine.line_no <= minLineNo) {
-        await updateDoc({ current_line_no: 0, remarks: `${roleName} 취소승인` });
-        await logApprovalHistory(supabase, {
-          approval_doc_id: doc.id,
-          actor_id: actorIdForHistory,
-          action_type: 'cancel_relay',
-          action_comment: `${roleName} 취소승인 · ${opinion.trim()}`,
-        });
-        alert('취소가 승인되어 기안자에게 최종 환원 권한이 넘어갔습니다.');
-      } else {
-        const nextLineNo = activeLine.line_no - 1;
-        await updateDoc({ current_line_no: nextLineNo, remarks: `${roleName} 취소완료` });
-        await logApprovalHistory(supabase, {
-          approval_doc_id: doc.id,
-          actor_id: actorIdForHistory,
-          action_type: 'cancel_relay',
-          action_comment: `${roleName} 취소완료(다음 차수로) · ${opinion.trim()}`,
-        });
-        alert('하위 결재자에게 취소 검토를 넘겼습니다.');
-      }
-      window.location.reload();
-    } catch (e: unknown) {
-      alert('오류: ' + formatClientError(e));
-    }
-    finally { setProcessing(false); }
+    });
   };
 
   const handleFinalizeCancel = async () => {
     if (!confirm('최종 취소 처리와 함께 재고를 환원하시겠습니까?')) return;
-    setProcessing(true);
-    try {
-      const { error: rpcError } = await supabase.rpc('finalize_outbound_cancellation', { p_doc_id: doc.id });
-      if (rpcError) throw new Error(`[재고환원 에러] ${rpcError.message}`);
+    await runSingleSubmit(async () => {
+      try {
+        const { error: rpcError } = await supabase.rpc('finalize_outbound_cancellation', { p_doc_id: doc.id });
+        if (rpcError) throw new Error(`[재고환원 에러] ${rpcError.message}`);
 
-      await updateDoc({ 
-        status: 'rejected', 
-        remarks: '취소 완료(재고환원)',
-        completed_at: new Date().toISOString() 
-      });
-      await logApprovalHistory(supabase, {
-        approval_doc_id: doc.id,
-        actor_id: actorIdForHistory,
-        action_type: 'outbound_cancel_done',
-        action_comment: '취소 완료(재고환원)',
-      });
+        await updateDoc({ 
+          status: 'rejected', 
+          remarks: '취소 완료(재고환원)',
+          completed_at: new Date().toISOString() 
+        });
+        await logApprovalHistory(supabase, {
+          approval_doc_id: doc.id,
+          actor_id: actorIdForHistory,
+          action_type: 'outbound_cancel_done',
+          action_comment: '취소 완료(재고환원)',
+        });
 
-      alert('✅ 취소 승인 및 재고 환원이 모두 완료되었습니다!');
-      router.push('/approvals');
-    } catch (e: unknown) {
-      console.error(e);
-      alert('처리 중 오류 발생: ' + formatClientError(e));
-    } finally { setProcessing(false); }
+        alert('✅ 취소 승인 및 재고 환원이 모두 완료되었습니다!');
+        router.push('/approvals');
+      } catch (e: unknown) {
+        console.error(e);
+        alert('처리 중 오류 발생: ' + formatClientError(e));
+      }
+    });
   };
 
   const handleGeneralAction = async (type: 'approved' | 'rejected') => {
     if (!activeLine) return;
     if (type === 'rejected' && !opinion) return alert('반려 사유를 입력하세요.');
     
-    setProcessing(true);
-    const now = new Date().toISOString();
-    try {
-      await updateActiveLineStatus(activeLine, { status: type, acted_at: now, opinion });
-      
-      if (type === 'rejected') {
-        await updateDoc({ status: 'rejected', remarks: '결재자 반려' });
-      } else {
-        const nextLine = orderedApprovalFlow.find(
-          (line) =>
-            line.line_no > activeLine.line_no &&
-            line.status === 'waiting' &&
-            isApprovalActionRole(line.approver_role)
-        );
-        const isLast = !nextLine;
-        if (isLast) {
-          await updateDoc({ status: 'approved', completed_at: now });
+    await runSingleSubmit(async () => {
+      try {
+        const now = new Date().toISOString();
+        await updateActiveLineStatus(activeLine, { status: type, acted_at: now, opinion });
+        
+        if (type === 'rejected') {
+          await updateDoc({ status: 'rejected', remarks: '결재자 반려' });
         } else {
-          await updateActiveLineStatus(nextLine, { status: 'pending' });
-          await updateDoc({ current_line_no: nextLine.line_no, status: 'in_review' });
+          const nextLine = orderedApprovalFlow.find(
+            (line) =>
+              line.line_no > activeLine.line_no &&
+              line.status === 'waiting' &&
+              isApprovalActionRole(line.approver_role)
+          );
+          const isLast = !nextLine;
+          if (isLast) {
+            await updateDoc({ status: 'approved', completed_at: now });
+          } else {
+            await updateActiveLineStatus(nextLine, { status: 'pending' });
+            await updateDoc({ current_line_no: nextLine.line_no, status: 'in_review' });
+          }
         }
+        await logApprovalHistory(supabase, {
+          approval_doc_id: doc.id,
+          actor_id: actorIdForHistory,
+          action_type: type === 'approved' ? 'approve' : 'reject',
+          action_comment:
+            type === 'approved' ? normalizeOptionalOpinionForHistory(opinion) : opinion.trim(),
+        });
+        window.location.reload();
+      } catch (e: unknown) {
+        alert('오류: ' + formatClientError(e));
       }
-      await logApprovalHistory(supabase, {
-        approval_doc_id: doc.id,
-        actor_id: actorIdForHistory,
-        action_type: type === 'approved' ? 'approve' : 'reject',
-        action_comment:
-          type === 'approved' ? normalizeOptionalOpinionForHistory(opinion) : opinion.trim(),
-      });
-      window.location.reload();
-    } catch (e: unknown) {
-      alert('오류: ' + formatClientError(e));
-    }
-    finally { setProcessing(false); }
+    });
   };
 
   // 🌟 UI 렌더링 조건 수정
@@ -513,25 +513,24 @@ export default function ApprovalActionButtons({
     const statusLabel =
       getApprovalDocDetailedStatusPresentation(doc, lines).badges[0]?.label ?? String(doc.status ?? '');
     if (!confirm(`현재 상태: ${statusLabel}입니다. 그래도 삭제하시겠습니까?`)) return;
-    setProcessing(true);
-    try {
-      const { error } = await supabase.rpc('admin_delete_approval_doc', { p_doc_id: doc.id });
-      throwIfSupabaseError(error);
-      const listHref = doc.doc_type === 'outbound_request' ? '/outbound-requests' : '/approvals';
+    await runSingleSubmit(async () => {
       try {
-        if (typeof window !== 'undefined' && window.opener && !window.opener.closed) {
-          window.opener.location.reload();
+        const { error } = await supabase.rpc('admin_delete_approval_doc', { p_doc_id: doc.id });
+        throwIfSupabaseError(error);
+        const listHref = doc.doc_type === 'outbound_request' ? '/outbound-requests' : '/approvals';
+        try {
+          if (typeof window !== 'undefined' && window.opener && !window.opener.closed) {
+            window.opener.location.reload();
+          }
+        } catch {
+          /* ignore cross-origin */
         }
-      } catch {
-        /* ignore cross-origin */
+        router.push(listHref);
+        router.refresh();
+      } catch (e: unknown) {
+        alert('관리자 삭제 오류: ' + formatClientError(e));
       }
-      router.push(listHref);
-      router.refresh();
-    } catch (e: unknown) {
-      alert('관리자 삭제 오류: ' + formatClientError(e));
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   const handleWriterDeleteDocument = async () => {
@@ -543,58 +542,70 @@ export default function ApprovalActionButtons({
     ) {
       return;
     }
-    setProcessing(true);
-    try {
-      const { error } = await supabase.from('approval_docs').delete().eq('id', doc.id);
-      throwIfSupabaseError(error);
-      const listHref = doc.doc_type === 'outbound_request' ? '/outbound-requests' : '/approvals';
+    await runSingleSubmit(async () => {
       try {
-        if (typeof window !== 'undefined' && window.opener && !window.opener.closed) {
-          window.opener.location.reload();
+        const { error } = await supabase.from('approval_docs').delete().eq('id', doc.id);
+        throwIfSupabaseError(error);
+        const listHref = doc.doc_type === 'outbound_request' ? '/outbound-requests' : '/approvals';
+        try {
+          if (typeof window !== 'undefined' && window.opener && !window.opener.closed) {
+            window.opener.location.reload();
+          }
+        } catch {
+          /* ignore cross-origin */
         }
-      } catch {
-        /* ignore cross-origin */
+        router.push(listHref);
+        router.refresh();
+      } catch (e: unknown) {
+        alert('삭제 오류: ' + formatClientError(e));
       }
-      router.push(listHref);
-      router.refresh();
-    } catch (e: unknown) {
-      alert('삭제 오류: ' + formatClientError(e));
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   const handleApproveRevoke = async () => {
     if (!revokableApprovalLine) return;
     if (!opinion.trim()) return alert('승인 철회 사유를 입력해주세요.');
     if (!confirm('승인을 철회하면 문서가 반려와 동일하게 종료되며, 기안자가 수정·재상신할 수 있습니다. 계속하시겠습니까?')) return;
-    setProcessing(true);
-    const now = new Date().toISOString();
-    try {
-      await updateActiveLineStatus(revokableApprovalLine, {
-        status: 'rejected',
-        acted_at: now,
-        opinion: opinion.trim(),
-      });
-      await updateDoc({
-        status: 'rejected',
-        remarks: '승인 철회',
-      });
-      await logApprovalHistory(supabase, {
-        approval_doc_id: doc.id,
-        actor_id: actorIdForHistory,
-        action_type: 'approve_revoke',
-        action_comment: opinion.trim(),
-        action_at: now,
-      });
-      alert('승인이 철회되었습니다.');
-      window.location.reload();
-    } catch (e: unknown) {
-      alert('오류: ' + formatClientError(e));
-    } finally {
-      setProcessing(false);
-    }
+    await runSingleSubmit(async () => {
+      try {
+        const now = new Date().toISOString();
+        await updateActiveLineStatus(revokableApprovalLine, {
+          status: 'rejected',
+          acted_at: now,
+          opinion: opinion.trim(),
+        });
+        await updateDoc({
+          status: 'rejected',
+          remarks: '승인 철회',
+        });
+        await logApprovalHistory(supabase, {
+          approval_doc_id: doc.id,
+          actor_id: actorIdForHistory,
+          action_type: 'approve_revoke',
+          action_comment: opinion.trim(),
+          action_at: now,
+        });
+        alert('승인이 철회되었습니다.');
+        window.location.reload();
+      } catch (e: unknown) {
+        alert('오류: ' + formatClientError(e));
+      }
+    });
   };
+
+  const handleAdminForceCancel = async () => {
+    if (!confirm('관리자 권한으로 강제 취소 및 재고를 환원하시겠습니까?')) return;
+    await runSingleSubmit(async () => {
+      try {
+        await supabase.rpc('finalize_outbound_cancellation', { p_doc_id: doc.id });
+        await updateDoc({ status: 'rejected', remarks: '관리자 강제취소(재고환원)' });
+        alert('강제 취소 및 환원이 완료되었습니다.');
+        window.location.reload();
+      } catch (e: unknown) {
+        alert('관리자 취소 오류: ' + formatClientError(e));
+      }
+    });
+  }
 
   return (
     <div className="bg-white border-2 border-gray-100 rounded-3xl p-6 shadow-sm space-y-4">
@@ -610,17 +621,8 @@ export default function ApprovalActionButtons({
           </button>
           <button
             type="button"
-            onClick={async () => {
-              if (!confirm('관리자 권한으로 강제 취소 및 재고를 환원하시겠습니까?')) return;
-              try {
-                await supabase.rpc('finalize_outbound_cancellation', { p_doc_id: doc.id });
-                await updateDoc({ status: 'rejected', remarks: '관리자 강제취소(재고환원)' });
-                alert('강제 취소 및 환원이 완료되었습니다.');
-                window.location.reload();
-              } catch (e: unknown) {
-                alert('관리자 취소 오류: ' + formatClientError(e));
-              }
-            }}
+            onClick={handleAdminForceCancel}
+            disabled={processing}
             className="w-full border-2 border-gray-900 text-gray-900 py-2 rounded-xl font-bold text-[10px] opacity-30 hover:opacity-100 transition-all uppercase"
           >
             Admin Force Cancel & Revert Stock

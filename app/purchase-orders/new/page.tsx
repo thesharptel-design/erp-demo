@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
 import SearchableCombobox from '@/components/SearchableCombobox'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 type Customer = {
   id: number
@@ -63,6 +64,7 @@ function getPurchaseOrderErrorMessage(error: SupabaseErrorLike) {
 
 export default function NewPurchaseOrderPage() {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
 
   const [customers, setCustomers] = useState<Customer[]>([])
   const [users, setUsers] = useState<AppUser[]>([])
@@ -206,59 +208,61 @@ export default function NewPurchaseOrderPage() {
       return
     }
 
-    setIsSaving(true)
+    await runSingleSubmit(async () => {
+      setIsSaving(true)
 
-    const poNo = await generateNextSerialDocNo(supabase, {
-      table: 'purchase_orders',
-      column: 'po_no',
-      code: 'PO',
-    })
-
-    const { data: poData, error: poError } = await supabase
-      .from('purchase_orders')
-      .insert({
-        po_no: poNo,
-        po_date: poDate,
-        customer_id: customerId,
-        user_id: userId,
-        status: 'draft',
-        total_amount: totalAmount,
-        remarks: remarks.trim() || null,
+      const poNo = await generateNextSerialDocNo(supabase, {
+        table: 'purchase_orders',
+        column: 'po_no',
+        code: 'PO',
       })
-      .select('id')
-      .single()
 
-    if (poError || !poData) {
+      const { data: poData, error: poError } = await supabase
+        .from('purchase_orders')
+        .insert({
+          po_no: poNo,
+          po_date: poDate,
+          customer_id: customerId,
+          user_id: userId,
+          status: 'draft',
+          total_amount: totalAmount,
+          remarks: remarks.trim() || null,
+        })
+        .select('id')
+        .single()
+
+      if (poError || !poData) {
+        setIsSaving(false)
+        setErrorMessage(getPurchaseOrderErrorMessage(poError ?? { message: '발주서 저장 실패' }))
+        return
+      }
+
+      const poId = poData.id as number
+
+      const payload = lines.map((line, index) => ({
+        purchase_order_id: poId,
+        line_no: index + 1,
+        item_id: line.item_id,
+        qty: Number(line.qty) || 0,
+        unit_price: Number(line.unit_price) || 0,
+        amount: (Number(line.qty) || 0) * (Number(line.unit_price) || 0),
+        remarks: null,
+      }))
+
+      const { error: lineError } = await supabase
+        .from('purchase_order_items')
+        .insert(payload)
+
+      if (lineError) {
+        setIsSaving(false)
+        setErrorMessage(getPurchaseOrderErrorMessage(lineError))
+        return
+      }
+
       setIsSaving(false)
-      setErrorMessage(getPurchaseOrderErrorMessage(poError ?? { message: '발주서 저장 실패' }))
-      return
-    }
-
-    const poId = poData.id as number
-
-    const payload = lines.map((line, index) => ({
-      purchase_order_id: poId,
-      line_no: index + 1,
-      item_id: line.item_id,
-      qty: Number(line.qty) || 0,
-      unit_price: Number(line.unit_price) || 0,
-      amount: (Number(line.qty) || 0) * (Number(line.unit_price) || 0),
-      remarks: null,
-    }))
-
-    const { error: lineError } = await supabase
-      .from('purchase_order_items')
-      .insert(payload)
-
-    if (lineError) {
-      setIsSaving(false)
-      setErrorMessage(getPurchaseOrderErrorMessage(lineError))
-      return
-    }
-
-    setIsSaving(false)
-    router.push(`/purchase-orders/${poId}`)
-    router.refresh()
+      router.push(`/purchase-orders/${poId}`)
+      router.refresh()
+    })
   }
 
   if (isLoading) {
@@ -419,7 +423,7 @@ export default function NewPurchaseOrderPage() {
         <div className="erp-btn-row">
           <button
             type="submit"
-            disabled={isSaving}
+            disabled={isSaving || isMutating}
             className="erp-btn-primary"
           >
             {isSaving ? '저장 중...' : '저장'}

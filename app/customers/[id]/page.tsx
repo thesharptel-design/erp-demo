@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import SearchableCombobox from '@/components/SearchableCombobox'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 type Customer = {
   id: number
@@ -70,6 +71,7 @@ export default function CustomerDetailPage({
   params: Promise<{ id: string }>
 }) {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
 
   const [customerId, setCustomerId] = useState<number | null>(null)
   const [customerCode, setCustomerCode] = useState('')
@@ -152,31 +154,33 @@ export default function CustomerDetailPage({
       return
     }
 
-    setIsSaving(true)
+    await runSingleSubmit(async () => {
+      setIsSaving(true)
 
-    const { error } = await supabase
-      .from('customers')
-      .update({
-        customer_code: customerCode.trim(),
-        customer_name: customerName.trim(),
-        customer_type: customerType,
-        ceo_name: ceoName.trim() || null,
-        business_no: businessNo.trim() || null,
-        phone: phone.trim() || null,
-        address: address.trim() || null,
-        is_active: isActive,
-      })
-      .eq('id', customerId)
+      const { error } = await supabase
+        .from('customers')
+        .update({
+          customer_code: customerCode.trim(),
+          customer_name: customerName.trim(),
+          customer_type: customerType,
+          ceo_name: ceoName.trim() || null,
+          business_no: businessNo.trim() || null,
+          phone: phone.trim() || null,
+          address: address.trim() || null,
+          is_active: isActive,
+        })
+        .eq('id', customerId)
 
-    setIsSaving(false)
+      setIsSaving(false)
 
-    if (error) {
-      setErrorMessage(getCustomerErrorMessage(error))
-      return
-    }
+      if (error) {
+        setErrorMessage(getCustomerErrorMessage(error))
+        return
+      }
 
-    setSuccessMessage('거래처 정보가 저장되었습니다.')
-    router.refresh()
+      setSuccessMessage('거래처 정보가 저장되었습니다.')
+      router.refresh()
+    })
   }
 
   if (isLoading) {
@@ -313,7 +317,7 @@ export default function CustomerDetailPage({
         <div className="mt-6 flex gap-3">
           <button
             type="submit"
-            disabled={isSaving}
+            disabled={isSaving || isMutating}
             className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
             {isSaving ? '저장 중...' : '저장'}

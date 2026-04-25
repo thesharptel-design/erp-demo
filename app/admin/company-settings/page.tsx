@@ -4,8 +4,10 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import Image from 'next/image';
 import { getCurrentUserPermissions, isSystemAdminUser } from '@/lib/permissions'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 export default function CompanySettingsPage() {
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
   const [allowed, setAllowed] = useState(false)
   const [permissionChecked, setPermissionChecked] = useState(false)
   const [loading, setLoading] = useState(true);
@@ -55,48 +57,52 @@ export default function CompanySettingsPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setIsSaving(true);
-    try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${field}-${Math.random()}.${fileExt}`;
-      const filePath = `${fileName}`;
+    await runSingleSubmit(async () => {
+      setIsSaving(true);
+      try {
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${field}-${Math.random()}.${fileExt}`;
+        const filePath = `${fileName}`;
 
-      // 1. Storage 업로드
-      const { error: uploadError } = await supabase.storage
-        .from('company-assets')
-        .upload(filePath, file);
+        // 1. Storage 업로드
+        const { error: uploadError } = await supabase.storage
+          .from('company-assets')
+          .upload(filePath, file);
 
-      if (uploadError) throw uploadError;
+        if (uploadError) throw uploadError;
 
-      // 2. 공개 URL 가져오기
-      const { data: { publicUrl } } = supabase.storage.from('company-assets').getPublicUrl(filePath);
+        // 2. 공개 URL 가져오기
+        const { data: { publicUrl } } = supabase.storage.from('company-assets').getPublicUrl(filePath);
 
-      // 3. 상태 업데이트 (화면에 즉시 반영)
-      setFormData(prev => ({ ...prev, [field]: publicUrl }));
-      alert(`${field === 'logo_url' ? '로고' : '인감'} 업로드 성공! (저장 버튼을 눌러야 최종 완료됩니다)`);
-    } catch (error: any) {
-      alert('업로드 실패: ' + error.message);
-    } finally {
-      setIsSaving(false);
-    }
+        // 3. 상태 업데이트 (화면에 즉시 반영)
+        setFormData(prev => ({ ...prev, [field]: publicUrl }));
+        alert(`${field === 'logo_url' ? '로고' : '인감'} 업로드 성공! (저장 버튼을 눌러야 최종 완료됩니다)`);
+      } catch (error: any) {
+        alert('업로드 실패: ' + error.message);
+      } finally {
+        setIsSaving(false);
+      }
+    })
   };
 
   const handleSave = async () => {
-    setIsSaving(true);
-    // 🌟 저장 후 상태를 초기화하지 않고 그대로 유지합니다.
-    const { error } = await supabase
-      .from('my_company_settings')
-      .update({ ...formData, updated_at: new Date().toISOString() })
-      .eq('id', 1);
+    await runSingleSubmit(async () => {
+      setIsSaving(true);
+      // 🌟 저장 후 상태를 초기화하지 않고 그대로 유지합니다.
+      const { error } = await supabase
+        .from('my_company_settings')
+        .update({ ...formData, updated_at: new Date().toISOString() })
+        .eq('id', 1);
 
-    if (error) {
-      alert('저장 실패: ' + error.message);
-    } else {
-      alert('✅ 모든 기업 정보가 안전하게 저장되었습니다.');
-      // 갱신된 데이터를 다시 불러와서 화면 유지
-      fetchCompanyInfo();
-    }
-    setIsSaving(false);
+      if (error) {
+        alert('저장 실패: ' + error.message);
+      } else {
+        alert('✅ 모든 기업 정보가 안전하게 저장되었습니다.');
+        // 갱신된 데이터를 다시 불러와서 화면 유지
+        fetchCompanyInfo();
+      }
+      setIsSaving(false);
+    })
   };
 
   if (!permissionChecked) {
@@ -118,7 +124,7 @@ export default function CompanySettingsPage() {
         </div>
         <button 
           onClick={handleSave} 
-          disabled={isSaving}
+          disabled={isSaving || isMutating}
           className="px-10 py-4 bg-blue-600 text-white rounded-2xl font-black shadow-lg hover:shadow-blue-200 hover:bg-blue-700 transition-all active:scale-95"
         >
           {isSaving ? '처리 중...' : '정보 저장하기'}

@@ -12,9 +12,11 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 export default function NewBoardPostPage() {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
   const [category, setCategory] = useState(BOARD_CATEGORY_VALUE_GENERAL)
   const [title, setTitle] = useState('')
   const [bodyHtml, setBodyHtml] = useState('')
@@ -63,9 +65,10 @@ export default function NewBoardPostPage() {
       toast.error('제목을 입력하세요')
       return
     }
-    setSaving(true)
-    setErrorMessage('')
-    try {
+    await runSingleSubmit(async () => {
+      setSaving(true)
+      setErrorMessage('')
+      try {
       const {
         data: { user },
       } = await supabase.auth.getUser()
@@ -91,14 +94,15 @@ export default function NewBoardPostPage() {
       toast.success('등록되었습니다.')
       router.push(`/groupware/board/${data.id}`)
       router.refresh()
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '저장에 실패했습니다.'
-      setErrorMessage(msg)
-      toast.error(msg)
-    } finally {
-      setSaving(false)
-    }
-  }, [bodyHtml, canWriteNotice, category, isNotice, saving, title, router])
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : '저장에 실패했습니다.'
+        setErrorMessage(msg)
+        toast.error(msg)
+      } finally {
+        setSaving(false)
+      }
+    })
+  }, [bodyHtml, canWriteNotice, category, isNotice, saving, title, router, runSingleSubmit])
 
   if (!ready) {
     return <div className="mx-auto max-w-4xl p-4 text-sm text-gray-600">불러오는 중…</div>
@@ -147,6 +151,7 @@ export default function NewBoardPostPage() {
         bodyHtml={bodyHtml}
         onBodyHtmlChange={setBodyHtml}
         disabled={saving}
+        // useSingleSubmit also blocks rapid duplicate clicks.
         canWriteNotice={canWriteNotice}
         canExtractPdfLinks={canUsePdfTools}
         isNotice={isNotice}
@@ -162,7 +167,7 @@ export default function NewBoardPostPage() {
             <button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={saving}
+              disabled={saving || isMutating}
               className="inline-flex items-center justify-center rounded bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
             >
               {saving ? '등록 중…' : '글 작성 완료'}

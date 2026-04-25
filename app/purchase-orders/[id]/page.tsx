@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
 import { getCurrentUserPermissions, hasManagePermission } from '@/lib/permissions'
 import SearchableCombobox from '@/components/SearchableCombobox'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 type Customer = {
   id: number
@@ -109,6 +110,7 @@ export default function PurchaseOrderDetailPage({
   params: Promise<{ id: string }>
 }) {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
 
   const [poId, setPoId] = useState<number | null>(null)
   const [poNo, setPoNo] = useState('')
@@ -309,59 +311,61 @@ export default function PurchaseOrderDetailPage({
       return
     }
 
-    setIsSaving(true)
+    await runSingleSubmit(async () => {
+      setIsSaving(true)
 
-    const { error: poError } = await supabase
-      .from('purchase_orders')
-      .update({
-        po_date: poDate,
-        customer_id: customerId,
-        user_id: userId,
-        total_amount: totalAmount,
-        remarks: remarks.trim() || null,
-      })
-      .eq('id', poId)
+      const { error: poError } = await supabase
+        .from('purchase_orders')
+        .update({
+          po_date: poDate,
+          customer_id: customerId,
+          user_id: userId,
+          total_amount: totalAmount,
+          remarks: remarks.trim() || null,
+        })
+        .eq('id', poId)
 
-    if (poError) {
+      if (poError) {
+        setIsSaving(false)
+        setErrorMessage(getPurchaseOrderErrorMessage(poError))
+        return
+      }
+
+      const { error: deleteError } = await supabase
+        .from('purchase_order_items')
+        .delete()
+        .eq('purchase_order_id', poId)
+
+      if (deleteError) {
+        setIsSaving(false)
+        setErrorMessage(getPurchaseOrderErrorMessage(deleteError))
+        return
+      }
+
+      const payload = lines.map((line, index) => ({
+        purchase_order_id: poId,
+        line_no: index + 1,
+        item_id: line.item_id,
+        qty: Number(line.qty) || 0,
+        unit_price: Number(line.unit_price) || 0,
+        amount: (Number(line.qty) || 0) * (Number(line.unit_price) || 0),
+        remarks: null,
+      }))
+
+      const { error: lineInsertError } = await supabase
+        .from('purchase_order_items')
+        .insert(payload)
+
+      if (lineInsertError) {
+        setIsSaving(false)
+        setErrorMessage(getPurchaseOrderErrorMessage(lineInsertError))
+        return
+      }
+
       setIsSaving(false)
-      setErrorMessage(getPurchaseOrderErrorMessage(poError))
-      return
-    }
-
-    const { error: deleteError } = await supabase
-      .from('purchase_order_items')
-      .delete()
-      .eq('purchase_order_id', poId)
-
-    if (deleteError) {
-      setIsSaving(false)
-      setErrorMessage(getPurchaseOrderErrorMessage(deleteError))
-      return
-    }
-
-    const payload = lines.map((line, index) => ({
-      purchase_order_id: poId,
-      line_no: index + 1,
-      item_id: line.item_id,
-      qty: Number(line.qty) || 0,
-      unit_price: Number(line.unit_price) || 0,
-      amount: (Number(line.qty) || 0) * (Number(line.unit_price) || 0),
-      remarks: null,
-    }))
-
-    const { error: lineInsertError } = await supabase
-      .from('purchase_order_items')
-      .insert(payload)
-
-    if (lineInsertError) {
-      setIsSaving(false)
-      setErrorMessage(getPurchaseOrderErrorMessage(lineInsertError))
-      return
-    }
-
-    setIsSaving(false)
-    setSuccessMessage('발주서 정보가 저장되었습니다.')
-    router.refresh()
+      setSuccessMessage('발주서 정보가 저장되었습니다.')
+      router.refresh()
+    })
   }
 
   async function handlePrintPreview() {
@@ -374,21 +378,23 @@ export default function PurchaseOrderDetailPage({
     setSuccessMessage('')
     setActionMessage('')
 
-    const { error } = await supabase
-      .from('purchase_orders')
-      .update({ status: 'ordered' })
-      .eq('id', poId)
+    await runSingleSubmit(async () => {
+      const { error } = await supabase
+        .from('purchase_orders')
+        .update({ status: 'ordered' })
+        .eq('id', poId)
 
-    if (error) {
-      setErrorMessage(getPurchaseOrderErrorMessage(error))
-      return
-    }
+      if (error) {
+        setErrorMessage(getPurchaseOrderErrorMessage(error))
+        return
+      }
 
-    setStatus('ordered')
-    setActionMessage(
-      `발주서 ${poNo}가 출력되었습니다. 교육용 ERP로 해당 기능은 실제 구현하지 않았습니다.`
-    )
-    router.refresh()
+      setStatus('ordered')
+      setActionMessage(
+        `발주서 ${poNo}가 출력되었습니다. 교육용 ERP로 해당 기능은 실제 구현하지 않았습니다.`
+      )
+      router.refresh()
+    })
   }
 
   async function handleEmailPreview() {
@@ -401,21 +407,23 @@ export default function PurchaseOrderDetailPage({
     setSuccessMessage('')
     setActionMessage('')
 
-    const { error } = await supabase
-      .from('purchase_orders')
-      .update({ status: 'ordered' })
-      .eq('id', poId)
+    await runSingleSubmit(async () => {
+      const { error } = await supabase
+        .from('purchase_orders')
+        .update({ status: 'ordered' })
+        .eq('id', poId)
 
-    if (error) {
-      setErrorMessage(getPurchaseOrderErrorMessage(error))
-      return
-    }
+      if (error) {
+        setErrorMessage(getPurchaseOrderErrorMessage(error))
+        return
+      }
 
-    setStatus('ordered')
-    setActionMessage(
-      `발주서 ${poNo}가 이메일 발송 처리되었습니다. 교육용 ERP로 해당 기능은 실제 구현하지 않았습니다.`
-    )
-    router.refresh()
+      setStatus('ordered')
+      setActionMessage(
+        `발주서 ${poNo}가 이메일 발송 처리되었습니다. 교육용 ERP로 해당 기능은 실제 구현하지 않았습니다.`
+      )
+      router.refresh()
+    })
   }
 
   async function handleReceiveStock() {
@@ -438,33 +446,34 @@ export default function PurchaseOrderDetailPage({
     setSuccessMessage('')
     setActionMessage('')
 
-    const { data: poItemsData, error: poItemsError } = await supabase
+    await runSingleSubmit(async () => {
+      const { data: poItemsData, error: poItemsError } = await supabase
       .from('purchase_order_items')
       .select('*')
       .eq('purchase_order_id', poId)
       .order('line_no')
 
-    if (poItemsError) {
-      setErrorMessage(getPurchaseOrderErrorMessage(poItemsError))
-      return
-    }
+      if (poItemsError) {
+        setErrorMessage(getPurchaseOrderErrorMessage(poItemsError))
+        return
+      }
 
     const typedPoItems = (poItemsData as PurchaseOrderItem[]) ?? []
     const now = new Date().toISOString()
-    const { data: defaultWarehouse } = await supabase
+      const { data: defaultWarehouse } = await supabase
       .from('warehouses')
       .select('id')
       .eq('is_active', true)
       .order('sort_order', { ascending: true })
       .limit(1)
       .maybeSingle()
-    const warehouseId = defaultWarehouse?.id
-    if (!warehouseId) {
-      setErrorMessage('활성 창고가 없어 입고처리를 진행할 수 없습니다.')
-      return
-    }
+      const warehouseId = defaultWarehouse?.id
+      if (!warehouseId) {
+        setErrorMessage('활성 창고가 없어 입고처리를 진행할 수 없습니다.')
+        return
+      }
 
-    for (const line of typedPoItems) {
+      for (const line of typedPoItems) {
       const item = itemMap.get(line.item_id)
       const lineQty = Number(line.qty)
       let inventoryIdForTx: number | null = null
@@ -576,21 +585,22 @@ export default function PurchaseOrderDetailPage({
       }
     }
 
-    const { error: poUpdateError } = await supabase
+      const { error: poUpdateError } = await supabase
       .from('purchase_orders')
       .update({ status: 'received' })
       .eq('id', poId)
 
-    if (poUpdateError) {
-      setErrorMessage(getPurchaseOrderErrorMessage(poUpdateError))
-      return
-    }
+      if (poUpdateError) {
+        setErrorMessage(getPurchaseOrderErrorMessage(poUpdateError))
+        return
+      }
 
-    setStatus('received')
-    setActionMessage(
-      `발주서 ${poNo}의 입고처리가 완료되었습니다. 원자재는 격리재고로 적치되었고, 원자재 QC 요청이 자동 생성되었습니다.`
-    )
-    router.refresh()
+      setStatus('received')
+      setActionMessage(
+        `발주서 ${poNo}의 입고처리가 완료되었습니다. 원자재는 격리재고로 적치되었고, 원자재 QC 요청이 자동 생성되었습니다.`
+      )
+      router.refresh()
+    })
   }
 
   if (isLoading) {
@@ -758,7 +768,7 @@ export default function PurchaseOrderDetailPage({
         <div className="erp-btn-row">
           <button
             type="submit"
-            disabled={isSaving}
+            disabled={isSaving || isMutating}
             className="erp-btn-primary"
           >
             {isSaving ? '저장 중...' : '저장'}
@@ -769,6 +779,7 @@ export default function PurchaseOrderDetailPage({
               <button
                 type="button"
                 onClick={handlePrintPreview}
+                disabled={isMutating}
                 className="erp-btn-secondary"
               >
                 출력
@@ -777,6 +788,7 @@ export default function PurchaseOrderDetailPage({
               <button
                 type="button"
                 onClick={handleEmailPreview}
+                disabled={isMutating}
                 className="erp-btn-secondary"
               >
                 E-mail 발송
@@ -785,7 +797,7 @@ export default function PurchaseOrderDetailPage({
               <button
                 type="button"
                 onClick={handleReceiveStock}
-                disabled={status === 'received' || !canReceiveStock}
+                disabled={status === 'received' || !canReceiveStock || isMutating}
                 className="erp-btn-secondary"
               >
                 입고처리

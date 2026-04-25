@@ -6,12 +6,14 @@ import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { getQuoteStatusUnifiedBadge } from '@/lib/quote-ui-status';
+import { useSingleSubmit } from '@/hooks/useSingleSubmit';
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 export default function QuoteDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit();
   
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -133,8 +135,9 @@ export default function QuoteDetailPage({ params }: { params: Promise<{ id: stri
     if (!customerId) return alert('거래처를 선택하세요.');
     if (rows.some(r => !r.item_id)) return alert('품목을 선택하지 않은 행이 있습니다.');
 
-    setIsSaving(true);
-    try {
+    await runSingleSubmit(async () => {
+      setIsSaving(true);
+      try {
       // 1. 마스터 업데이트
       const { error: qErr } = await supabase.from('quotes').update({
         quote_date: quoteDate,
@@ -167,13 +170,14 @@ export default function QuoteDetailPage({ params }: { params: Promise<{ id: stri
       const { error: iErr } = await supabase.from('quote_items').insert(itemPayload);
       if (iErr) throw iErr;
 
-      alert('✅ 수정사항이 저장되었습니다.');
-      router.refresh();
-    } catch (e: any) { 
-      alert('수정 실패: ' + e.message); 
-    } finally { 
-      setIsSaving(false); 
-    }
+        alert('✅ 수정사항이 저장되었습니다.');
+        router.refresh();
+      } catch (e: any) { 
+        alert('수정 실패: ' + e.message); 
+      } finally { 
+        setIsSaving(false); 
+      }
+    })
   };
 
   const handleOpenPrint = () => {
@@ -233,7 +237,7 @@ export default function QuoteDetailPage({ params }: { params: Promise<{ id: stri
           <button
             type="button"
             onClick={handleUpdate}
-            disabled={isSaving}
+            disabled={isSaving || isMutating}
             className="inline-flex h-12 items-center justify-center rounded-xl border-2 border-black bg-blue-600 px-6 text-sm font-black text-white shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:bg-blue-700 disabled:opacity-50 active:translate-y-1 active:shadow-none"
           >
             {isSaving ? '저장 중...' : '수정사항 저장'}

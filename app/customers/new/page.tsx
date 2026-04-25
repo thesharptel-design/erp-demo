@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import SearchableCombobox from '@/components/SearchableCombobox'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 type SupabaseInsertError = {
   code?: string
@@ -25,6 +26,7 @@ function getCustomerErrorMessage(error: SupabaseInsertError) {
 
 export default function NewCustomerPage() {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
 
   // 폼 상태 관리
   const [customerCode, setCustomerCode] = useState('')
@@ -50,9 +52,9 @@ export default function NewCustomerPage() {
     if (!customerCode.trim()) { setErrorMessage('거래처 코드를 입력하십시오.'); return; }
     if (!customerName.trim()) { setErrorMessage('거래처명을 입력하십시오.'); return; }
 
-    setIsSaving(true)
-
-    try {
+    await runSingleSubmit(async () => {
+      setIsSaving(true)
+      try {
       // 🌟 1. 중복 체크 (신규 등록이므로 전체 데이터 대상)
       const { data: existing } = await supabase
         .from('customers')
@@ -88,10 +90,11 @@ export default function NewCustomerPage() {
       router.push('/customers')
       router.refresh()
 
-    } catch {
-      setErrorMessage('예상치 못한 오류가 발생했습니다.');
-      setIsSaving(false);
-    }
+      } catch {
+        setErrorMessage('예상치 못한 오류가 발생했습니다.');
+        setIsSaving(false);
+      }
+    })
   }
 
   return (
@@ -154,7 +157,7 @@ export default function NewCustomerPage() {
         )}
 
         <div className="mt-8 flex gap-3">
-          <button type="submit" disabled={isSaving} className="rounded-xl bg-black px-6 py-3 text-sm font-bold text-white hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-50">
+          <button type="submit" disabled={isSaving || isMutating} className="rounded-xl bg-black px-6 py-3 text-sm font-bold text-white hover:bg-gray-800 transition-colors shadow-sm disabled:opacity-50">
             {isSaving ? '저장 중...' : '거래처 등록'}
           </button>
           <Link href="/customers" className="rounded-xl border-2 border-gray-200 px-6 py-3 text-sm font-bold text-gray-600 hover:text-black transition-all">취소</Link>

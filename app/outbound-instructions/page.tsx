@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
 import type { Database } from '@/lib/database.types';
 import SearchableCombobox from '@/components/SearchableCombobox';
+import { useSingleSubmit } from '@/hooks/useSingleSubmit';
 
 const generateId = () => Math.random().toString(36).substring(2, 11);
 
@@ -46,7 +47,7 @@ type FulfillmentLine = {
 
 export default function OutboundInstructionsPage() {
   const [loading, setLoading] = useState(true);
-  const [processing, setProcessing] = useState(false);
+  const { isSubmitting: processing, run: runSingleSubmit } = useSingleSubmit();
 
   const [approvedRequests, setApprovedRequests] = useState<OutboundRequestRow[]>([]);
   const [selectedRequest, setSelectedRequest] = useState<OutboundRequestRow | null>(null);
@@ -191,30 +192,29 @@ export default function OutboundInstructionsPage() {
     if (!confirm('출고를 진행하시겠습니까?')) return;
     if (!selectedRequest) return;
 
-    setProcessing(true);
-    try {
-      const lines = fulfillments.map((f) => {
-        const stock = f.isTracked
-          ? availableStocks.find((s) => s.id === parseInt(f.stock_id, 10))
-          : availableStocks.find((s) => s.item_id === f.item_id);
-        if (!stock) throw new Error(`재고 행을 찾을 수 없습니다: ${f.item_name}`);
-        return { inventory_id: stock.id, item_id: f.item_id, qty: f.out_qty };
-      });
+    await runSingleSubmit(async () => {
+      try {
+        const lines = fulfillments.map((f) => {
+          const stock = f.isTracked
+            ? availableStocks.find((s) => s.id === parseInt(f.stock_id, 10))
+            : availableStocks.find((s) => s.item_id === f.item_id);
+          if (!stock) throw new Error(`재고 행을 찾을 수 없습니다: ${f.item_name}`);
+          return { inventory_id: stock.id, item_id: f.item_id, qty: f.out_qty };
+        });
 
-      const { error: rpcError } = await supabase.rpc('execute_outbound_request_fulfillment', {
-        p_outbound_request_id: selectedRequest.id,
-        p_lines: lines,
-      });
-      if (rpcError) throw rpcError;
+        const { error: rpcError } = await supabase.rpc('execute_outbound_request_fulfillment', {
+          p_outbound_request_id: selectedRequest.id,
+          p_lines: lines,
+        });
+        if (rpcError) throw rpcError;
 
-      alert('✅ 출고 완료!');
-      setSelectedRequest(null);
-      void fetchApprovedRequests();
-    } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : String(e));
-    } finally {
-      setProcessing(false);
-    }
+        alert('✅ 출고 완료!');
+        setSelectedRequest(null);
+        void fetchApprovedRequests();
+      } catch (e: unknown) {
+        alert(e instanceof Error ? e.message : String(e));
+      }
+    });
   };
 
   const handleSplitLine = (index: number) => {

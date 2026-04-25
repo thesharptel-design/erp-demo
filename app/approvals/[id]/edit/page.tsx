@@ -14,6 +14,7 @@ import ExecutionDateHybridInput from '@/components/approvals/ExecutionDateHybrid
 import SearchableCombobox, { type ComboboxOption } from '@/components/SearchableCombobox'
 import ApprovalLineDnD from '@/components/approvals/ApprovalLineDnD'
 import type { ApprovalOrderItem } from '@/components/approvals/ApprovalDraftPaper'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 type ApprovalDoc = {
   id: number
@@ -118,6 +119,7 @@ export default function EditApprovalPage({
   params: Promise<{ id: string }>
 }) {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
 
   const [docId, setDocId] = useState<number | null>(null)
   const [docNo, setDocNo] = useState('')
@@ -402,24 +404,26 @@ export default function EditApprovalPage({
     ) {
       return
     }
-    setIsDeleting(true)
-    setErrorMessage('')
-    const { error } = await supabase.from('approval_docs').delete().eq('id', docId)
-    setIsDeleting(false)
-    if (error) {
-      setErrorMessage(getApprovalEditErrorMessage(error))
-      return
-    }
-    const listHref = docType === 'outbound_request' ? '/outbound-requests' : '/approvals'
-    try {
-      if (typeof window !== 'undefined' && window.opener && !window.opener.closed) {
-        window.opener.location.reload()
+    await runSingleSubmit(async () => {
+      setIsDeleting(true)
+      setErrorMessage('')
+      const { error } = await supabase.from('approval_docs').delete().eq('id', docId)
+      setIsDeleting(false)
+      if (error) {
+        setErrorMessage(getApprovalEditErrorMessage(error))
+        return
       }
-    } catch {
-      /* ignore */
-    }
-    router.push(listHref)
-    router.refresh()
+      const listHref = docType === 'outbound_request' ? '/outbound-requests' : '/approvals'
+      try {
+        if (typeof window !== 'undefined' && window.opener && !window.opener.closed) {
+          window.opener.location.reload()
+        }
+      } catch {
+        /* ignore */
+      }
+      router.push(listHref)
+      router.refresh()
+    })
   }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -483,72 +487,74 @@ export default function EditApprovalPage({
       return
     }
 
-    setIsSaving(true)
+    await runSingleSubmit(async () => {
+      setIsSaving(true)
 
-    const { error: docError } = await supabase
-      .from('approval_docs')
-      .update({
-        doc_type: docType,
-        title: title.trim(),
-        content: content.trim(),
-        execution_start_date: startIso,
-        execution_end_date: endIso,
-        cooperation_dept: cooperationDept.trim() || null,
-        agreement_text: agreementText.trim() || null,
-        writer_id: writerId,
-        dept_id: selectedWriter?.dept_id ?? null,
-        remarks: '웹 수정 문서',
-      })
-      .eq('id', docId)
+      const { error: docError } = await supabase
+        .from('approval_docs')
+        .update({
+          doc_type: docType,
+          title: title.trim(),
+          content: content.trim(),
+          execution_start_date: startIso,
+          execution_end_date: endIso,
+          cooperation_dept: cooperationDept.trim() || null,
+          agreement_text: agreementText.trim() || null,
+          writer_id: writerId,
+          dept_id: selectedWriter?.dept_id ?? null,
+          remarks: '웹 수정 문서',
+        })
+        .eq('id', docId)
 
-    if (docError) {
-      setIsSaving(false)
-      setErrorMessage(getApprovalEditErrorMessage(docError))
-      return
-    }
-
-    const participants = normalizeParticipants(
-      approvalOrder.map((line) => ({ role: line.role, userId: line.userId }))
-    )
-    const lines = buildApprovalLines(docId, participants)
-    const participantRows = buildApprovalParticipantsRows(docId, participants)
-
-    const { error: deleteLinesError } = await supabase.from('approval_lines').delete().eq('approval_doc_id', docId)
-    if (deleteLinesError) {
-      setIsSaving(false)
-      setErrorMessage(getApprovalEditErrorMessage(deleteLinesError))
-      return
-    }
-    if (lines.length > 0) {
-      const { error: insertLinesError } = await supabase.from('approval_lines').insert(lines)
-      if (insertLinesError) {
+      if (docError) {
         setIsSaving(false)
-        setErrorMessage(getApprovalEditErrorMessage(insertLinesError))
+        setErrorMessage(getApprovalEditErrorMessage(docError))
         return
       }
-    }
 
-    const { error: deleteParticipantsError } = await supabase
-      .from('approval_participants')
-      .delete()
-      .eq('approval_doc_id', docId)
-    if (deleteParticipantsError) {
-      setIsSaving(false)
-      setErrorMessage(getApprovalEditErrorMessage(deleteParticipantsError))
-      return
-    }
-    if (participantRows.length > 0) {
-      const { error: participantError } = await supabase.from('approval_participants').insert(participantRows)
-      if (participantError) {
+      const participants = normalizeParticipants(
+        approvalOrder.map((line) => ({ role: line.role, userId: line.userId }))
+      )
+      const lines = buildApprovalLines(docId, participants)
+      const participantRows = buildApprovalParticipantsRows(docId, participants)
+
+      const { error: deleteLinesError } = await supabase.from('approval_lines').delete().eq('approval_doc_id', docId)
+      if (deleteLinesError) {
         setIsSaving(false)
-        setErrorMessage(getApprovalEditErrorMessage(participantError))
+        setErrorMessage(getApprovalEditErrorMessage(deleteLinesError))
         return
       }
-    }
+      if (lines.length > 0) {
+        const { error: insertLinesError } = await supabase.from('approval_lines').insert(lines)
+        if (insertLinesError) {
+          setIsSaving(false)
+          setErrorMessage(getApprovalEditErrorMessage(insertLinesError))
+          return
+        }
+      }
 
-    setIsSaving(false)
-    setSuccessMessage('기안서 정보가 저장되었습니다.')
-    router.refresh()
+      const { error: deleteParticipantsError } = await supabase
+        .from('approval_participants')
+        .delete()
+        .eq('approval_doc_id', docId)
+      if (deleteParticipantsError) {
+        setIsSaving(false)
+        setErrorMessage(getApprovalEditErrorMessage(deleteParticipantsError))
+        return
+      }
+      if (participantRows.length > 0) {
+        const { error: participantError } = await supabase.from('approval_participants').insert(participantRows)
+        if (participantError) {
+          setIsSaving(false)
+          setErrorMessage(getApprovalEditErrorMessage(participantError))
+          return
+        }
+      }
+
+      setIsSaving(false)
+      setSuccessMessage('기안서 정보가 저장되었습니다.')
+      router.refresh()
+    })
   }
 
   if (isLoading) {
@@ -807,7 +813,7 @@ export default function EditApprovalPage({
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <button
             type="submit"
-            disabled={isSaving || !canEdit || !writerHasApprovalRight}
+            disabled={isSaving || isMutating || !canEdit || !writerHasApprovalRight}
             className="rounded-xl bg-black px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
           >
             {isSaving ? '저장 중...' : '저장'}
@@ -824,7 +830,7 @@ export default function EditApprovalPage({
             <button
               type="button"
               onClick={() => void handleWriterDelete()}
-              disabled={isDeleting || isSaving}
+              disabled={isDeleting || isSaving || isMutating}
               className="rounded-xl border-2 border-red-700 bg-red-50 px-4 py-2 text-sm font-bold text-red-800 hover:bg-red-100 disabled:opacity-50"
             >
               {isDeleting ? '삭제 중…' : '문서 삭제'}

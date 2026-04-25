@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
 import SearchableCombobox from '@/components/SearchableCombobox'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 type Item = {
   id: number
@@ -60,6 +61,7 @@ function getProductionOrderErrorMessage(error: SupabaseErrorLike) {
 
 export default function NewProductionOrderPage() {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
 
   const [items, setItems] = useState<Item[]>([])
   const [boms, setBoms] = useState<Bom[]>([])
@@ -168,43 +170,45 @@ export default function NewProductionOrderPage() {
       return
     }
 
-    setIsSaving(true)
+    await runSingleSubmit(async () => {
+      setIsSaving(true)
 
-    const prodNo = await generateNextSerialDocNo(supabase, {
-      table: 'production_orders',
-      column: 'prod_no',
-      code: 'PR',
-    })
-
-    const { data, error } = await supabase
-      .from('production_orders')
-      .insert({
-        prod_no: prodNo,
-        prod_date: prodDate,
-        item_id: itemId,
-        bom_id: bomId,
-        plan_qty: Number(planQty),
-        completed_qty: 0,
-        status: 'planned',
-        user_id: userId,
-        remarks: remarks.trim() || null,
+      const prodNo = await generateNextSerialDocNo(supabase, {
+        table: 'production_orders',
+        column: 'prod_no',
+        code: 'PR',
       })
-      .select('id')
-      .single()
 
-    if (error || !data) {
+      const { data, error } = await supabase
+        .from('production_orders')
+        .insert({
+          prod_no: prodNo,
+          prod_date: prodDate,
+          item_id: itemId,
+          bom_id: bomId,
+          plan_qty: Number(planQty),
+          completed_qty: 0,
+          status: 'planned',
+          user_id: userId,
+          remarks: remarks.trim() || null,
+        })
+        .select('id')
+        .single()
+
+      if (error || !data) {
+        setIsSaving(false)
+        setErrorMessage(
+          getProductionOrderErrorMessage(error ?? { message: '생산지시 저장 실패' })
+        )
+        return
+      }
+
+      const createdId = data.id as number
+
       setIsSaving(false)
-      setErrorMessage(
-        getProductionOrderErrorMessage(error ?? { message: '생산지시 저장 실패' })
-      )
-      return
-    }
-
-    const createdId = data.id as number
-
-    setIsSaving(false)
-    router.push(`/production-orders/${createdId}`)
-    router.refresh()
+      router.push(`/production-orders/${createdId}`)
+      router.refresh()
+    })
   }
 
   if (isLoading) {
@@ -302,7 +306,7 @@ export default function NewProductionOrderPage() {
         <div className="erp-btn-row">
           <button
             type="submit"
-            disabled={isSaving}
+            disabled={isSaving || isMutating}
             className="erp-btn-primary"
           >
             {isSaving ? '저장 중...' : '저장'}

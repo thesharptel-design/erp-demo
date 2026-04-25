@@ -8,6 +8,7 @@ import * as XLSX from 'xlsx'
 import SearchableCombobox from '@/components/SearchableCombobox'
 import { getAllowedWarehouseIds } from '@/lib/permissions'
 import { supabase } from '@/lib/supabase'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 type ItemRow = {
   id: number
@@ -95,6 +96,7 @@ function downloadInboundTemplate() {
 
 export default function NewInboundPage() {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const [mode, setMode] = useState<'single' | 'template'>('single')
@@ -290,26 +292,30 @@ export default function NewInboundPage() {
       remarks: normalizeText(remarks),
     }
 
-    setSaving(true)
-    try {
-      await processInbound([row])
-    } catch (e: any) {
-      alert(`입고 처리 실패: ${String(e?.message ?? e)}`)
-    } finally {
-      setSaving(false)
-    }
+    await runSingleSubmit(async () => {
+      setSaving(true)
+      try {
+        await processInbound([row])
+      } catch (e: any) {
+        alert(`입고 처리 실패: ${String(e?.message ?? e)}`)
+      } finally {
+        setSaving(false)
+      }
+    })
   }
 
   const handleTemplateSubmit = async () => {
     if (uploadRows.length === 0) return alert('업로드된 데이터가 없습니다.')
-    setSaving(true)
-    try {
-      await processInbound(uploadRows, uploadFileName)
-    } catch (e: any) {
-      alert(`템플릿 처리 실패: ${String(e?.message ?? e)}`)
-    } finally {
-      setSaving(false)
-    }
+    await runSingleSubmit(async () => {
+      setSaving(true)
+      try {
+        await processInbound(uploadRows, uploadFileName)
+      } catch (e: any) {
+        alert(`템플릿 처리 실패: ${String(e?.message ?? e)}`)
+      } finally {
+        setSaving(false)
+      }
+    })
   }
 
   return (
@@ -445,7 +451,7 @@ export default function NewInboundPage() {
           <div className="flex flex-col gap-2 sm:flex-row">
             <button
               type="submit"
-              disabled={saving || loading}
+              disabled={saving || isMutating || loading}
               className="rounded-lg bg-black px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:bg-gray-300"
             >
               {saving ? '처리 중...' : '단건 입고 등록'}
@@ -543,7 +549,7 @@ export default function NewInboundPage() {
           <div className="flex flex-col gap-2 sm:flex-row">
             <button
               type="button"
-              disabled={saving || uploadRows.length === 0}
+              disabled={saving || isMutating || uploadRows.length === 0}
               onClick={() => void handleTemplateSubmit()}
               className="rounded-lg bg-black px-4 py-3 text-sm font-black text-white disabled:cursor-not-allowed disabled:bg-gray-300"
             >

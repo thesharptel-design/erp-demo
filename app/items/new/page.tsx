@@ -10,9 +10,11 @@ import { fetchItemProcessCategories } from '@/lib/item-process-config'
 import { getItemErrorMessage } from '@/lib/item-form-errors'
 import { uploadItemSopFile } from '@/lib/item-sop-storage'
 import { canEditItemsMaster, getCurrentUserPermissions } from '@/lib/permissions'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 export default function NewItemPage() {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
   const [permReady, setPermReady] = useState(false)
   const [canEdit, setCanEdit] = useState(false)
   const [processCategories, setProcessCategories] = useState<ItemProcessCategories>({})
@@ -69,9 +71,9 @@ export default function NewItemPage() {
       return
     }
 
-    setIsSaving(true)
-
-    try {
+    await runSingleSubmit(async () => {
+      setIsSaving(true)
+      try {
       const { data: existingName } = await supabase.from('items').select('id').eq('item_name', itemName.trim()).maybeSingle()
 
       if (existingName) {
@@ -151,10 +153,11 @@ export default function NewItemPage() {
       alert('품목이 성공적으로 등록되었습니다.')
       router.push('/items')
       router.refresh()
-    } catch {
-      setErrorMessage('예상치 못한 오류가 발생했습니다.')
-      setIsSaving(false)
-    }
+      } catch {
+        setErrorMessage('예상치 못한 오류가 발생했습니다.')
+        setIsSaving(false)
+      }
+    })
   }
 
   if (!permReady || !canEdit) {
@@ -306,7 +309,7 @@ export default function NewItemPage() {
         <div className="mt-8 flex gap-3">
           <button
             type="submit"
-            disabled={isSaving || !canEdit}
+            disabled={isSaving || isMutating || !canEdit}
             className="rounded-xl bg-black px-6 py-3 text-sm font-bold text-white shadow-sm transition-colors hover:bg-gray-800 disabled:opacity-50"
           >
             {isSaving ? '저장 중...' : '품목 저장'}

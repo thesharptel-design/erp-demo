@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import SearchableCombobox from '@/components/SearchableCombobox'
 import { supabase } from '@/lib/supabase'
 import { getAllowedWarehouseIds, getCurrentUserPermissions, hasManagePermission } from '@/lib/permissions'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 type Warehouse = {
   id: number
@@ -31,7 +32,7 @@ type ItemRow = {
 
 export default function NewInventoryTransferPage() {
   const [isLoading, setIsLoading] = useState(true)
-  const [isSaving, setIsSaving] = useState(false)
+  const { isSubmitting: isSaving, run: runSingleSubmit } = useSingleSubmit()
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
 
@@ -177,45 +178,43 @@ export default function NewInventoryTransferPage() {
       return
     }
 
-    setIsSaving(true)
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
+    await runSingleSubmit(async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
 
-      const response = await fetch('/api/inventory/transfer', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session?.access_token ?? ''}`,
-        },
-        body: JSON.stringify({
-          source_inventory_id: Number(sourceInventoryId),
-          to_warehouse_id: Number(toWarehouseId),
-          qty,
-          remarks: remarks.trim(),
-        }),
-      })
+        const response = await fetch('/api/inventory/transfer', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session?.access_token ?? ''}`,
+          },
+          body: JSON.stringify({
+            source_inventory_id: Number(sourceInventoryId),
+            to_warehouse_id: Number(toWarehouseId),
+            qty,
+            remarks: remarks.trim(),
+          }),
+        })
 
-      const result = await response.json()
-      if (!response.ok) {
-        setErrorMessage(result?.error ?? '자재 이동에 실패했습니다.')
-        setIsSaving(false)
-        return
+        const result = await response.json()
+        if (!response.ok) {
+          setErrorMessage(result?.error ?? '자재 이동에 실패했습니다.')
+          return
+        }
+
+        setSuccessMessage('자재 이동이 완료되었습니다.')
+        setSourceInventoryId('')
+        setToWarehouseId('')
+        setTransferQty('1')
+        setRemarks('')
+        await loadData()
+      } catch (error) {
+        console.error(error)
+        setErrorMessage('자재 이동 중 오류가 발생했습니다.')
       }
-
-      setSuccessMessage('자재 이동이 완료되었습니다.')
-      setSourceInventoryId('')
-      setToWarehouseId('')
-      setTransferQty('1')
-      setRemarks('')
-      await loadData()
-    } catch (error) {
-      console.error(error)
-      setErrorMessage('자재 이동 중 오류가 발생했습니다.')
-    } finally {
-      setIsSaving(false)
-    }
+    })
   }
 
   if (isLoading) {

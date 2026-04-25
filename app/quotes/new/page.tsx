@@ -6,11 +6,13 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
 import SearchableCombobox from '@/components/SearchableCombobox'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
 export default function NewQuotePage() {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
 
   const [customers, setCustomers] = useState<any[]>([])
   const [items, setItems] = useState<any[]>([])
@@ -108,45 +110,51 @@ export default function NewQuotePage() {
     if (!customerId) return alert('거래처를 선택해주세요.');
     if (rows.some(r => !r.item_id)) return alert('품목을 선택하지 않은 행이 있습니다.');
 
-    setIsSaving(true);
-    try {
-      const quoteNo = await generateNextSerialDocNo(supabase, {
-        table: 'quotes',
-        column: 'quote_no',
-        code: 'QT',
-      })
-      
-      const { data: quote, error: qErr } = await supabase.from('quotes').insert({
-        quote_no: quoteNo,
-        quote_date: quoteDate,
-        customer_id: parseInt(customerId),
-        user_id: userData.id,
-        payment_terms: paymentTerms,
-        lead_time: validityDate,
-        delivery_date_text: deliveryDateText,
-        delivery_place: deliveryPlace,
-        manager_phone: managerPhone,
-        manager_email: managerEmail,
-        total_amount: totalSupply + totalVat,
-        remarks: remarks,
-        status: 'pending'
-      }).select().single();
+    await runSingleSubmit(async () => {
+      setIsSaving(true);
+      try {
+        const quoteNo = await generateNextSerialDocNo(supabase, {
+          table: 'quotes',
+          column: 'quote_no',
+          code: 'QT',
+        })
+        
+        const { data: quote, error: qErr } = await supabase.from('quotes').insert({
+          quote_no: quoteNo,
+          quote_date: quoteDate,
+          customer_id: parseInt(customerId),
+          user_id: userData.id,
+          payment_terms: paymentTerms,
+          lead_time: validityDate,
+          delivery_date_text: deliveryDateText,
+          delivery_place: deliveryPlace,
+          manager_phone: managerPhone,
+          manager_email: managerEmail,
+          total_amount: totalSupply + totalVat,
+          remarks: remarks,
+          status: 'pending'
+        }).select().single();
 
-      if (qErr) throw qErr;
+        if (qErr) throw qErr;
 
-      const itemPayload = rows.map((r, idx) => ({
-        quote_id: quote.id,
-        item_id: parseInt(r.item_id),
-        qty: r.qty,
-        unit_price: r.unit_price,
-        amount: r.supply_amount,
-        line_no: idx + 1
-      }));
-      await supabase.from('quote_items').insert(itemPayload);
-      
-      alert('✅ 견적서가 성공적으로 저장되었습니다.');
-      router.push(`/quotes/${quote.id}`);
-    } catch (e: any) { alert('오류: ' + e.message); } finally { setIsSaving(false); }
+        const itemPayload = rows.map((r, idx) => ({
+          quote_id: quote.id,
+          item_id: parseInt(r.item_id),
+          qty: r.qty,
+          unit_price: r.unit_price,
+          amount: r.supply_amount,
+          line_no: idx + 1
+        }));
+        await supabase.from('quote_items').insert(itemPayload);
+        
+        alert('✅ 견적서가 성공적으로 저장되었습니다.');
+        router.push(`/quotes/${quote.id}`);
+      } catch (e: any) {
+        alert('오류: ' + e.message);
+      } finally {
+        setIsSaving(false);
+      }
+    })
   };
 
   if (isLoading) return <div className="p-10 text-center font-bold text-gray-400">데이터를 불러오는 중입니다...</div>;
@@ -159,7 +167,7 @@ export default function NewQuotePage() {
           <p className="text-sm font-bold text-gray-400 mt-1">상세 연락처와 납기 조건을 포함한 견적서를 작성합니다.</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={handleSubmit} disabled={isSaving} className="px-10 py-4 bg-blue-600 text-white rounded-2xl font-black shadow-lg hover:bg-blue-700 transition-all">저장(F8)</button>
+          <button onClick={handleSubmit} disabled={isSaving || isMutating} className="px-10 py-4 bg-blue-600 text-white rounded-2xl font-black shadow-lg hover:bg-blue-700 transition-all">저장(F8)</button>
           <Link href="/quotes" className="px-10 py-4 bg-white border-2 border-gray-200 rounded-2xl font-bold text-gray-500 hover:bg-gray-100 transition-all">취소</Link>
         </div>
       </div>

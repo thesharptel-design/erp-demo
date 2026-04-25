@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 type QcRequest = {
   id: number
@@ -128,6 +129,7 @@ export default function QcDetailPage({
   params: Promise<{ id: string }>
 }) {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
 
   const [qc, setQc] = useState<QcRequest | null>(null)
   const [prodNo, setProdNo] = useState('-')
@@ -362,9 +364,9 @@ export default function QcDetailPage({
     setErrorMessage('')
     setSuccessMessage('')
     setActionMessage('')
-    setIsSaving(true)
-
-    try {
+    await runSingleSubmit(async () => {
+      setIsSaving(true)
+      try {
       const mappedResultStatus =
         qcStatus === 'pass'
           ? 'pass'
@@ -418,14 +420,15 @@ export default function QcDetailPage({
       }
 
       router.refresh()
-    } catch (error) {
-      console.error(error)
-      setErrorMessage(
-        error instanceof Error ? error.message : 'QC 저장 중 오류가 발생했습니다.'
-      )
-    } finally {
-      setIsSaving(false)
-    }
+      } catch (error) {
+        console.error(error)
+        setErrorMessage(
+          error instanceof Error ? error.message : 'QC 저장 중 오류가 발생했습니다.'
+        )
+      } finally {
+        setIsSaving(false)
+      }
+    })
   }
 
   if (isLoading) {
@@ -605,7 +608,7 @@ export default function QcDetailPage({
         {actionMessage && <div className="erp-alert-info">{actionMessage}</div>}
 
         <div className="erp-btn-row">
-          <button type="submit" disabled={isSaving} className="erp-btn-primary">
+          <button type="submit" disabled={isSaving || isMutating} className="erp-btn-primary">
             {isSaving ? '저장 중...' : '결과 저장'}
           </button>
 

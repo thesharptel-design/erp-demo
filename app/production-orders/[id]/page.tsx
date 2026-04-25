@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
 import { getCurrentUserPermissions, hasManagePermission } from '@/lib/permissions'
 import SearchableCombobox from '@/components/SearchableCombobox'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 type Item = {
   id: number
@@ -151,6 +152,7 @@ export default function ProductionOrderDetailPage({
   params: Promise<{ id: string }>
 }) {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
 
   const [prodId, setProdId] = useState<number | null>(null)
   const [prodNo, setProdNo] = useState('')
@@ -372,30 +374,32 @@ export default function ProductionOrderDetailPage({
       return
     }
 
-    setIsSaving(true)
+    await runSingleSubmit(async () => {
+      setIsSaving(true)
 
-    const { error } = await supabase
-      .from('production_orders')
-      .update({
-        prod_date: prodDate,
-        item_id: itemId,
-        bom_id: bomId,
-        plan_qty: Number(planQty),
-        completed_qty: Number(completedQty) || 0,
-        user_id: userId,
-        remarks: remarks.trim() || null,
-      })
-      .eq('id', prodId)
+      const { error } = await supabase
+        .from('production_orders')
+        .update({
+          prod_date: prodDate,
+          item_id: itemId,
+          bom_id: bomId,
+          plan_qty: Number(planQty),
+          completed_qty: Number(completedQty) || 0,
+          user_id: userId,
+          remarks: remarks.trim() || null,
+        })
+        .eq('id', prodId)
 
-    setIsSaving(false)
+      setIsSaving(false)
 
-    if (error) {
-      setErrorMessage(getProductionOrderErrorMessage(error))
-      return
-    }
+      if (error) {
+        setErrorMessage(getProductionOrderErrorMessage(error))
+        return
+      }
 
-    setSuccessMessage('생산지시 정보가 저장되었습니다.')
-    router.refresh()
+      setSuccessMessage('생산지시 정보가 저장되었습니다.')
+      router.refresh()
+    })
   }
 
   async function handleCreateQcRequest() {
@@ -423,13 +427,14 @@ export default function ProductionOrderDetailPage({
     setSuccessMessage('')
     setActionMessage('')
 
-    const newQcNo = await generateNextSerialDocNo(supabase, {
-      table: 'qc_requests',
-      column: 'qc_no',
-      code: 'QC',
-    })
+    await runSingleSubmit(async () => {
+      const newQcNo = await generateNextSerialDocNo(supabase, {
+        table: 'qc_requests',
+        column: 'qc_no',
+        code: 'QC',
+      })
 
-    const { data, error } = await supabase
+      const { data, error } = await supabase
       .from('qc_requests')
       .insert({
         qc_no: newQcNo,
@@ -457,22 +462,23 @@ export default function ProductionOrderDetailPage({
       `)
       .single()
 
-    if (error || !data) {
-      console.error('qc create error:', error)
-      setErrorMessage(`QC 의뢰 생성 오류: ${error?.message ?? '알 수 없는 오류'}`)
-      return
-    }
+      if (error || !data) {
+        console.error('qc create error:', error)
+        setErrorMessage(`QC 의뢰 생성 오류: ${error?.message ?? '알 수 없는 오류'}`)
+        return
+      }
 
-    setQcRequestId(data.id)
-    setQcNo(data.qc_no)
-    setQcType(data.qc_type)
-    setQcStatus(data.qc_status)
-    setSampleQty(data.sample_qty ?? null)
-    setTesterName(data.tester_name ?? '')
-    setQcResultDate(data.result_date ?? null)
-    setQcResultComment(data.result_comment ?? '')
-    setActionMessage(`완제품 QC 의뢰 ${newQcNo}가 생성되었습니다. 현재 상태는 의뢰됨입니다.`)
-    router.refresh()
+      setQcRequestId(data.id)
+      setQcNo(data.qc_no)
+      setQcType(data.qc_type)
+      setQcStatus(data.qc_status)
+      setSampleQty(data.sample_qty ?? null)
+      setTesterName(data.tester_name ?? '')
+      setQcResultDate(data.result_date ?? null)
+      setQcResultComment(data.result_comment ?? '')
+      setActionMessage(`완제품 QC 의뢰 ${newQcNo}가 생성되었습니다. 현재 상태는 의뢰됨입니다.`)
+      router.refresh()
+    })
   }
 
   async function handleStartProduction() {
@@ -490,19 +496,21 @@ export default function ProductionOrderDetailPage({
     setSuccessMessage('')
     setActionMessage('')
 
-    const { error } = await supabase
+    await runSingleSubmit(async () => {
+      const { error } = await supabase
       .from('production_orders')
       .update({ status: 'in_progress' })
       .eq('id', prodId)
 
-    if (error) {
-      setErrorMessage(getProductionOrderErrorMessage(error))
-      return
-    }
+      if (error) {
+        setErrorMessage(getProductionOrderErrorMessage(error))
+        return
+      }
 
-    setStatus('in_progress')
-    setActionMessage(`생산지시 ${prodNo}가 생산중 상태로 변경되었습니다.`)
-    router.refresh()
+      setStatus('in_progress')
+      setActionMessage(`생산지시 ${prodNo}가 생산중 상태로 변경되었습니다.`)
+      router.refresh()
+    })
   }
 
   async function handleCompleteProduction() {
@@ -527,7 +535,8 @@ export default function ProductionOrderDetailPage({
 
     const completedQtyValue = Number(planQty) || 0
 
-    const { error } = await supabase
+    await runSingleSubmit(async () => {
+      const { error } = await supabase
       .from('production_orders')
       .update({
         status: 'completed',
@@ -535,17 +544,18 @@ export default function ProductionOrderDetailPage({
       })
       .eq('id', prodId)
 
-    if (error) {
-      setErrorMessage(getProductionOrderErrorMessage(error))
-      return
-    }
+      if (error) {
+        setErrorMessage(getProductionOrderErrorMessage(error))
+        return
+      }
 
-    setStatus('completed')
-    setCompletedQty(String(completedQtyValue))
-    setActionMessage(
-      `생산지시 ${prodNo}가 작업 완료 처리되었습니다. 완제품 QC 의뢰 생성 후 QC 합격 시 입고처리를 진행하십시오.`
-    )
-    router.refresh()
+      setStatus('completed')
+      setCompletedQty(String(completedQtyValue))
+      setActionMessage(
+        `생산지시 ${prodNo}가 작업 완료 처리되었습니다. 완제품 QC 의뢰 생성 후 QC 합격 시 입고처리를 진행하십시오.`
+      )
+      router.refresh()
+    })
   }
 
   async function handleInboundProduction() {
@@ -603,34 +613,35 @@ export default function ProductionOrderDetailPage({
     setSuccessMessage('')
     setActionMessage('')
 
-    const now = new Date().toISOString()
-    const { data: defaultWarehouse } = await supabase
+    await runSingleSubmit(async () => {
+      const now = new Date().toISOString()
+      const { data: defaultWarehouse } = await supabase
       .from('warehouses')
       .select('id')
       .eq('is_active', true)
       .order('sort_order', { ascending: true })
       .limit(1)
       .maybeSingle()
-    const warehouseId = defaultWarehouse?.id
-    if (!warehouseId) {
-      setErrorMessage('활성 창고가 없어 입고처리를 진행할 수 없습니다.')
-      return
-    }
+      const warehouseId = defaultWarehouse?.id
+      if (!warehouseId) {
+        setErrorMessage('활성 창고가 없어 입고처리를 진행할 수 없습니다.')
+        return
+      }
 
-    const { data: bomItemsData, error: bomItemsError } = await supabase
+      const { data: bomItemsData, error: bomItemsError } = await supabase
       .from('bom_items')
       .select('*')
       .eq('bom_id', bomId)
       .order('line_no')
 
-    if (bomItemsError) {
-      setErrorMessage(getProductionOrderErrorMessage(bomItemsError))
-      return
-    }
+      if (bomItemsError) {
+        setErrorMessage(getProductionOrderErrorMessage(bomItemsError))
+        return
+      }
 
     const bomItems = (bomItemsData as BomItem[]) ?? []
 
-    for (const bomItem of bomItems) {
+      for (const bomItem of bomItems) {
       const requiredQty = Number(bomItem.qty) * effectiveInboundQty
 
       const { data: inventoryRow, error: inventorySelectError } = await supabase
@@ -665,7 +676,7 @@ export default function ProductionOrderDetailPage({
       }
     }
 
-    for (const bomItem of bomItems) {
+      for (const bomItem of bomItems) {
       const requiredQty = Number(bomItem.qty) * effectiveInboundQty
 
       const { data: inventoryRow, error: inventorySelectError } = await supabase
@@ -730,19 +741,19 @@ export default function ProductionOrderDetailPage({
       }
     }
 
-    const { data: finishedInventoryRow, error: finishedInventorySelectError } = await supabase
+      const { data: finishedInventoryRow, error: finishedInventorySelectError } = await supabase
       .from('inventory')
       .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty')
       .eq('item_id', itemId)
       .eq('warehouse_id', warehouseId)
       .maybeSingle()
 
-    if (finishedInventorySelectError) {
-      setErrorMessage(getProductionOrderErrorMessage(finishedInventorySelectError))
-      return
-    }
+      if (finishedInventorySelectError) {
+        setErrorMessage(getProductionOrderErrorMessage(finishedInventorySelectError))
+        return
+      }
 
-    if (finishedInventoryRow) {
+      if (finishedInventoryRow) {
       const finishedInventory = finishedInventoryRow as InventoryRow
       const currentQty = Number(finishedInventory.current_qty ?? 0)
       const availableQty = Number(finishedInventory.available_qty ?? 0)
@@ -762,7 +773,7 @@ export default function ProductionOrderDetailPage({
         setErrorMessage(getProductionOrderErrorMessage(finishedUpdateError))
         return
       }
-    } else {
+      } else {
       const { error: finishedInsertError } = await supabase
         .from('inventory')
         .insert({
@@ -780,7 +791,7 @@ export default function ProductionOrderDetailPage({
       }
     }
 
-    const { error: prodInTxError } = await supabase
+      const { error: prodInTxError } = await supabase
       .from('inventory_transactions')
       .insert({
         trans_date: now,
@@ -796,28 +807,29 @@ export default function ProductionOrderDetailPage({
         inventory_id: finishedInventoryRow ? (finishedInventoryRow as InventoryRow).id : null,
       })
 
-    if (prodInTxError) {
-      setErrorMessage(getProductionOrderErrorMessage(prodInTxError))
-      return
-    }
+      if (prodInTxError) {
+        setErrorMessage(getProductionOrderErrorMessage(prodInTxError))
+        return
+      }
 
-    const { error: inboundUpdateError } = await supabase
+      const { error: inboundUpdateError } = await supabase
       .from('production_orders')
       .update({
         inbound_completed: true,
       })
       .eq('id', prodId)
 
-    if (inboundUpdateError) {
-      setErrorMessage(getProductionOrderErrorMessage(inboundUpdateError))
-      return
-    }
+      if (inboundUpdateError) {
+        setErrorMessage(getProductionOrderErrorMessage(inboundUpdateError))
+        return
+      }
 
-    setInboundCompleted(true)
-    setActionMessage(
-      `생산지시 ${prodNo}가 완제품 QC 합격 후 입고 처리되었습니다. 사용가능 자재 차감 및 완제품 재고 반영이 완료되었습니다.`
-    )
-    router.refresh()
+      setInboundCompleted(true)
+      setActionMessage(
+        `생산지시 ${prodNo}가 완제품 QC 합격 후 입고 처리되었습니다. 사용가능 자재 차감 및 완제품 재고 반영이 완료되었습니다.`
+      )
+      router.refresh()
+    })
   }
 
   if (isLoading) {
@@ -1003,7 +1015,7 @@ export default function ProductionOrderDetailPage({
         <div className="erp-btn-row">
           <button
             type="submit"
-            disabled={isSaving || isCompleted}
+            disabled={isSaving || isCompleted || isMutating}
             className="erp-btn-primary"
           >
             {isSaving ? '저장 중...' : '저장'}
@@ -1012,7 +1024,7 @@ export default function ProductionOrderDetailPage({
           <button
             type="button"
             onClick={handleCreateQcRequest}
-            disabled={!canCreateFinalQc}
+            disabled={!canCreateFinalQc || isMutating}
             className="erp-btn-secondary"
           >
             완제품 QC 의뢰 생성
@@ -1021,7 +1033,7 @@ export default function ProductionOrderDetailPage({
           <button
             type="button"
             onClick={handleStartProduction}
-            disabled={isCompleted}
+            disabled={isCompleted || isMutating}
             className="erp-btn-secondary"
           >
             생산시작
@@ -1030,7 +1042,7 @@ export default function ProductionOrderDetailPage({
           <button
             type="button"
             onClick={handleCompleteProduction}
-            disabled={isCompleted || !canProdComplete}
+            disabled={isCompleted || !canProdComplete || isMutating}
             className="erp-btn-secondary"
           >
             생산완료
@@ -1039,7 +1051,7 @@ export default function ProductionOrderDetailPage({
           <button
             type="button"
             onClick={handleInboundProduction}
-            disabled={!canInbound || !canReceiveStock}
+            disabled={!canInbound || !canReceiveStock || isMutating}
             className="erp-btn-secondary"
           >
             입고처리

@@ -13,6 +13,7 @@ import ApprovalProcessHistoryPanel from '@/components/approvals/ApprovalProcessH
 import ApprovalDraftLoadDialog from '@/components/approvals/ApprovalDraftLoadDialog'
 import { DraftFormErrorBanner, DraftFormWarningBanner } from '@/components/approvals/DraftFormAlertBanners'
 import { useApprovalDraftForm } from '@/components/approvals/useApprovalDraftForm'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 const AUTOSAVE_KEY = 'approval-general-draft-v2'
 
@@ -52,6 +53,7 @@ function NewApprovalPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [loadDialogOpen, setLoadDialogOpen] = useState(false)
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
 
   const initialResubmitDocId = useMemo(() => {
     const raw = searchParams.get('resubmit')
@@ -132,17 +134,21 @@ function NewApprovalPageInner() {
       form.reportValidity()
       return
     }
-    const ok = await submitDraft()
-    if (!ok) return
-    allowLeavingWithoutBeforeUnloadPrompt()
-    closePopupOrNavigate(router)
+    await runSingleSubmit(async () => {
+      const ok = await submitDraft()
+      if (!ok) return
+      allowLeavingWithoutBeforeUnloadPrompt()
+      closePopupOrNavigate(router)
+    })
   }
 
   const handleSaveDraft = async () => {
-    const r = await saveDraftNow()
-    if (r.ok) {
-      toast.success(r.localOnly ? '브라우저에 임시저장했습니다.' : '임시저장했습니다. (서버·브라우저)')
-    }
+    await runSingleSubmit(async () => {
+      const r = await saveDraftNow()
+      if (r.ok) {
+        toast.success(r.localOnly ? '브라우저에 임시저장했습니다.' : '임시저장했습니다. (서버·브라우저)')
+      }
+    })
   }
 
   const handleDeleteDraft = async () => {
@@ -150,18 +156,20 @@ function NewApprovalPageInner() {
       ? '이 문서를 삭제합니다. 복구할 수 없습니다. 계속할까요?'
       : '작성 중인 내용과 임시저장을 모두 삭제할까요?'
     if (!confirm(msg)) return
-    const r = await deleteDraftDocument()
-    if (r.ok) {
-      toast.success('삭제했습니다.')
-      if (resubmitDocId && typeof window !== 'undefined' && window.opener && !window.opener.closed) {
-        try {
-          window.opener.location.reload()
-        } catch {
-          /* ignore */
+    await runSingleSubmit(async () => {
+      const r = await deleteDraftDocument()
+      if (r.ok) {
+        toast.success('삭제했습니다.')
+        if (resubmitDocId && typeof window !== 'undefined' && window.opener && !window.opener.closed) {
+          try {
+            window.opener.location.reload()
+          } catch {
+            /* ignore */
+          }
+          window.close()
         }
-        window.close()
       }
-    }
+    })
   }
 
   if (isLoading || isResubmitHydrating) {
@@ -282,7 +290,7 @@ function NewApprovalPageInner() {
               <button
                 type="button"
                 onClick={() => void handleSaveDraft()}
-                disabled={isDraftSaving}
+                disabled={isDraftSaving || isMutating}
                 className="rounded-lg border-2 border-black bg-amber-100 px-4 py-2 text-sm font-black text-gray-900 disabled:opacity-50"
               >
                 {isDraftSaving ? '저장 중…' : '임시저장'}
@@ -299,7 +307,7 @@ function NewApprovalPageInner() {
               <button
                 type="button"
                 onClick={() => void handleDeleteDraft()}
-                disabled={isDraftDeleting}
+                disabled={isDraftDeleting || isMutating}
                 className="rounded-lg border border-red-300 bg-red-50 px-4 py-2 text-sm font-black text-red-800 disabled:opacity-50"
               >
                 {isDraftDeleting ? '삭제 중…' : '삭제'}
@@ -315,7 +323,7 @@ function NewApprovalPageInner() {
               </Link>
               <button
                 type="submit"
-                disabled={isSaving || !writerHasApprovalRight}
+                disabled={isSaving || isMutating || !writerHasApprovalRight}
                 className="rounded-lg border-2 border-black bg-blue-600 px-4 py-2 text-sm font-black text-white disabled:opacity-50"
               >
                 {isSaving ? '처리 중…' : isResubmitMode ? '재상신' : '작성 후 상신'}

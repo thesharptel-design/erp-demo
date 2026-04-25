@@ -11,6 +11,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 type PostRow = {
   id: string
@@ -23,6 +24,7 @@ type PostRow = {
 
 export default function EditBoardPostPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
   const [postId, setPostId] = useState<string | null>(null)
   const [category, setCategory] = useState('')
   const [title, setTitle] = useState('')
@@ -115,9 +117,10 @@ export default function EditBoardPostPage({ params }: { params: Promise<{ id: st
       toast.error('제목을 입력하세요')
       return
     }
-    setSaving(true)
-    setErrorMessage('')
-    try {
+    await runSingleSubmit(async () => {
+      setSaving(true)
+      setErrorMessage('')
+      try {
       const {
         data: { user },
       } = await supabase.auth.getUser()
@@ -146,14 +149,15 @@ export default function EditBoardPostPage({ params }: { params: Promise<{ id: st
       }
       router.push(`/groupware/board/${postId}`)
       router.refresh()
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : '저장에 실패했습니다.'
-      setErrorMessage(msg)
-      toast.error(msg)
-    } finally {
-      setSaving(false)
-    }
-  }, [bodyHtml, canWriteNotice, category, isNotice, postId, saving, tabMoveOnly, title, router])
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : '저장에 실패했습니다.'
+        setErrorMessage(msg)
+        toast.error(msg)
+      } finally {
+        setSaving(false)
+      }
+    })
+  }, [bodyHtml, canWriteNotice, category, isNotice, postId, saving, tabMoveOnly, title, router, runSingleSubmit])
 
   if (!ready) {
     return <div className="mx-auto max-w-4xl p-4 text-sm text-gray-600">불러오는 중…</div>
@@ -219,7 +223,7 @@ export default function EditBoardPostPage({ params }: { params: Promise<{ id: st
             <button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={saving}
+              disabled={saving || isMutating}
               className="inline-flex items-center justify-center rounded bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
             >
               {saving ? '저장 중…' : '저장'}

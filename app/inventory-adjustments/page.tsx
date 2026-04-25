@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import SearchableCombobox from '@/components/SearchableCombobox'
 import { getAllowedWarehouseIds, getCurrentUserPermissions } from '@/lib/permissions'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 type ItemRow = {
   id: number
@@ -67,7 +68,7 @@ export default function InventoryAdjustmentsPage() {
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([])
   const [allowedWarehouseIds, setAllowedWarehouseIds] = useState<number[] | null>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [isSaving, setIsSaving] = useState(false)
+  const { isSubmitting: isSaving, run: runSingleSubmit } = useSingleSubmit()
   const [errorMessage, setErrorMessage] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
 
@@ -266,58 +267,55 @@ export default function InventoryAdjustmentsPage() {
       return
     }
 
-    setIsSaving(true)
+    await runSingleSubmit(async () => {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
 
-    try {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
+        const response = await fetch('/api/inventory/adjust', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session?.access_token ?? ''}`,
+          },
+          body: JSON.stringify({
+            item_id: selectedItemId,
+            warehouse_id: selectedWarehouseId,
+            adjustment_type: adjustmentType,
+            qty,
+            remarks: remarks.trim(),
+          }),
+        })
 
-      const response = await fetch('/api/inventory/adjust', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session?.access_token ?? ''}`,
-        },
-        body: JSON.stringify({
-          item_id: selectedItemId,
-          warehouse_id: selectedWarehouseId,
-          adjustment_type: adjustmentType,
-          qty,
-          remarks: remarks.trim(),
-        }),
-      })
+        const result = await response.json()
 
-      const result = await response.json()
+        if (!response.ok) {
+          setErrorMessage(result?.error ?? '재고조정 중 오류가 발생했습니다.')
+          return
+        }
 
-      if (!response.ok) {
-        setErrorMessage(result?.error ?? '재고조정 중 오류가 발생했습니다.')
-        setIsSaving(false)
-        return
+        setSuccessMessage('재고조정이 저장되었습니다.')
+        setAdjustQty('0')
+        setRemarks('')
+
+        let inventoryReloadQuery = supabase
+          .from('inventory')
+          .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty, lot_no, exp_date, serial_no')
+          .order('item_id')
+        if (allowedWarehouseIds !== null) {
+          inventoryReloadQuery = inventoryReloadQuery.in('warehouse_id', allowedWarehouseIds)
+        }
+        const { data: inventoryData, error: inventoryError } = await inventoryReloadQuery
+
+        if (!inventoryError) {
+          setInventoryRows((inventoryData as InventoryRow[]) ?? [])
+        }
+      } catch (error) {
+        console.error(error)
+        setErrorMessage('재고조정 중 오류가 발생했습니다.')
       }
-
-      setSuccessMessage('재고조정이 저장되었습니다.')
-      setAdjustQty('0')
-      setRemarks('')
-
-      let inventoryReloadQuery = supabase
-        .from('inventory')
-        .select('id, item_id, warehouse_id, current_qty, available_qty, quarantine_qty, lot_no, exp_date, serial_no')
-        .order('item_id')
-      if (allowedWarehouseIds !== null) {
-        inventoryReloadQuery = inventoryReloadQuery.in('warehouse_id', allowedWarehouseIds)
-      }
-      const { data: inventoryData, error: inventoryError } = await inventoryReloadQuery
-
-      if (!inventoryError) {
-        setInventoryRows((inventoryData as InventoryRow[]) ?? [])
-      }
-    } catch (error) {
-      console.error(error)
-      setErrorMessage('재고조정 중 오류가 발생했습니다.')
-    } finally {
-      setIsSaving(false)
-    }
+    })
   }
 
   if (isLoading) {

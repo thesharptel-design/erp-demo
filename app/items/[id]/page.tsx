@@ -28,9 +28,11 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 export default function ItemEditPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter()
+  const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
   const resolvedParams = React.use(params)
   const id = resolvedParams.id
 
@@ -122,9 +124,9 @@ export default function ItemEditPage({ params }: { params: Promise<{ id: string 
       setErrorMessage('품목 수정 권한이 없습니다.')
       return
     }
-    setIsSaving(true)
-
-    try {
+    await runSingleSubmit(async () => {
+      setIsSaving(true)
+      try {
       const { data: duplicate } = await supabase.from('items').select('id').eq('item_name', itemName.trim()).neq('id', id).maybeSingle()
 
       if (duplicate) {
@@ -172,11 +174,12 @@ export default function ItemEditPage({ params }: { params: Promise<{ id: string 
       alert('품목 정보가 수정되었습니다.')
       router.push('/items')
       router.refresh()
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '오류가 발생했습니다.'
-      setErrorMessage(msg)
-      setIsSaving(false)
-    }
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : '오류가 발생했습니다.'
+        setErrorMessage(msg)
+        setIsSaving(false)
+      }
+    })
   }
 
   async function handleHardDelete() {
@@ -188,30 +191,32 @@ export default function ItemEditPage({ params }: { params: Promise<{ id: string 
       alert('잘못된 품목 ID입니다.')
       return
     }
-    setIsDeleting(true)
-    const metaSnapshot = buildProcessMetadata(
-      {
-        category: processMeta.category ?? '',
-        checks: processMeta.checks ?? {},
-        sopFiles: processMeta.sopFiles ?? [],
-      },
-      processCategories
-    )
-    const { errorMessage: storageErr } = await deleteSopFilesForItem(supabase, itemIdNum, metaSnapshot)
-    if (storageErr) {
-      alert(`스토리지 정리 실패: ${storageErr}`)
+    await runSingleSubmit(async () => {
+      setIsDeleting(true)
+      const metaSnapshot = buildProcessMetadata(
+        {
+          category: processMeta.category ?? '',
+          checks: processMeta.checks ?? {},
+          sopFiles: processMeta.sopFiles ?? [],
+        },
+        processCategories
+      )
+      const { errorMessage: storageErr } = await deleteSopFilesForItem(supabase, itemIdNum, metaSnapshot)
+      if (storageErr) {
+        alert(`스토리지 정리 실패: ${storageErr}`)
+        setIsDeleting(false)
+        return
+      }
+      const { error } = await supabase.from('items').delete().eq('id', id)
       setIsDeleting(false)
-      return
-    }
-    const { error } = await supabase.from('items').delete().eq('id', id)
-    setIsDeleting(false)
-    if (error) {
-      alert(`품목 삭제 실패: ${error.message}`)
-      return
-    }
-    setDeleteOpen(false)
-    router.push('/items')
-    router.refresh()
+      if (error) {
+        alert(`품목 삭제 실패: ${error.message}`)
+        return
+      }
+      setDeleteOpen(false)
+      router.push('/items')
+      router.refresh()
+    })
   }
 
   const sopFiles = processMeta.sopFiles ?? []
@@ -531,7 +536,7 @@ export default function ItemEditPage({ params }: { params: Promise<{ id: string 
         <div className="mt-8 flex flex-wrap gap-3">
           <button
             type="submit"
-            disabled={isSaving || !canEdit}
+            disabled={isSaving || isMutating || !canEdit}
             className="rounded-xl bg-black px-6 py-3 text-sm font-bold text-white shadow-sm transition-colors hover:bg-gray-800 disabled:opacity-50"
           >
             {isSaving ? '저장 중...' : '수정사항 저장'}
@@ -553,7 +558,7 @@ export default function ItemEditPage({ params }: { params: Promise<{ id: string 
             <AlertDialogTrigger asChild>
               <button
                 type="button"
-                disabled={!canEdit}
+                disabled={!canEdit || isMutating}
                 className="rounded-xl border border-red-200 bg-white px-6 py-3 text-sm font-bold text-red-700 transition-all hover:bg-red-50 disabled:opacity-50"
               >
                 품목 삭제
