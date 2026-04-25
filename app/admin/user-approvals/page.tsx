@@ -137,6 +137,11 @@ function parseWarehouseIdsFromCodes(raw: unknown, warehouses: Warehouse[]) {
   return { ids: Array.from(new Set(ids)), unknownCodes };
 }
 
+function formatWarehouseLabel(warehouse: Warehouse): string {
+  const normalizedCode = warehouse.code ?? `WH-${String(warehouse.id).padStart(3, '0')}`;
+  return `[${normalizedCode}] ${warehouse.name}`.trim();
+}
+
 export default function UserApprovalsPage() {
   const [pendingUsers, setPendingUsers] = useState<any[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -568,7 +573,7 @@ export default function UserApprovalsPage() {
                       }))
                     }
                   />
-                  <span>{warehouse.code ?? `WH-${String(warehouse.id).padStart(3, '0')}`}</span>
+                  <span>{formatWarehouseLabel(warehouse)}</span>
                 </label>
               ))}
             </div>
@@ -577,8 +582,7 @@ export default function UserApprovalsPage() {
             <p className="mb-2 text-[10px] font-black text-gray-500">권한</p>
             <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
               {PERMISSION_FIELDS.map((field) => (
-                <label key={field.key} className="flex items-center justify-between gap-2 rounded bg-white px-2 py-1">
-                  <span>{field.label}</span>
+                <label key={field.key} className="flex items-center gap-2 rounded bg-white px-2 py-1">
                   <input
                     type="checkbox"
                     checked={newUser.permissions[field.key]}
@@ -590,6 +594,7 @@ export default function UserApprovalsPage() {
                       }))
                     }
                   />
+                  <span>{field.label}</span>
                 </label>
               ))}
             </div>
