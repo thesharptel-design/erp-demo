@@ -4,6 +4,10 @@ import { Color } from '@tiptap/extension-color'
 import { Highlight } from '@tiptap/extension-highlight'
 import { Image } from '@tiptap/extension-image'
 import { Placeholder } from '@tiptap/extension-placeholder'
+import { Table } from '@tiptap/extension-table'
+import { TableCell } from '@tiptap/extension-table-cell'
+import { TableHeader } from '@tiptap/extension-table-header'
+import { TableRow } from '@tiptap/extension-table-row'
 import { TextAlign } from '@tiptap/extension-text-align'
 import { TextStyle } from '@tiptap/extension-text-style'
 import { Underline } from '@tiptap/extension-underline'
@@ -23,6 +27,7 @@ import {
   ListOrdered,
   Redo2,
   Strikethrough,
+  Table2,
   Type,
   Underline as UnderlineIcon,
   Undo2,
@@ -197,9 +202,13 @@ export default function ApprovalDraftRichEditor({
   const [isUploadingImage, setIsUploadingImage] = useState(false)
   const [showTextColorPalette, setShowTextColorPalette] = useState(false)
   const [showHighlightPalette, setShowHighlightPalette] = useState(false)
+  const [showTableMenu, setShowTableMenu] = useState(false)
+  const [tableRows, setTableRows] = useState(3)
+  const [tableCols, setTableCols] = useState(3)
   const editorRef = useRef<Editor | null>(null)
   const disabledRef = useRef(disabled)
   const colorMenuRef = useRef<HTMLDivElement | null>(null)
+  const tableMenuRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     disabledRef.current = disabled
@@ -210,13 +219,15 @@ export default function ApprovalDraftRichEditor({
       const target = event.target as Node | null
       if (!target) return
       if (colorMenuRef.current?.contains(target)) return
+      if (tableMenuRef.current?.contains(target)) return
       setShowTextColorPalette(false)
       setShowHighlightPalette(false)
+      setShowTableMenu(false)
     }
-    if (!showTextColorPalette && !showHighlightPalette) return
+    if (!showTextColorPalette && !showHighlightPalette && !showTableMenu) return
     window.addEventListener('mousedown', onClickOutside)
     return () => window.removeEventListener('mousedown', onClickOutside)
-  }, [showHighlightPalette, showTextColorPalette])
+  }, [showHighlightPalette, showTableMenu, showTextColorPalette])
 
   const uploadImageFile = useCallback(async (file: File): Promise<string> => {
     const {
@@ -284,6 +295,12 @@ export default function ApprovalDraftRichEditor({
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Placeholder.configure({ placeholder }),
       Image.configure({ allowBase64: false }),
+      Table.configure({
+        resizable: true,
+      }),
+      TableRow,
+      TableHeader,
+      TableCell,
     ],
     enableInputRules: false,
     content: toInitialContent(value),
@@ -294,6 +311,7 @@ export default function ApprovalDraftRichEditor({
           'focus:outline-none min-h-[200px] px-3 py-2 text-sm leading-relaxed text-gray-900',
           '[&_img]:max-h-80 [&_img]:max-w-full [&_img]:rounded [&_img]:border [&_img]:border-gray-200',
           '[&_li]:my-0.5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-6',
+          '[&_table]:my-2 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-gray-300 [&_td]:p-2 [&_th]:border [&_th]:border-gray-300 [&_th]:bg-gray-100 [&_th]:p-2',
           editorSurfaceClassName,
         ]
           .filter(Boolean)
@@ -628,6 +646,153 @@ export default function ApprovalDraftRichEditor({
       >
         <AlignJustify className="h-4 w-4" />
       </button>
+      {sep}
+      <div className="relative">
+        <button
+          type="button"
+          className={editor.isActive('table') ? btnOn : btn}
+          onClick={() => {
+            setShowTableMenu((prev) => !prev)
+            setShowTextColorPalette(false)
+            setShowHighlightPalette(false)
+          }}
+          aria-label="표 메뉴"
+          title="표 메뉴"
+        >
+          <Table2 className="h-4 w-4" />
+        </button>
+        {showTableMenu ? (
+          <div
+            ref={tableMenuRef}
+            className="absolute left-0 top-9 z-20 w-[320px] rounded-md border border-gray-300 bg-white p-2 shadow-lg"
+          >
+          <div className="space-y-2">
+            <div className="rounded border border-gray-200 bg-gray-50 p-2">
+              <p className="mb-1 text-[11px] font-bold text-gray-600">표 삽입</p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={1}
+                  max={12}
+                  value={tableRows}
+                  onChange={(e) => setTableRows(Math.max(1, Math.min(12, Number(e.target.value) || 1)))}
+                  className="h-7 w-16 rounded border border-gray-300 px-2 text-xs font-bold"
+                  aria-label="행 수"
+                />
+                <span className="text-xs font-bold text-gray-500">x</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={12}
+                  value={tableCols}
+                  onChange={(e) => setTableCols(Math.max(1, Math.min(12, Number(e.target.value) || 1)))}
+                  className="h-7 w-16 rounded border border-gray-300 px-2 text-xs font-bold"
+                  aria-label="열 수"
+                />
+                <button
+                  type="button"
+                  className="ms-auto rounded border border-blue-600 bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700 hover:bg-blue-100"
+                  onClick={() => {
+                    editor
+                      .chain()
+                      .focus()
+                      .insertTable({ rows: tableRows, cols: tableCols, withHeaderRow: true })
+                      .run()
+                  }}
+                >
+                  삽입
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                className="rounded border border-gray-300 px-2 py-1 text-[11px] font-bold hover:bg-gray-50"
+                onClick={() => editor.chain().focus().addRowBefore().run()}
+                disabled={!editor.isActive('table')}
+              >
+                행 위 추가
+              </button>
+              <button
+                type="button"
+                className="rounded border border-gray-300 px-2 py-1 text-[11px] font-bold hover:bg-gray-50"
+                onClick={() => editor.chain().focus().addRowAfter().run()}
+                disabled={!editor.isActive('table')}
+              >
+                행 아래 추가
+              </button>
+              <button
+                type="button"
+                className="rounded border border-gray-300 px-2 py-1 text-[11px] font-bold hover:bg-gray-50"
+                onClick={() => editor.chain().focus().addColumnBefore().run()}
+                disabled={!editor.isActive('table')}
+              >
+                열 왼쪽 추가
+              </button>
+              <button
+                type="button"
+                className="rounded border border-gray-300 px-2 py-1 text-[11px] font-bold hover:bg-gray-50"
+                onClick={() => editor.chain().focus().addColumnAfter().run()}
+                disabled={!editor.isActive('table')}
+              >
+                열 오른쪽 추가
+              </button>
+              <button
+                type="button"
+                className="rounded border border-gray-300 px-2 py-1 text-[11px] font-bold hover:bg-gray-50"
+                onClick={() => editor.chain().focus().mergeCells().run()}
+                disabled={!editor.isActive('table')}
+              >
+                셀 병합
+              </button>
+              <button
+                type="button"
+                className="rounded border border-gray-300 px-2 py-1 text-[11px] font-bold hover:bg-gray-50"
+                onClick={() => editor.chain().focus().splitCell().run()}
+                disabled={!editor.isActive('table')}
+              >
+                셀 분할
+              </button>
+              <button
+                type="button"
+                className="rounded border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-bold text-red-700 hover:bg-red-100"
+                onClick={() => editor.chain().focus().deleteRow().run()}
+                disabled={!editor.isActive('table')}
+              >
+                행 삭제
+              </button>
+              <button
+                type="button"
+                className="rounded border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-bold text-red-700 hover:bg-red-100"
+                onClick={() => editor.chain().focus().deleteColumn().run()}
+                disabled={!editor.isActive('table')}
+              >
+                열 삭제
+              </button>
+              <button
+                type="button"
+                className="rounded border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-bold text-red-700 hover:bg-red-100"
+                onClick={() => {
+                  ;((editor.chain().focus() as unknown as { deleteCell: () => { run: () => void } }).deleteCell()).run()
+                }}
+                disabled={!editor.isActive('table')}
+              >
+                셀 삭제
+              </button>
+              <button
+                type="button"
+                className="rounded border border-red-600 bg-red-100 px-2 py-1 text-[11px] font-black text-red-800 hover:bg-red-200"
+                onClick={() => editor.chain().focus().deleteTable().run()}
+                disabled={!editor.isActive('table')}
+              >
+                표 삭제
+              </button>
+            </div>
+          </div>
+          </div>
+        ) : null}
+      </div>
       {sep}
       <button
         type="button"
