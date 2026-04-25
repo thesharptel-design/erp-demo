@@ -142,41 +142,36 @@ export default function LoginPage() {
         if (authError) throw authError
         
         if (data.user) {
-          const getDefaultPerms = (dept: string) => ({
-            can_manage_master: false,
-            can_sales_manage: ['영업', '구매', '영업팀', '구매팀'].includes(dept),
-            can_material_manage: ['자재', '자재팀'].includes(dept),
-            can_production_manage: ['생산', '생산팀'].includes(dept),
-            can_qc_manage: ['품질', '품질팀', 'QC', 'QC팀', '품질관리부'].includes(dept),
-            can_admin_manage: false,
-            // legacy fallback columns
-            can_po_create: ['영업', '구매', '영업팀', '구매팀'].includes(dept),
-            can_quote_create: ['영업', '영업팀'].includes(dept),
-            can_receive_stock: ['자재', '자재팀'].includes(dept),
-            can_prod_complete: ['생산', '생산팀'].includes(dept),
-            can_approve: ['품질', '품질팀', 'QC', 'QC팀', '품질관리부'].includes(dept),
-            can_manage_permissions: false
-          });
+          const accessToken = data.session?.access_token ?? (await supabase.auth.getSession()).data.session?.access_token
+          if (!accessToken) throw new Error('회원가입 세션을 확인할 수 없습니다. 다시 시도해 주세요.')
 
-          const { error: dbError } = await supabase.from('app_users').upsert({
-            id: data.user.id,
-            email: email,
-            user_name: userName,
-            user_kind: userKind,
-            department: userKind === 'staff' ? department : '',
-            job_rank: userKind === 'staff' ? jobRank : '',
-            school_name: userKind === 'staff' ? '' : schoolName,
-            training_program: userKind === 'staff' ? '' : trainingProgram,
-            teacher_subject: userKind === 'teacher' ? teacherSubject : '',
-            grade_level: userKind === 'student' ? gradeLevel : '',
-            major: userKind === 'student' ? major : '',
-            phone: phone,
-            privacy_consented: privacyAgreed,
-            role_name: 'pending',
-            is_active: true,
-            ...getDefaultPerms(department)
+          const response = await fetch('/api/auth/register-profile', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+              user_name: userName,
+              email,
+              phone,
+              user_kind: userKind,
+              department,
+              job_rank: jobRank,
+              school_name: schoolName,
+              training_program: trainingProgram,
+              teacher_subject: teacherSubject,
+              grade_level: gradeLevel,
+              major,
+              privacy_consented: privacyAgreed,
+              role_name: 'pending',
+            }),
           })
-          if (dbError) throw dbError
+
+          if (!response.ok) {
+            const result = (await response.json().catch(() => ({}))) as { error?: string }
+            throw new Error(result.error || '가입 프로필 저장 중 오류가 발생했습니다.')
+          }
         }
         
         await supabase.auth.signOut() 
