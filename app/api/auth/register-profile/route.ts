@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { generateEmployeeNoWithRetry } from '@/lib/employee-no'
+import { getDefaultPerms } from '@/lib/staff-profile-options'
 
 const ALLOWED_USER_KINDS = ['student', 'teacher', 'staff'] as const
 type UserKind = (typeof ALLOWED_USER_KINDS)[number]
@@ -28,29 +29,6 @@ function normalizeText(value: unknown): string {
 function normalizeNullableText(value: unknown): string | null {
   const normalized = normalizeText(value)
   return normalized ? normalized : null
-}
-
-function getDefaultPerms(dept: string) {
-  const isSales = ['영업', '구매', '영업팀', '구매팀'].includes(dept)
-  const isMaterial = ['자재', '자재팀'].includes(dept)
-  const isProduction = ['생산', '생산팀'].includes(dept)
-  const isQc = ['품질', '품질팀', 'QC', 'QC팀', '품질관리부'].includes(dept)
-
-  return {
-    can_manage_master: false,
-    can_sales_manage: isSales,
-    can_material_manage: isMaterial,
-    can_production_manage: isProduction,
-    can_qc_manage: isQc,
-    can_admin_manage: false,
-    can_manage_permissions: false,
-    // legacy fallback columns
-    can_po_create: isSales,
-    can_quote_create: ['영업', '영업팀'].includes(dept),
-    can_receive_stock: isMaterial,
-    can_prod_complete: isProduction,
-    can_approve: isQc,
-  }
 }
 
 function validateByUserKind(payload: {

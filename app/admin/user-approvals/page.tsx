@@ -4,9 +4,14 @@ import { useEffect, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import * as XLSX from 'xlsx';
 import SearchableCombobox from '@/components/SearchableCombobox';
+import {
+  getDefaultPerms,
+  getStaffDepartmentValues,
+  getStaffRankValues,
+  STAFF_DEPARTMENTS,
+  STAFF_RANKS,
+} from '@/lib/staff-profile-options';
 
-const VALID_DEPARTMENTS = ['영업', '자재', '생산', '구매', '품질', '품질팀', 'QC', '경영지원', '관리'];
-const VALID_RANKS = ['사원', '대리', '과장', '차장', '부장', '이사', '대표'];
 const ALLOWED_USER_KINDS = ['student', 'teacher', 'staff'] as const;
 const PAGE_SIZE = 25;
 type UserKind = (typeof ALLOWED_USER_KINDS)[number];
@@ -93,21 +98,6 @@ const EMPTY_NEW_USER_FORM: NewUserForm = {
   permissions: { ...EMPTY_PERMISSIONS },
 };
 
-const getDefaultPerms = (dept: string) => ({
-  can_manage_master: false,
-  can_sales_manage: ['영업', '구매', '영업팀', '구매팀'].includes(dept),
-  can_material_manage: ['자재', '자재팀'].includes(dept),
-  can_production_manage: ['생산', '생산팀'].includes(dept),
-  can_qc_manage: ['품질', '품질팀', 'QC', 'QC팀', '품질관리부'].includes(dept),
-  can_admin_manage: false,
-  can_po_create: ['영업', '구매', '영업팀', '구매팀'].includes(dept),
-  can_quote_create: ['영업', '영업팀'].includes(dept),
-  can_receive_stock: ['자재', '자재팀'].includes(dept),
-  can_prod_complete: ['생산', '생산팀'].includes(dept),
-  can_approve: ['품질', '품질팀', 'QC', 'QC팀', '품질관리부'].includes(dept),
-  can_manage_permissions: false,
-});
-
 function parseBooleanCell(value: unknown): boolean {
   const normalized = String(value ?? '').trim().toLowerCase();
   return ['true', '1', 'y', 'yes', 'o', 'on'].includes(normalized);
@@ -151,8 +141,8 @@ export default function UserApprovalsPage() {
   const [newUser, setNewUser] = useState<NewUserForm>({ ...EMPTY_NEW_USER_FORM });
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const departmentOptions = VALID_DEPARTMENTS.map((d) => ({ value: d, label: d }));
-  const rankOptions = VALID_RANKS.map((r) => ({ value: r, label: r }));
+  const departmentOptions = STAFF_DEPARTMENTS;
+  const rankOptions = STAFF_RANKS;
   const userKindOptions = ALLOWED_USER_KINDS.map((kind) => ({ value: kind, label: USER_KIND_LABELS[kind] }));
   const totalPages = Math.max(1, Math.ceil(pendingUsers.length / PAGE_SIZE));
   const pageUsers = pendingUsers.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
@@ -355,8 +345,8 @@ export default function UserApprovalsPage() {
         학년: '선택',
         전공: '선택',
         과목: '선택',
-        부서: `선택 (예시: ${VALID_DEPARTMENTS.join('/')})`,
-        직급: `선택 (예시: ${VALID_RANKS.join('/')})`,
+        부서: `선택 (예시: ${getStaffDepartmentValues().join('/')})`,
+        직급: `선택 (예시: ${getStaffRankValues().join('/')})`,
         창고코드: 'WH-01~WH-20 형식, 복수는 쉼표',
         권한_기준정보: 'Y/N',
         권한_영업구매: 'Y/N',

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import * as XLSX from 'xlsx';
 import SearchableCombobox from '@/components/SearchableCombobox';
 import { supabase } from '@/lib/supabase';
+import { STAFF_DEPARTMENTS, STAFF_RANKS } from '@/lib/staff-profile-options';
 
 type UserKind = 'student' | 'teacher' | 'staff';
 
@@ -73,14 +74,6 @@ type EditForm = {
 
 const PAGE_SIZE = 25;
 
-const DEPARTMENT_OPTIONS = ['영업', '자재', '생산', '구매', 'QC', '경영지원', '관리'].map((value) => ({
-  value,
-  label: value,
-}));
-const RANK_OPTIONS = ['사원', '대리', '과장', '차장', '부장', '이사', '대표'].map((value) => ({
-  value,
-  label: value,
-}));
 const USER_KIND_OPTIONS: { value: UserKind; label: string }[] = [
   { value: 'staff', label: '직원' },
   { value: 'teacher', label: '교사' },
@@ -863,7 +856,7 @@ export default function UserPermissionsPage() {
                       <SearchableCombobox
                         value={editForm.department}
                         onChange={(value) => setEditForm((prev) => ({ ...prev, department: value }))}
-                        options={DEPARTMENT_OPTIONS}
+                        options={STAFF_DEPARTMENTS}
                         placeholder="선택"
                         creatable
                       />
@@ -873,7 +866,7 @@ export default function UserPermissionsPage() {
                       <SearchableCombobox
                         value={editForm.job_rank}
                         onChange={(value) => setEditForm((prev) => ({ ...prev, job_rank: value }))}
-                        options={RANK_OPTIONS}
+                        options={STAFF_RANKS}
                         placeholder="선택"
                         creatable
                       />

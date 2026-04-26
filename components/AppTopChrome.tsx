@@ -29,6 +29,7 @@ function resolveStaffIconByDepartment(department: string | null | undefined): st
   const dept = String(department ?? '').trim()
   if (!dept) return '👔'
   if (dept.includes('영업') || dept.includes('구매')) return '💼'
+  if (dept.includes('여과')) return '🫗'
   if (dept.includes('자재')) return '📦'
   if (dept.includes('생산')) return '🏭'
   if (dept.includes('품질') || dept.toUpperCase().includes('QC')) return '🧪'

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import SearchableCombobox from '@/components/SearchableCombobox'
+import { STAFF_DEPARTMENTS, STAFF_RANKS } from '@/lib/staff-profile-options'
 
 /** Dev Strict Mode runs effects twice; a bad refresh token would otherwise trigger two failing getSession calls. */
 let loginSessionProbeInFlight = false
@@ -34,25 +35,8 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [isChecking, setIsChecking] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
-  const departmentOptions = [
-    { value: '영업', label: '영업팀' },
-    { value: '자재', label: '자재팀' },
-    { value: '생산', label: '생산팀' },
-    { value: '구매', label: '구매팀' },
-    { value: '품질', label: '품질팀' },
-    { value: 'QC', label: 'QC' },
-    { value: '경영지원', label: '경영지원팀' },
-    { value: '관리', label: '관리팀' },
-  ]
-  const rankOptions = [
-    { value: '사원', label: '사원' },
-    { value: '대리', label: '대리' },
-    { value: '과장', label: '과장' },
-    { value: '차장', label: '차장' },
-    { value: '부장', label: '부장' },
-    { value: '이사', label: '이사' },
-    { value: '대표', label: '대표' },
-  ]
+  const departmentOptions = STAFF_DEPARTMENTS
+  const rankOptions = STAFF_RANKS
   const userKindOptions = [
     { value: 'staff', label: '직원' },
     { value: 'teacher', label: '교사' },
