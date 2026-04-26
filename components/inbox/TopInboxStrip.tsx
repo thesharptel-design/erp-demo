@@ -383,6 +383,28 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
     rows.sort((a, b) => new Date(b.latest_created_at).getTime() - new Date(a.latest_created_at).getTime())
     return rows
   }, [messages])
+  const sentThreadItems = useMemo<SentMessageRow[]>(() => {
+    const directMap = new Map<string, SentMessageRow>()
+    const rows: SentMessageRow[] = []
+    for (const row of sentMessages) {
+      if (row.kind !== 'direct') {
+        rows.push(row)
+        continue
+      }
+      const tid = row.thread_id?.trim()
+      if (!tid) {
+        rows.push(row)
+        continue
+      }
+      if (directMap.has(tid)) {
+        continue
+      }
+      directMap.set(tid, row)
+      rows.push(row)
+    }
+    rows.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    return rows
+  }, [sentMessages])
 
   const inboxHasMore = messages.length > 0 && messages.length === inboxLimit && inboxLimit < INBOX_MAX_FETCH
   const sentHasMore = sentMessages.length > 0 && sentMessages.length === sentLimit && sentLimit < INBOX_MAX_FETCH
@@ -500,7 +522,7 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
         onRowClick={(row) => {
           void markInboxThreadRead(row)
         }}
-        sentItems={sentMessages}
+        sentItems={sentThreadItems}
         sentLoading={sentLoading}
         onRefreshSent={() => {
           void fetchSentMessages()

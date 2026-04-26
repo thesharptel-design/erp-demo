@@ -395,7 +395,7 @@ export function MessageAnchorPanel({
     if (tab === 'compose') return '1:1 또는 전체 공지(관리자)로 발송합니다.'
     if (tab === 'inbox')
       return '미열람 쪽지는 행을 누르면 내용이 열리고, 보낸 사람에게 읽음으로 표시됩니다.'
-    return '내가 보낸 쪽지와 수신자 읽음 현황입니다.'
+    return '보낸 1:1 쪽지는 스레드별로 묶여 가장 최근 발송 한 건만 보입니다. 공지는 건별로 표시됩니다.'
   }
 
   const composeForm = (
@@ -743,14 +743,32 @@ export function MessageAnchorPanel({
                             ) : null}
                             <span className="break-words">{sentHeadline(row)}</span>
                           </span>
-                          <span className="shrink-0 text-[10px] font-bold text-gray-400">{formatWhen(row.created_at)}</span>
+                          <span
+                            className="shrink-0 text-[10px] font-bold text-gray-400"
+                            title={isBroadcast ? '이 공지가 발송된 시각' : '이 스레드에서 가장 마지막으로 보낸 쪽지 시각'}
+                          >
+                            {formatWhen(row.created_at)}
+                          </span>
                         </div>
                         <div className="w-full border-t border-gray-200" aria-hidden />
                         <p className="line-clamp-4 text-[11px] font-bold leading-snug text-gray-700">{row.body || ' '}</p>
-                        <p className="text-[10px] font-black text-violet-800">
-                          읽음 {read} / 수신 {total}
-                          {total > 100 ? ' · 미리보기 최대 100명' : null}
-                        </p>
+                        {isBroadcast ? (
+                          <p className="text-[10px] font-black text-violet-800">
+                            이 공지 · 읽음 {read} / 수신 {total}
+                            {total > 100 ? ' · 수신자 미리보기 최대 100명' : null}
+                          </p>
+                        ) : (
+                          <>
+                            <p className="text-[10px] font-bold text-gray-600">
+                              이 1:1 스레드에서 가장 마지막으로 보낸 쪽지 기준입니다.
+                            </p>
+                            <p className="text-[10px] font-black text-violet-800">
+                              상대 열람:{' '}
+                              {total <= 0 ? '—' : read >= total ? '읽음' : '미확인'}
+                              {total > 1 ? ` · 읽음 ${read} / 수신 ${total}` : null}
+                            </p>
+                          </>
+                        )}
                         {isBroadcast && total > 0 ? (
                           <button
                             type="button"
@@ -805,7 +823,7 @@ export function MessageAnchorPanel({
                     onClick={() => onLoadMoreSent()}
                     className="w-full rounded-lg border-2 border-dashed border-violet-300 bg-violet-50/50 py-2 text-[11px] font-black text-violet-900 hover:bg-violet-100 disabled:opacity-50"
                   >
-                    {sentLoadingMore ? '불러오는 중…' : '이전 쪽지 더보기'}
+                    {sentLoadingMore ? '불러오는 중…' : '더 많은 보낸 쪽지 불러오기'}
                   </button>
                 </div>
               ) : null}
