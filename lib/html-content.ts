@@ -19,6 +19,14 @@ export function isProbablyRichHtml(value: string): boolean {
 }
 
 /**
+ * 빈 `<p></p>` 는 높이 0 + margin 접힘으로 줄바꿈이 사라진 것처럼 보인다.
+ * 게시판 본문 등에서 연속 빈 줄이 유지되도록 `<p><br></p>` 로 통일한다.
+ */
+export function normalizeEmptyParagraphsInRichHtml(html: string): string {
+  return html.replace(/<p(\s[^>]*)?>(?:\s|&nbsp;|&#160;|\u00A0)*<\/p>/gi, '<p><br></p>')
+}
+
+/**
  * 텍스트가 없어도 본문으로 간주해야 하는 태그(표·미디어 등).
  * TipTap 표는 빈 셀만 있어도 `plainTextFromHtml`이 빈 문자열이 되므로, 여기서 비어 있지 않다고 처리한다.
  */

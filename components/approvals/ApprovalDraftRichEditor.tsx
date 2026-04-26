@@ -34,7 +34,12 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { isHtmlContentEffectivelyEmpty, plainTextToSafeEditorHtml } from '@/lib/html-content'
+import {
+  isHtmlContentEffectivelyEmpty,
+  normalizeEmptyParagraphsInRichHtml,
+  plainTextToSafeEditorHtml,
+} from '@/lib/html-content'
+import { enterSoftLineBreak } from '@/lib/tiptap-enter-soft-line-break'
 
 type ApprovalDraftRichEditorProps = {
   value: string
@@ -49,11 +54,20 @@ type ApprovalDraftRichEditorProps = {
   editorSurfaceClassName?: string
   /** Second toolbar row (e.g. board “FMKorea-style” chrome). */
   splitToolbar?: boolean
+  /**
+   * true일 때 저장 HTML만 빈 `<p></p>` → `<p><br></p>` 정규화(게시판 등). 에디터 동작은 기본과 동일.
+   */
+  stableBlankParagraphSpacing?: boolean
+  /**
+   * true일 때 본문에서 Enter는 줄 바꿈(`<br>`), Shift+Enter는 새 단띉. 목록·표·제목·코드블록은 Enter 기본 동작.
+   */
+  enterInsertsHardBreak?: boolean
 }
 
-function toInitialContent(raw: string): string {
+function toInitialContent(raw: string, normalizeBlanks: boolean): string {
   if (!raw.trim()) return '<p></p>'
-  return plainTextToSafeEditorHtml(raw)
+  const base = plainTextToSafeEditorHtml(raw)
+  return normalizeBlanks ? normalizeEmptyParagraphsInRichHtml(base) : base
 }
 
 function firstImageFromClipboard(event: ClipboardEvent): File | null {
@@ -197,6 +211,8 @@ export default function ApprovalDraftRichEditor({
   attachmentStorageKey = DEFAULT_ATTACHMENT_STORAGE_KEY,
   editorSurfaceClassName = '',
   splitToolbar = false,
+  stableBlankParagraphSpacing = false,
+  enterInsertsHardBreak = false,
 }: ApprovalDraftRichEditorProps) {
   const [uploadErrorMessage, setUploadErrorMessage] = useState('')
   const [isUploadingImage, setIsUploadingImage] = useState(false)
@@ -301,16 +317,18 @@ export default function ApprovalDraftRichEditor({
       TableRow,
       TableHeader,
       TableCell,
+      ...(enterInsertsHardBreak ? [enterSoftLineBreak] : []),
     ],
     enableInputRules: false,
-    content: toInitialContent(value),
+    content: toInitialContent(value, stableBlankParagraphSpacing),
     editable: !disabled,
     editorProps: {
       attributes: {
         class: [
-          'focus:outline-none min-h-[200px] px-3 py-2 text-sm leading-relaxed text-gray-900',
+          // 한 줄 높이 = 글자 크기 × 1.6 (엑셀 기본 줄간격과 같은 느낌)
+          'focus:outline-none min-h-[200px] px-3 py-2 text-sm leading-[1.6] text-gray-900 [&_p]:leading-[1.6] [&_li]:leading-[1.6] [&_h2]:leading-[1.6] [&_h3]:leading-[1.6] [&_td]:leading-[1.6] [&_th]:leading-[1.6]',
           '[&_img]:max-h-80 [&_img]:max-w-full [&_img]:rounded [&_img]:border [&_img]:border-gray-200',
-          '[&_li]:my-0.5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-1 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-6',
+          '[&_li]:my-0.5 [&_ol]:my-1 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:my-0 [&_ul]:my-1 [&_ul]:list-disc [&_ul]:pl-6',
           '[&_table]:my-2 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-gray-300 [&_td]:p-2 [&_th]:border [&_th]:border-gray-300 [&_th]:bg-gray-100 [&_th]:p-2',
           editorSurfaceClassName,
         ]
@@ -358,10 +376,13 @@ export default function ApprovalDraftRichEditor({
       editorRef.current = null
     },
     onUpdate: ({ editor: ed }) => {
-      const html = ed.getHTML()
+      let html = ed.getHTML()
+      if (stableBlankParagraphSpacing) {
+        html = normalizeEmptyParagraphsInRichHtml(html)
+      }
       onChange(isHtmlContentEffectivelyEmpty(html) ? '' : html)
     },
-  })
+  }, [enterInsertsHardBreak])
 
   useEffect(() => {
     editorRef.current = editor ?? null
@@ -372,10 +393,10 @@ export default function ApprovalDraftRichEditor({
 
   useEffect(() => {
     if (!editor || editor.isDestroyed) return
-    const next = toInitialContent(value)
+    const next = toInitialContent(value, stableBlankParagraphSpacing)
     if (editor.getHTML() === next) return
     editor.commands.setContent(next, { emitUpdate: false })
-  }, [value, editor])
+  }, [value, editor, stableBlankParagraphSpacing])
 
   useEffect(() => {
     if (!editor || editor.isDestroyed) return

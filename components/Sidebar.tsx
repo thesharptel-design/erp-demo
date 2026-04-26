@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
+import { LayoutDashboard } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import {
   hasManagePermission,
@@ -177,17 +178,31 @@ export default function Sidebar() {
 
       <nav className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
         
-        {/* 대시보드 (HOME) 고정 버튼 */}
-        <div className="space-y-1 mb-2">
-          <Link 
+        {/* 대시보드 (HOME) — 동일 높이·패딩 유지, 살짝만 다듬음 */}
+        <div className="mb-2 space-y-1">
+          <Link
             href="/dashboard"
-            className={`w-full flex items-center px-2 py-2 text-[14px] font-black transition-colors uppercase tracking-tight ${
-              pathname === '/dashboard' 
-                ? 'text-blue-600' 
-                : 'text-gray-900 hover:text-blue-600'
+            className={`group flex w-full items-center gap-2 rounded-lg border border-transparent px-2 py-2 text-[14px] font-black uppercase tracking-tight transition-all ${
+              pathname === '/dashboard'
+                ? 'border-blue-200/80 bg-blue-50/70 text-blue-800 shadow-[2px_2px_0_0_rgba(0,0,0,0.06)]'
+                : 'text-gray-900 hover:border-gray-200 hover:bg-gray-50/80 hover:text-blue-700'
             }`}
           >
-            DASHBOARD (HOME)
+            <LayoutDashboard
+              className={`h-4 w-4 shrink-0 transition-colors ${
+                pathname === '/dashboard' ? 'text-blue-600' : 'text-gray-400 group-hover:text-blue-600'
+              }`}
+              strokeWidth={2.25}
+              aria-hidden
+            />
+            <span className="min-w-0 flex-1 leading-none">Dashboard</span>
+            <span
+              className={`shrink-0 text-[9px] font-extrabold tracking-widest ${
+                pathname === '/dashboard' ? 'text-blue-500/90' : 'text-gray-400 group-hover:text-blue-500'
+              }`}
+            >
+              HOME
+            </span>
           </Link>
         </div>
 

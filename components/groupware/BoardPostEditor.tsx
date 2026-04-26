@@ -243,6 +243,8 @@ export default function BoardPostEditor({
         imageUploadUrl={BOARD_IMAGE_UPLOAD_URL}
         attachmentStorageKey="board_attachments"
         splitToolbar
+        stableBlankParagraphSpacing
+        enterInsertsHardBreak
         editorSurfaceClassName="min-h-[280px] sm:min-h-[360px]"
       />
 
@@ -259,6 +261,9 @@ export default function BoardPostEditor({
             <p>
               링크가 걸린 텍스트를 붙여넣으면 링크도 함께 유지될 수 있습니다. 다만 PDF/이미지처럼 원본에서 링크
               정보를 주지 않으면 텍스트만 붙여넣어집니다.
+            </p>
+            <p className="text-gray-500">
+              Enter는 한 줄만 내려가고, 빈 줄을 크게 두려면 Shift+Enter로 새 단띉을 쓰면 됩니다.
             </p>
             <p className="text-gray-500">별도 파일 첨부 UI는 다음 단계에서 확장할 수 있습니다.</p>
             {showPdfTools ? (
