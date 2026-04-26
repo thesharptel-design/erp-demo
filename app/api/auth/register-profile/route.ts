@@ -22,6 +22,69 @@ type RegisterProfilePayload = {
   role_name?: unknown
 }
 
+async function notifySystemAdminsForPendingSignup(args: {
+  adminClient: any
+  applicantId: string
+  applicantName: string
+  applicantEmployeeNo: string | null
+  userKind: UserKind
+}) {
+  const { adminClient, applicantId, applicantName, applicantEmployeeNo, userKind } = args
+  const { data: admins, error: adminListErr } = await adminClient
+    .from('app_users')
+    .select('id')
+    .eq('is_active', true)
+    .or('role_name.eq.admin,can_manage_permissions.eq.true')
+    .neq('id', applicantId)
+
+  if (adminListErr || !admins || admins.length === 0) return
+
+  const dedupeKey = `admin:signup_pending:${applicantId}`
+  const title = `[가입신청] ${applicantName} 승인 대기`
+  const payload = {
+    applicant_id: applicantId,
+    applicant_name: applicantName,
+    applicant_employee_no: applicantEmployeeNo,
+    applicant_user_kind: userKind,
+  }
+
+  const { data: eventRow, error: insEventErr } = await adminClient
+    .from('notification_events')
+    .insert({
+      actor_id: applicantId,
+      category: 'work',
+      type: 'admin_signup_pending',
+      title,
+      payload,
+      target_url: '/admin/user-approvals',
+      dedupe_key: dedupeKey,
+    } as Record<string, unknown>)
+    .select('id')
+    .single()
+
+  if (insEventErr && !insEventErr.message.toLowerCase().includes('duplicate')) return
+
+  let eventId = (eventRow?.id as string | undefined) ?? undefined
+  if (!eventId) {
+    const { data: existing } = await adminClient
+      .from('notification_events')
+      .select('id')
+      .eq('dedupe_key', dedupeKey)
+      .maybeSingle()
+    eventId = (existing?.id as string | undefined) ?? undefined
+  }
+  if (!eventId) return
+
+  const adminRows = admins as Array<{ id: string }>
+  const rows = adminRows.map((u) => ({ user_id: String(u.id), event_id: eventId as string }))
+  const { error: fanoutErr } = await adminClient
+    .from('user_notifications')
+    .upsert(rows as Record<string, unknown>[], { onConflict: 'user_id,event_id' })
+  if (fanoutErr) {
+    console.warn('[notifySystemAdminsForPendingSignup]', fanoutErr.message)
+  }
+}
+
 function normalizeText(value: unknown): string {
   return String(value ?? '').trim()
 }
@@ -165,6 +228,17 @@ export async function POST(request: NextRequest) {
 
     if (upsertError) {
       return NextResponse.json({ error: upsertError.message }, { status: 400 })
+    }
+
+    if (roleName === 'pending') {
+      const empNo = existingAppUser?.employee_no ?? null
+      await notifySystemAdminsForPendingSignup({
+        adminClient,
+        applicantId: user.id,
+        applicantName: userName,
+        applicantEmployeeNo: empNo,
+        userKind,
+      })
     }
 
     return NextResponse.json({ success: true })
