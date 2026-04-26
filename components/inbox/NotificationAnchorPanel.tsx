@@ -50,8 +50,12 @@ export function NotificationAnchorPanel({ open, anchorRef, contentAlignRef, onCl
   const [tab, setTab] = useState<NotificationInboxTab>('work')
 
   useEffect(() => {
-    if (open) setTab('work')
-  }, [open])
+    if (!open) return
+    if (unreadNotificationsInTab(items, 'work') > 0) setTab('work')
+    else if (unreadNotificationsInTab(items, 'board_comment') > 0) setTab('board_comment')
+    else if (unreadNotificationsInTab(items, 'board_reply') > 0) setTab('board_reply')
+    else setTab('work')
+  }, [open, items])
 
   const filtered = useMemo(() => filterNotificationsByInboxTab(items, tab), [items, tab])
 

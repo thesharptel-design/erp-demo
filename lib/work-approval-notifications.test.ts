@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   approvalDocumentInboxPath,
   fanoutWorkApprovalNotification,
+  workApprovalCancelRelayDedupeKey,
+  workApprovalCancelRequestDedupeKey,
+  workApprovalCancelWriterHandoffDedupeKey,
   workApprovalFinalDedupeKey,
   workApprovalLineTurnDedupeKey,
   workApprovalSubmitDedupeKey,
@@ -22,6 +25,18 @@ describe('work approval notification dedupe keys', () => {
 
   it('inbox path matches approvals detail route', () => {
     expect(approvalDocumentInboxPath(123)).toBe('/approvals/123')
+  })
+
+  it('cancel request dedupe is stable per doc', () => {
+    expect(workApprovalCancelRequestDedupeKey(5)).toBe('work:approval_doc:5:cancel_request_v1')
+  })
+
+  it('cancel relay dedupe includes line number', () => {
+    expect(workApprovalCancelRelayDedupeKey(5, 3)).toBe('work:approval_doc:5:cancel_relay_line:3')
+  })
+
+  it('cancel writer handoff dedupe is stable per doc', () => {
+    expect(workApprovalCancelWriterHandoffDedupeKey(9)).toBe('work:approval_doc:9:cancel_writer_handoff_v1')
   })
 })
 

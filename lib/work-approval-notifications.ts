@@ -3,7 +3,13 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 /** Draft/save helpers use a structural supabase; only `rpc` is required for fan-out. */
 export type WorkFanoutRpcClient = Pick<SupabaseClient, 'rpc'>
 
-export type WorkApprovalRecipientMode = 'pending_lines' | 'writer'
+export type WorkApprovalRecipientMode =
+  | 'pending_lines'
+  | 'writer'
+  /** `approval_docs.current_line_no` 와 같은 `approval_lines.line_no` 담당자 (결재 취소 릴레이 등) */
+  | 'doc_current_line'
+  /** 결재선 참조·협조·결재 전원(행동 역할), 기안자 제외 — 기안 회수 알림 등 */
+  | 'actionable_all_except_actor'
 
 export function workApprovalSubmitDedupeKey(docId: number, docNo: string) {
   return `work:approval_doc:${docId}:submit:${docNo}`
@@ -15,6 +21,18 @@ export function workApprovalLineTurnDedupeKey(docId: number, activatedLineNo: nu
 
 export function workApprovalFinalDedupeKey(docId: number) {
   return `work:approval_doc:${docId}:final_approved`
+}
+
+export function workApprovalCancelRequestDedupeKey(docId: number) {
+  return `work:approval_doc:${docId}:cancel_request_v1`
+}
+
+export function workApprovalCancelRelayDedupeKey(docId: number, currentLineNo: number) {
+  return `work:approval_doc:${docId}:cancel_relay_line:${currentLineNo}`
+}
+
+export function workApprovalCancelWriterHandoffDedupeKey(docId: number) {
+  return `work:approval_doc:${docId}:cancel_writer_handoff_v1`
 }
 
 export function approvalDocumentInboxPath(docId: number) {

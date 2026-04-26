@@ -17,6 +17,9 @@ import { getApprovalRoleLabel, isApprovalActionRole } from '@/lib/approval-roles
 import {
   approvalDocumentInboxPath,
   fanoutWorkApprovalNotificationQuiet,
+  workApprovalCancelRelayDedupeKey,
+  workApprovalCancelRequestDedupeKey,
+  workApprovalCancelWriterHandoffDedupeKey,
   workApprovalFinalDedupeKey,
   workApprovalLineTurnDedupeKey,
 } from '@/lib/work-approval-notifications';
@@ -115,6 +118,9 @@ export default function ApprovalActionButtons({
   const myId = String(currentUser.id).toLowerCase();
   const isWriter = String(doc?.writer_id || '').toLowerCase() === myId;
   const actorIdForHistory = 'id' in currentUser ? String(currentUser.id) : myId;
+  const docTitleForNotify =
+    String((doc as { title?: string | null }).title ?? '문서').trim() || '문서';
+  const approvalInboxUrl = approvalDocumentInboxPath(doc.id);
 
   const sortedLines = [...(lines || [])].sort((a, b) => a.line_no - b.line_no);
   const sortedParticipants = [...participants].sort((a, b) => a.line_no - b.line_no);
@@ -222,6 +228,16 @@ export default function ApprovalActionButtons({
           action_type: 'recall',
           action_comment: '기안 회수',
         });
+        fanoutWorkApprovalNotificationQuiet(supabase, {
+          actorId: actorIdForHistory,
+          approvalDocId: doc.id,
+          recipientMode: 'actionable_all_except_actor',
+          type: 'work_approval_recalled',
+          title: `기안 회수: ${docTitleForNotify}`,
+          targetUrl: approvalInboxUrl,
+          dedupeKey: null,
+          payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
+        });
         alert('회수되었습니다.');
         window.location.reload();
       } catch (e: unknown) {
@@ -260,6 +276,16 @@ export default function ApprovalActionButtons({
           actor_id: actorIdForHistory,
           action_type: 'cancel_request',
           action_comment: trimmed,
+        });
+        fanoutWorkApprovalNotificationQuiet(supabase, {
+          actorId: actorIdForHistory,
+          approvalDocId: doc.id,
+          recipientMode: 'doc_current_line',
+          type: 'work_approval_cancel_requested',
+          title: `결재 취소 요청: ${docTitleForNotify}`,
+          targetUrl: approvalInboxUrl,
+          dedupeKey: workApprovalCancelRequestDedupeKey(doc.id),
+          payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
         });
         alert('결재권자에게 취소 요청이 전달되었습니다.');
         window.location.reload();
@@ -325,6 +351,16 @@ export default function ApprovalActionButtons({
           action_type: 'direct_cancel_final',
           action_comment: normalizeOptionalOpinionForHistory(opinionInput.trim()),
         });
+        fanoutWorkApprovalNotificationQuiet(supabase, {
+          actorId: actorIdForHistory,
+          approvalDocId: doc.id,
+          recipientMode: 'writer',
+          type: 'work_approval_direct_cancel',
+          title: `결재 취소(최종승인): ${docTitleForNotify}`,
+          targetUrl: approvalInboxUrl,
+          dedupeKey: null,
+          payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
+        });
         alert('결재가 취소되었습니다.');
         window.location.reload();
       } catch (e: unknown) {
@@ -350,6 +386,16 @@ export default function ApprovalActionButtons({
             action_type: 'reject',
             action_comment: opinion.trim(),
           });
+          fanoutWorkApprovalNotificationQuiet(supabase, {
+            actorId: actorIdForHistory,
+            approvalDocId: doc.id,
+            recipientMode: 'writer',
+            type: 'work_approval_cancel_request_rejected',
+            title: `결재 취소 요청 반려: ${docTitleForNotify}`,
+            targetUrl: approvalInboxUrl,
+            dedupeKey: null,
+            payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
+          });
           alert('문서가 종료되었습니다.');
           router.push('/approvals');
           return;
@@ -371,6 +417,16 @@ export default function ApprovalActionButtons({
             action_type: 'cancel_relay',
             action_comment: `${roleName} 취소승인 · ${opinion.trim()}`,
           });
+          fanoutWorkApprovalNotificationQuiet(supabase, {
+            actorId: actorIdForHistory,
+            approvalDocId: doc.id,
+            recipientMode: 'writer',
+            type: 'work_approval_cancel_writer_handoff',
+            title: `결재 취소: 기안자 최종 확인 — ${docTitleForNotify}`,
+            targetUrl: approvalInboxUrl,
+            dedupeKey: workApprovalCancelWriterHandoffDedupeKey(doc.id),
+            payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
+          });
           alert('취소가 승인되어 기안자에게 최종 환원 권한이 넘어갔습니다.');
         } else {
           const nextLineNo = activeLine.line_no - 1;
@@ -380,6 +436,16 @@ export default function ApprovalActionButtons({
             actor_id: actorIdForHistory,
             action_type: 'cancel_relay',
             action_comment: `${roleName} 취소완료(다음 차수로) · ${opinion.trim()}`,
+          });
+          fanoutWorkApprovalNotificationQuiet(supabase, {
+            actorId: actorIdForHistory,
+            approvalDocId: doc.id,
+            recipientMode: 'doc_current_line',
+            type: 'work_approval_cancel_relay_turn',
+            title: `결재 취소 검토 차례: ${docTitleForNotify}`,
+            targetUrl: approvalInboxUrl,
+            dedupeKey: workApprovalCancelRelayDedupeKey(doc.id, nextLineNo),
+            payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null, line_no: nextLineNo },
           });
           alert('하위 결재자에게 취소 검토를 넘겼습니다.');
         }
@@ -407,6 +473,16 @@ export default function ApprovalActionButtons({
           actor_id: actorIdForHistory,
           action_type: 'outbound_cancel_done',
           action_comment: '취소 완료(재고환원)',
+        });
+        fanoutWorkApprovalNotificationQuiet(supabase, {
+          actorId: actorIdForHistory,
+          approvalDocId: doc.id,
+          recipientMode: 'actionable_all_except_actor',
+          type: 'work_approval_outbound_cancel_done',
+          title: `취소 완료(재고환원): ${docTitleForNotify}`,
+          targetUrl: approvalInboxUrl,
+          dedupeKey: null,
+          payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
         });
 
         alert('✅ 취소 승인 및 재고 환원이 모두 완료되었습니다!');
@@ -457,17 +533,14 @@ export default function ApprovalActionButtons({
             type === 'approved' ? normalizeOptionalOpinionForHistory(opinion) : opinion.trim(),
         });
 
-        const docTitle =
-          String((doc as { title?: string | null }).title ?? '문서').trim() || '문서';
-        const inboxUrl = approvalDocumentInboxPath(doc.id);
         if (type === 'rejected') {
           fanoutWorkApprovalNotificationQuiet(supabase, {
             actorId: actorIdForHistory,
             approvalDocId: doc.id,
             recipientMode: 'writer',
             type: 'work_approval_rejected',
-            title: `결재 반려: ${docTitle}`,
-            targetUrl: inboxUrl,
+            title: `결재 반려: ${docTitleForNotify}`,
+            targetUrl: approvalInboxUrl,
             dedupeKey: null,
             payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
           });
@@ -477,8 +550,8 @@ export default function ApprovalActionButtons({
             approvalDocId: doc.id,
             recipientMode: 'writer',
             type: 'work_approval_completed',
-            title: `결재 완료: ${docTitle}`,
-            targetUrl: inboxUrl,
+            title: `결재 완료: ${docTitleForNotify}`,
+            targetUrl: approvalInboxUrl,
             dedupeKey: workApprovalFinalDedupeKey(doc.id),
             payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
           });
@@ -488,8 +561,8 @@ export default function ApprovalActionButtons({
             approvalDocId: doc.id,
             recipientMode: 'pending_lines',
             type: 'work_approval_line_turn',
-            title: `결재 대기: ${docTitle}`,
-            targetUrl: inboxUrl,
+            title: `결재 대기: ${docTitleForNotify}`,
+            targetUrl: approvalInboxUrl,
             dedupeKey: workApprovalLineTurnDedupeKey(doc.id, nextLineNoForNotify),
             payload: { approval_doc_id: doc.id, activated_line_no: nextLineNoForNotify },
           });
@@ -635,15 +708,13 @@ export default function ApprovalActionButtons({
           action_comment: opinion.trim(),
           action_at: now,
         });
-        const docTitle =
-          String((doc as { title?: string | null }).title ?? '문서').trim() || '문서';
         fanoutWorkApprovalNotificationQuiet(supabase, {
           actorId: actorIdForHistory,
           approvalDocId: doc.id,
           recipientMode: 'writer',
           type: 'work_approval_approve_revoke',
-          title: `승인 철회: ${docTitle}`,
-          targetUrl: approvalDocumentInboxPath(doc.id),
+          title: `승인 철회: ${docTitleForNotify}`,
+          targetUrl: approvalInboxUrl,
           dedupeKey: null,
           payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
         });
@@ -661,6 +732,16 @@ export default function ApprovalActionButtons({
       try {
         await supabase.rpc('finalize_outbound_cancellation', { p_doc_id: doc.id });
         await updateDoc({ status: 'rejected', remarks: '관리자 강제취소(재고환원)' });
+        fanoutWorkApprovalNotificationQuiet(supabase, {
+          actorId: actorIdForHistory,
+          approvalDocId: doc.id,
+          recipientMode: 'writer',
+          type: 'work_approval_admin_force_cancel',
+          title: `관리자 강제 취소(재고환원): ${docTitleForNotify}`,
+          targetUrl: approvalInboxUrl,
+          dedupeKey: null,
+          payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
+        });
         alert('강제 취소 및 환원이 완료되었습니다.');
         window.location.reload();
       } catch (e: unknown) {
