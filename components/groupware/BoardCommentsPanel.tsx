@@ -1,7 +1,9 @@
 'use client'
 
+import { BoardCommentNotificationReadModal } from '@/components/groupware/BoardCommentNotificationReadModal'
 import {
   CornerDownRight,
+  Eye,
   MessageSquare,
   Pencil,
   ThumbsUp,
@@ -117,6 +119,7 @@ export default function BoardCommentsPanel({
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editBody, setEditBody] = useState('')
   const [savingEdit, setSavingEdit] = useState(false)
+  const [notifReadCommentId, setNotifReadCommentId] = useState<number | null>(null)
 
   const ordered = useMemo(() => orderCommentsForDisplay(rows), [rows])
   const visibleCommentCount = useMemo(() => rows.filter((r) => !r.is_deleted).length, [rows])
@@ -304,6 +307,17 @@ export default function BoardCommentsPanel({
 
   return (
     <section className="border-t border-gray-200 bg-white">
+      {currentUserId != null && notifReadCommentId != null ? (
+        <BoardCommentNotificationReadModal
+          open
+          commentId={notifReadCommentId}
+          actorId={currentUserId}
+          postId={postId}
+          anonymousBoard={anonymousBoard}
+          onClose={() => setNotifReadCommentId(null)}
+        />
+      ) : null}
+
       <div className="border-b border-gray-100 px-3 py-2 sm:px-4">
         <h2 className="text-sm font-black text-gray-800">댓글 {visibleCommentCount}개</h2>
       </div>
@@ -396,6 +410,17 @@ export default function BoardCommentsPanel({
                       >
                         <Pencil className="h-3.5 w-3.5" aria-hidden />
                         수정
+                      </button>
+                    ) : null}
+                    {isMine ? (
+                      <button
+                        type="button"
+                        onClick={() => setNotifReadCommentId(c.id)}
+                        className="inline-flex items-center gap-0.5 font-bold text-sky-700 hover:text-sky-900"
+                        title="이 댓글 알림 수신자의 읽음 여부"
+                      >
+                        <Eye className="h-3.5 w-3.5" aria-hidden />
+                        알림 읽음
                       </button>
                     ) : null}
                     {isBoardDeleteAdmin ? (

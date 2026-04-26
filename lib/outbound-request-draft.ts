@@ -11,10 +11,16 @@ import {
   normalizeParticipants,
 } from '@/lib/approval-participants'
 import { plainTextFromHtml } from '@/lib/html-content'
+import {
+  approvalDocumentInboxPath,
+  fanoutWorkApprovalNotificationQuiet,
+  workApprovalSubmitDedupeKey,
+  type WorkFanoutRpcClient,
+} from '@/lib/work-approval-notifications'
 
 type SupabaseLike = {
   from: (table: string) => any
-}
+} & WorkFanoutRpcClient
 
 /** 출고요청 웹 임시저장(approval_docs.remarks + status=draft) 구분 */
 export const WEB_OUTBOUND_DRAFT_REMARKS = 'web_outbound_draft_v1'
@@ -185,6 +191,16 @@ async function insertNewOutboundRequestApprovalBundle(
       action_comment: '출고요청 상신',
       action_at: now,
     })
+    fanoutWorkApprovalNotificationQuiet(supabase, {
+      actorId: writerId,
+      approvalDocId: docId,
+      recipientMode: 'pending_lines',
+      type: 'outbound_request_submit',
+      title: `출고요청 결재 대기: ${title.trim()}`,
+      targetUrl: approvalDocumentInboxPath(docId),
+      dedupeKey: workApprovalSubmitDedupeKey(docId, docNo),
+      payload: { approval_doc_id: docId, doc_type: 'outbound_request' },
+    })
   }
 
   return { docId, docNo, outboundRequestId: reqId }
@@ -296,6 +312,17 @@ async function promoteOutboundWebDraftToSubmitted(
     action_type: 'submit',
     action_comment: '출고요청 상신',
     action_at: now,
+  })
+
+  fanoutWorkApprovalNotificationQuiet(supabase, {
+    actorId: writerId,
+    approvalDocId: docId,
+    recipientMode: 'pending_lines',
+    type: 'outbound_request_submit',
+    title: `출고요청 결재 대기: ${title.trim()}`,
+    targetUrl: approvalDocumentInboxPath(docId),
+    dedupeKey: workApprovalSubmitDedupeKey(docId, docNo),
+    payload: { approval_doc_id: docId, doc_type: 'outbound_request' },
   })
 
   return { docId, docNo, outboundRequestId: reqId }
@@ -424,6 +451,17 @@ async function promoteOutboundResubmitFromComposeDoc(
     action_type: 'submit',
     action_comment: '출고요청 재상신',
     action_at: now,
+  })
+
+  fanoutWorkApprovalNotificationQuiet(supabase, {
+    actorId: writerId,
+    approvalDocId: docId,
+    recipientMode: 'pending_lines',
+    type: 'outbound_request_resubmit',
+    title: `출고요청 결재 대기: ${title.trim()}`,
+    targetUrl: approvalDocumentInboxPath(docId),
+    dedupeKey: workApprovalSubmitDedupeKey(docId, docNo),
+    payload: { approval_doc_id: docId, doc_type: 'outbound_request' },
   })
 
   return { docId, docNo, outboundRequestId: reqId }

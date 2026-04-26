@@ -1,0 +1,443 @@
+'use client'
+
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useRouter } from 'next/navigation'
+import { supabase } from '@/lib/supabase'
+import { MessageAnchorPanel } from '@/components/inbox/MessageAnchorPanel'
+import { NotificationAnchorPanel } from '@/components/inbox/NotificationAnchorPanel'
+import type { MessageInboxRow, MessagePanelTab, NotificationInboxRow, SentMessageRow } from '@/components/inbox/types'
+import { mergeInboxByCreatedDesc, normalizeMessageRow, normalizeNotificationRow } from '@/lib/inbox-normalize'
+
+const MSG_SELECT = `
+  id,
+  message_id,
+  user_id,
+  read_at,
+  archived_at,
+  created_at,
+  private_messages (
+    id,
+    subject,
+    body,
+    kind,
+    created_at,
+    sender:app_users!private_messages_sender_id_fkey ( user_name, employee_no )
+  )
+`
+
+const INBOX_PAGE_SIZE = 30
+const INBOX_MAX_FETCH = 200
+
+const NOTIF_SELECT = `
+  id,
+  user_id,
+  event_id,
+  read_at,
+  archived_at,
+  created_at,
+  notification_events (
+    id,
+    title,
+    target_url,
+    category,
+    type,
+    created_at,
+    actor:app_users!notification_events_actor_id_fkey ( user_name )
+  )
+`
+
+type Panel = 'messages' | 'notifications' | null
+
+type Props = {
+  userId: string
+  canSendBroadcast?: boolean
+  /** 패널 우측을 페이지(상단 크롬) 콘텐츠 우측에 맞출 기준 요소 */
+  contentAlignRef?: RefObject<HTMLElement | null>
+}
+
+function mapSentRpcRow(raw: Record<string, unknown>): SentMessageRow {
+  const pr = raw.primary_recipient_name
+  return {
+    message_id: String(raw.message_id),
+    subject: String(raw.subject ?? ''),
+    body: String(raw.body ?? ''),
+    kind: String(raw.kind ?? ''),
+    created_at: String(raw.created_at ?? ''),
+    recipient_total: Number(raw.recipient_total ?? 0) || 0,
+    recipient_read: Number(raw.recipient_read ?? 0) || 0,
+    primary_recipient_name: pr == null || pr === '' ? null : String(pr),
+    primary_recipient_employee_no: (() => {
+      const e = raw.primary_recipient_employee_no
+      if (e == null || String(e).trim() === '') return null
+      return String(e)
+    })(),
+  }
+}
+
+export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Props) {
+  const router = useRouter()
+  const msgBtnRef = useRef<HTMLButtonElement>(null)
+  const notifBtnRef = useRef<HTMLButtonElement>(null)
+  const prevOpenRef = useRef<Panel>(null)
+  const [open, setOpen] = useState<Panel>(null)
+  const [messages, setMessages] = useState<MessageInboxRow[]>([])
+  const [notifications, setNotifications] = useState<NotificationInboxRow[]>([])
+  const [msgLoading, setMsgLoading] = useState(true)
+  const [msgLoadingMore, setMsgLoadingMore] = useState(false)
+  const [notifLoading, setNotifLoading] = useState(true)
+  const [msgTab, setMsgTab] = useState<MessagePanelTab>('inbox')
+  const [sentMessages, setSentMessages] = useState<SentMessageRow[]>([])
+  const [sentLoading, setSentLoading] = useState(false)
+  const [sentLoadingMore, setSentLoadingMore] = useState(false)
+  const [inboxLimit, setInboxLimit] = useState(INBOX_PAGE_SIZE)
+  const [sentLimit, setSentLimit] = useState(INBOX_PAGE_SIZE)
+
+  const fetchMessages = useCallback(async () => {
+    const lim = Math.min(Math.max(inboxLimit, 1), INBOX_MAX_FETCH)
+    const { data, error } = await supabase
+      .from('private_message_recipients')
+      .select(MSG_SELECT)
+      .eq('user_id', userId)
+      .is('archived_at', null)
+      .order('created_at', { ascending: false })
+      .limit(lim)
+    if (error) {
+      console.warn('inbox messages fetch', error.message)
+      setMessages([])
+      return
+    }
+    const rows = ((data as Record<string, unknown>[]) ?? []).map(normalizeMessageRow)
+    setMessages(rows)
+  }, [userId, inboxLimit])
+
+  const fetchSentMessages = useCallback(async () => {
+    const lim = Math.min(Math.max(sentLimit, 1), INBOX_MAX_FETCH)
+    const { data, error } = await supabase.rpc('list_sent_private_messages_with_stats', { p_limit: lim })
+    if (error) {
+      console.warn('sent messages rpc', error.message)
+      setSentMessages([])
+      return
+    }
+    const rows = ((data as Record<string, unknown>[]) ?? []).map(mapSentRpcRow)
+    setSentMessages(rows)
+  }, [sentLimit])
+
+  useEffect(() => {
+    setInboxLimit(INBOX_PAGE_SIZE)
+    setSentLimit(INBOX_PAGE_SIZE)
+  }, [userId])
+
+  useEffect(() => {
+    if (prevOpenRef.current === 'messages' && open !== 'messages') {
+      setInboxLimit(INBOX_PAGE_SIZE)
+      setSentLimit(INBOX_PAGE_SIZE)
+    }
+    prevOpenRef.current = open
+  }, [open])
+
+  const fetchNotifications = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('user_notifications')
+      .select(NOTIF_SELECT)
+      .eq('user_id', userId)
+      .is('archived_at', null)
+      .order('created_at', { ascending: false })
+      .limit(50)
+    if (error) {
+      console.warn('inbox notifications fetch', error.message)
+      setNotifications([])
+      return
+    }
+    const rows = ((data as Record<string, unknown>[]) ?? []).map(normalizeNotificationRow)
+    setNotifications(rows)
+  }, [userId])
+
+  const fetchMessageByRecipientId = useCallback(async (recipientId: string) => {
+    const { data, error } = await supabase
+      .from('private_message_recipients')
+      .select(MSG_SELECT)
+      .eq('id', recipientId)
+      .eq('user_id', userId)
+      .maybeSingle()
+    if (error || !data) return null
+    return normalizeMessageRow(data as Record<string, unknown>)
+  }, [userId])
+
+  const fetchNotificationById = useCallback(async (nid: string) => {
+    const { data, error } = await supabase.from('user_notifications').select(NOTIF_SELECT).eq('id', nid).eq('user_id', userId).maybeSingle()
+    if (error || !data) return null
+    return normalizeNotificationRow(data as Record<string, unknown>)
+  }, [userId])
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      setNotifLoading(true)
+      await fetchNotifications()
+      if (!cancelled) setNotifLoading(false)
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [fetchNotifications])
+
+  useEffect(() => {
+    let cancelled = false
+    const isPaging = inboxLimit > INBOX_PAGE_SIZE
+    void (async () => {
+      if (isPaging) setMsgLoadingMore(true)
+      else setMsgLoading(true)
+      await fetchMessages()
+      if (!cancelled) {
+        setMsgLoading(false)
+        setMsgLoadingMore(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [fetchMessages, inboxLimit])
+
+  useEffect(() => {
+    if (msgTab !== 'sent') return
+    let cancelled = false
+    const isPaging = sentLimit > INBOX_PAGE_SIZE
+    void (async () => {
+      if (isPaging) setSentLoadingMore(true)
+      else setSentLoading(true)
+      await fetchSentMessages()
+      if (!cancelled) {
+        setSentLoading(false)
+        setSentLoadingMore(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [fetchSentMessages, msgTab, sentLimit])
+
+  useEffect(() => {
+    const channel = supabase
+      .channel(`inbox-top:${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'private_message_recipients',
+          filter: `user_id=eq.${userId}`,
+        },
+        async (payload) => {
+          const ev = payload.eventType
+          const id =
+            ((payload.new as { id?: string } | undefined)?.id as string | undefined) ??
+            ((payload.old as { id?: string } | undefined)?.id as string | undefined)
+          if (!id) return
+          if (ev === 'DELETE') {
+            setMessages((prev) => prev.filter((r) => r.id !== id))
+            return
+          }
+          const row = await fetchMessageByRecipientId(id)
+          if (!row) {
+            setMessages((prev) => prev.filter((r) => r.id !== id))
+            return
+          }
+          if (row.archived_at) {
+            setMessages((prev) => prev.filter((r) => r.id !== id))
+            return
+          }
+          setMessages((prev) => mergeInboxByCreatedDesc(prev, row))
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'user_notifications',
+          filter: `user_id=eq.${userId}`,
+        },
+        async (payload) => {
+          const ev = payload.eventType
+          const id =
+            ((payload.new as { id?: string } | undefined)?.id as string | undefined) ??
+            ((payload.old as { id?: string } | undefined)?.id as string | undefined)
+          if (!id) return
+          if (ev === 'DELETE') {
+            setNotifications((prev) => prev.filter((r) => r.id !== id))
+            return
+          }
+          const row = await fetchNotificationById(id)
+          if (!row) {
+            setNotifications((prev) => prev.filter((r) => r.id !== id))
+            return
+          }
+          if (row.archived_at) {
+            setNotifications((prev) => prev.filter((r) => r.id !== id))
+            return
+          }
+          setNotifications((prev) => mergeInboxByCreatedDesc(prev, row))
+        }
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [userId, fetchMessageByRecipientId, fetchNotificationById])
+
+  const unreadMsg = useMemo(() => messages.filter((m) => !m.read_at).length, [messages])
+  const unreadNotif = useMemo(() => notifications.filter((n) => !n.read_at).length, [notifications])
+
+  const inboxHasMore = messages.length > 0 && messages.length === inboxLimit && inboxLimit < INBOX_MAX_FETCH
+  const sentHasMore = sentMessages.length > 0 && sentMessages.length === sentLimit && sentLimit < INBOX_MAX_FETCH
+
+  function toggle(panel: Exclude<Panel, null>) {
+    setOpen((prev) => {
+      const next = prev === panel ? null : panel
+      if (next === null) setMsgTab('inbox')
+      return next
+    })
+  }
+
+  const markMessageRead = useCallback(async (row: MessageInboxRow) => {
+    if (row.read_at) return
+    const now = new Date().toISOString()
+    const { error } = await supabase.from('private_message_recipients').update({ read_at: now }).eq('id', row.id).eq('user_id', userId)
+    if (error) {
+      console.warn('mark message read', error.message)
+      return
+    }
+    setMessages((prev) => prev.map((r) => (r.id === row.id ? { ...r, read_at: now } : r)))
+  }, [userId])
+
+  const markNotificationReadAndGo = useCallback(
+    async (row: NotificationInboxRow) => {
+      const target = row.notification_events?.target_url?.trim()
+      if (!row.read_at) {
+        const now = new Date().toISOString()
+        const { error } = await supabase.from('user_notifications').update({ read_at: now }).eq('id', row.id).eq('user_id', userId)
+        if (error) {
+          console.warn('mark notification read', error.message)
+          return
+        }
+        setNotifications((prev) => prev.map((r) => (r.id === row.id ? { ...r, read_at: now } : r)))
+      }
+      setOpen(null)
+      if (target && target.startsWith('/')) {
+        router.push(target)
+      }
+    },
+    [userId, router]
+  )
+
+  function badge(n: number) {
+    if (n <= 0) return null
+    const label = n > 99 ? '99+' : String(n)
+    return (
+      <span className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-black bg-rose-500 px-1 text-[10px] font-black text-white">
+        {label}
+      </span>
+    )
+  }
+
+  return (
+    <div className="flex w-full flex-wrap items-center justify-end gap-2 overflow-visible border-t-2 border-dashed border-gray-200 pt-2.5 pr-1 sm:pr-2">
+      <div className="relative">
+        <button
+          ref={msgBtnRef}
+          type="button"
+          onClick={() => toggle('messages')}
+          className="relative inline-flex h-11 min-w-[44px] items-center justify-center rounded-xl border-2 border-black bg-white px-3 text-base shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-violet-50 active:translate-y-0.5 active:shadow-none"
+          aria-label="쪽지"
+          aria-expanded={open === 'messages'}
+        >
+          ✉️
+          {badge(unreadMsg)}
+        </button>
+      </div>
+      <div className="relative">
+        <button
+          ref={notifBtnRef}
+          type="button"
+          onClick={() => toggle('notifications')}
+          className="relative inline-flex h-11 min-w-[44px] items-center justify-center rounded-xl border-2 border-black bg-white px-3 text-base shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-sky-50 active:translate-y-0.5 active:shadow-none"
+          aria-label="알림"
+          aria-expanded={open === 'notifications'}
+        >
+          🔔
+          {badge(unreadNotif)}
+        </button>
+      </div>
+
+      <MessageAnchorPanel
+        open={open === 'messages'}
+        anchorRef={msgBtnRef}
+        contentAlignRef={contentAlignRef}
+        senderUserId={userId}
+        onClose={() => {
+          setMsgTab('inbox')
+          setOpen(null)
+        }}
+        tab={msgTab}
+        onTabChange={(t) => setMsgTab(t)}
+        items={messages}
+        loading={msgLoading}
+        inboxHasMore={inboxHasMore}
+        onLoadMoreInbox={() => setInboxLimit((n) => Math.min(n + INBOX_PAGE_SIZE, INBOX_MAX_FETCH))}
+        inboxLoadingMore={msgLoadingMore}
+        sentHasMore={sentHasMore}
+        onLoadMoreSent={() => setSentLimit((n) => Math.min(n + INBOX_PAGE_SIZE, INBOX_MAX_FETCH))}
+        sentLoadingMore={sentLoadingMore}
+        onRowClick={(row) => {
+          void markMessageRead(row)
+        }}
+        sentItems={sentMessages}
+        sentLoading={sentLoading}
+        onRefreshSent={() => {
+          void fetchSentMessages()
+        }}
+        canSendBroadcast={canSendBroadcast === true}
+        onAfterDirectSend={() => {
+          void fetchMessages()
+          void fetchSentMessages()
+        }}
+        onSendBroadcast={
+          canSendBroadcast
+            ? async ({ subject, body }) => {
+                const {
+                  data: { session },
+                } = await supabase.auth.getSession()
+                const token = session?.access_token
+                if (!token) return { ok: false, error: '로그인 세션이 없습니다.' }
+                const res = await fetch('/api/messages/broadcast', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${token}`,
+                  },
+                  body: JSON.stringify({ subject, body }),
+                })
+                const json = (await res.json()) as { success?: boolean; error?: string }
+                if (!res.ok || !json.success) {
+                  return { ok: false, error: json.error ?? `요청 실패 (${res.status})` }
+                }
+                return { ok: true }
+              }
+            : undefined
+        }
+      />
+      <NotificationAnchorPanel
+        open={open === 'notifications'}
+        anchorRef={notifBtnRef}
+        contentAlignRef={contentAlignRef}
+        onClose={() => setOpen(null)}
+        items={notifications}
+        loading={notifLoading}
+        onRowClick={(row) => {
+          void markNotificationReadAndGo(row)
+        }}
+      />
+    </div>
+  )
+}

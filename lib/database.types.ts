@@ -244,6 +244,28 @@ export type Database = {
         Args: { p_now?: string }
         Returns: string
       }
+      fanout_work_approval_notification: {
+        Args: {
+          p_actor_id: string
+          p_approval_doc_id: number
+          p_recipient_mode: string
+          p_type: string
+          p_title: string
+          p_target_url: string
+          p_dedupe_key?: string | null
+          p_payload?: Json
+        }
+        Returns: undefined
+      }
+      get_notification_event_read_stats: {
+        Args: { p_event_id: string }
+        Returns: {
+          user_id: string
+          user_name: string | null
+          read_at: string | null
+          notified_at: string
+        }[]
+      }
     }
     Enums: Record<string, never>
   }

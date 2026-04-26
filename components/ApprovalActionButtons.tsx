@@ -14,6 +14,12 @@ import type { ApprovalDocLike, ApprovalLineLike } from '@/lib/approval-status';
 import type { Database } from '@/lib/database.types';
 import { logApprovalHistory, normalizeOptionalOpinionForHistory } from '@/lib/approval-history-log';
 import { getApprovalRoleLabel, isApprovalActionRole } from '@/lib/approval-roles';
+import {
+  approvalDocumentInboxPath,
+  fanoutWorkApprovalNotificationQuiet,
+  workApprovalFinalDedupeKey,
+  workApprovalLineTurnDedupeKey,
+} from '@/lib/work-approval-notifications';
 import { useSingleSubmit } from '@/hooks/useSingleSubmit';
 
 type AppUserRow = Database['public']['Tables']['app_users']['Row'];
@@ -420,7 +426,10 @@ export default function ApprovalActionButtons({
       try {
         const now = new Date().toISOString();
         await updateActiveLineStatus(activeLine, { status: type, acted_at: now, opinion });
-        
+
+        let nextLineNoForNotify: number | null = null;
+        let isFinalApproval = false;
+
         if (type === 'rejected') {
           await updateDoc({ status: 'rejected', remarks: '결재자 반려' });
         } else {
@@ -432,8 +441,10 @@ export default function ApprovalActionButtons({
           );
           const isLast = !nextLine;
           if (isLast) {
+            isFinalApproval = true;
             await updateDoc({ status: 'approved', completed_at: now });
           } else {
+            nextLineNoForNotify = nextLine.line_no;
             await updateActiveLineStatus(nextLine, { status: 'pending' });
             await updateDoc({ current_line_no: nextLine.line_no, status: 'in_review' });
           }
@@ -445,6 +456,45 @@ export default function ApprovalActionButtons({
           action_comment:
             type === 'approved' ? normalizeOptionalOpinionForHistory(opinion) : opinion.trim(),
         });
+
+        const docTitle =
+          String((doc as { title?: string | null }).title ?? '문서').trim() || '문서';
+        const inboxUrl = approvalDocumentInboxPath(doc.id);
+        if (type === 'rejected') {
+          fanoutWorkApprovalNotificationQuiet(supabase, {
+            actorId: actorIdForHistory,
+            approvalDocId: doc.id,
+            recipientMode: 'writer',
+            type: 'work_approval_rejected',
+            title: `결재 반려: ${docTitle}`,
+            targetUrl: inboxUrl,
+            dedupeKey: null,
+            payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
+          });
+        } else if (isFinalApproval) {
+          fanoutWorkApprovalNotificationQuiet(supabase, {
+            actorId: actorIdForHistory,
+            approvalDocId: doc.id,
+            recipientMode: 'writer',
+            type: 'work_approval_completed',
+            title: `결재 완료: ${docTitle}`,
+            targetUrl: inboxUrl,
+            dedupeKey: workApprovalFinalDedupeKey(doc.id),
+            payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
+          });
+        } else if (nextLineNoForNotify != null) {
+          fanoutWorkApprovalNotificationQuiet(supabase, {
+            actorId: actorIdForHistory,
+            approvalDocId: doc.id,
+            recipientMode: 'pending_lines',
+            type: 'work_approval_line_turn',
+            title: `결재 대기: ${docTitle}`,
+            targetUrl: inboxUrl,
+            dedupeKey: workApprovalLineTurnDedupeKey(doc.id, nextLineNoForNotify),
+            payload: { approval_doc_id: doc.id, activated_line_no: nextLineNoForNotify },
+          });
+        }
+
         window.location.reload();
       } catch (e: unknown) {
         alert('오류: ' + formatClientError(e));
@@ -584,6 +634,18 @@ export default function ApprovalActionButtons({
           action_type: 'approve_revoke',
           action_comment: opinion.trim(),
           action_at: now,
+        });
+        const docTitle =
+          String((doc as { title?: string | null }).title ?? '문서').trim() || '문서';
+        fanoutWorkApprovalNotificationQuiet(supabase, {
+          actorId: actorIdForHistory,
+          approvalDocId: doc.id,
+          recipientMode: 'writer',
+          type: 'work_approval_approve_revoke',
+          title: `승인 철회: ${docTitle}`,
+          targetUrl: approvalDocumentInboxPath(doc.id),
+          dedupeKey: null,
+          payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
         });
         alert('승인이 철회되었습니다.');
         window.location.reload();

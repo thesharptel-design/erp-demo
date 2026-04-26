@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { buildApprovalLines, normalizeParticipants } from '@/lib/approval-participants'
+import {
+  buildApprovalLines,
+  hasWorkApprovalInboxRecipientPending,
+  normalizeParticipants,
+} from '@/lib/approval-participants'
 
 describe('normalizeParticipants', () => {
   it('normalizes legacy role aliases, removes duplicates and keeps input order', () => {
@@ -47,5 +51,23 @@ describe('buildApprovalLines', () => {
         status: 'waiting',
       },
     ])
+  })
+})
+
+describe('hasWorkApprovalInboxRecipientPending', () => {
+  it('is false when first pending line is the actor (self first approver)', () => {
+    const lines = buildApprovalLines(1, [
+      { userId: 'writer', role: 'approver' },
+      { userId: 'u2', role: 'approver' },
+    ])
+    expect(hasWorkApprovalInboxRecipientPending(lines, 'writer')).toBe(false)
+  })
+
+  it('is true when first pending line is another user', () => {
+    const lines = buildApprovalLines(1, [
+      { userId: 'u1', role: 'approver' },
+      { userId: 'writer', role: 'approver' },
+    ])
+    expect(hasWorkApprovalInboxRecipientPending(lines, 'writer')).toBe(true)
   })
 })

@@ -9,8 +9,10 @@ import { useIdleSession } from '@/components/IdleSessionContext'
 import {
   getCurrentUserPermissions,
   hasManagePermission,
+  isSystemAdminUser,
   type CurrentUserPermissions,
 } from '@/lib/permissions'
+import { TopInboxStrip } from '@/components/inbox/TopInboxStrip'
 
 type Props = {
   onMenuClick?: () => void
@@ -46,6 +48,8 @@ export default function AppTopChrome({ onMenuClick }: Props) {
   const { remainingMs, extendSession, isWarning } = useIdleSession()
   const [user, setUser] = useState<CurrentUserPermissions | null>(null)
   const wasWarningRef = useRef(isWarning)
+  /** 쪽지/알림 패널을 메인 콘텐츠 우측 라인에 맞출 때 사용 */
+  const topChromeAlignRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     async function loadCurrentUser() {
@@ -111,6 +115,7 @@ export default function AppTopChrome({ onMenuClick }: Props) {
 
   return (
     <section
+      ref={topChromeAlignRef}
       className={`mb-4 rounded-2xl border-2 bg-white p-2.5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] sm:mb-6 sm:p-3 ${
         isWarning ? 'border-amber-500' : 'border-black'
       }`}
@@ -152,38 +157,47 @@ export default function AppTopChrome({ onMenuClick }: Props) {
             </div>
           </div>
 
-          <div className="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap sm:items-end sm:justify-end">
-            <div className="flex flex-wrap gap-2 sm:justify-end">
-              <Link
-                href="/dashboard"
-                className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-sm font-black text-gray-700 hover:bg-gray-50"
-              >
-                홈
-              </Link>
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-sm font-black text-gray-700 hover:bg-gray-50"
-              >
-                로그아웃
-              </button>
-              <div className="inline-flex h-10 min-w-[156px] items-center justify-between gap-2 rounded-xl border-2 border-gray-300 bg-gray-50 px-3">
-                <div className="leading-none">
-                  <p className="text-[9px] font-black uppercase tracking-wide text-gray-500">AUTO LOGOUT</p>
-                  <p className={`text-sm font-black tracking-tight ${isWarning ? 'text-amber-700' : 'text-gray-900'}`}>
-                    {formatRemainingMs(remainingMs)}
-                  </p>
-                </div>
+          <div className="flex min-w-0 flex-1 flex-col gap-2.5 sm:max-w-none sm:flex-row sm:flex-wrap sm:items-end sm:justify-end">
+            <div className="flex w-full min-w-0 flex-col gap-2.5 sm:w-auto sm:items-end">
+              <div className="flex flex-wrap gap-2 sm:justify-end">
+                <Link
+                  href="/dashboard"
+                  className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-sm font-black text-gray-700 hover:bg-gray-50"
+                >
+                  홈
+                </Link>
                 <button
                   type="button"
-                  onClick={extendSession}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-lg border-2 border-black bg-white text-xs font-black text-gray-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-gray-50 active:translate-y-0.5 active:shadow-none"
-                  aria-label="세션 연장"
-                  title="세션 연장"
+                  onClick={handleLogout}
+                  className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-sm font-black text-gray-700 hover:bg-gray-50"
                 >
-                  ↻
+                  로그아웃
                 </button>
+                <div className="inline-flex h-10 min-w-[156px] items-center justify-between gap-2 rounded-xl border-2 border-gray-300 bg-gray-50 px-3">
+                  <div className="leading-none">
+                    <p className="text-[9px] font-black uppercase tracking-wide text-gray-500">AUTO LOGOUT</p>
+                    <p className={`text-sm font-black tracking-tight ${isWarning ? 'text-amber-700' : 'text-gray-900'}`}>
+                      {formatRemainingMs(remainingMs)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={extendSession}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border-2 border-black bg-white text-xs font-black text-gray-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-gray-50 active:translate-y-0.5 active:shadow-none"
+                    aria-label="세션 연장"
+                    title="세션 연장"
+                  >
+                    ↻
+                  </button>
+                </div>
               </div>
+              {user?.id ? (
+                <TopInboxStrip
+                  userId={user.id}
+                  canSendBroadcast={isSystemAdminUser(user)}
+                  contentAlignRef={topChromeAlignRef}
+                />
+              ) : null}
             </div>
           </div>
         </div>

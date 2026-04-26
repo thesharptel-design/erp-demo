@@ -43,6 +43,16 @@ export function buildApprovalLines(docId: number, participants: ParticipantInput
   }))
 }
 
+/** `fanout_work_approval_notification(..., pending_lines)` 가 실제로 user_notifications 를 넣는지와 동일 조건 */
+export function hasWorkApprovalInboxRecipientPending(lines: ApprovalLineInsert[], actorId: string): boolean {
+  return lines.some(
+    (l) =>
+      l.status === 'pending' &&
+      isApprovalActionRole(l.approver_role) &&
+      l.approver_id !== actorId
+  )
+}
+
 export function buildApprovalParticipantsRows(docId: number, participants: ParticipantInput[]) {
   return participants.map((p, index) => ({
     approval_doc_id: docId,

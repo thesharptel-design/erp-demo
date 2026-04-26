@@ -6,12 +6,19 @@ const APPROVAL_RECALL_REMARK_MARKER = '기안 회수됨'
 import {
   buildApprovalLines,
   buildApprovalParticipantsRows,
+  hasWorkApprovalInboxRecipientPending,
   normalizeParticipants,
 } from '@/lib/approval-participants'
+import {
+  approvalDocumentInboxPath,
+  fanoutWorkApprovalNotification,
+  workApprovalSubmitDedupeKey,
+  type WorkFanoutRpcClient,
+} from '@/lib/work-approval-notifications'
 
 type SupabaseLike = {
   from: (table: string) => any
-}
+} & WorkFanoutRpcClient
 
 type SupabaseErrorLike = {
   code?: string
@@ -39,11 +46,23 @@ export type CreateApprovalDraftInput = {
   resubmitFromDocId?: number | null
 }
 
+/** 상신 직후 문서 식별 + 결재 알림(🔔) fan-out 이 실질적으로 스킵됐는지 */
+export type SubmittedApprovalDocBundle = {
+  docId: number
+  docNo: string
+  workApprovalNotificationSkipped: boolean
+}
+
 export type CreateApprovalDraftResult = {
   docId: number
   docNo: string
   /** 상신은 신규 insert로 끝났고 예전 임시 행 id가 남아 있으면 삭제 재시도 대상 */
   leftoverDraftIdToDelete: number | null
+  /**
+   * true: DB RPC가 수신자 없이 조기 return 한 경우와 동일(대표적으로 첫 결재 대기가 기안자 본인).
+   * 알림(🔔) 행이 생기지 않습니다.
+   */
+  workApprovalNotificationSkipped?: boolean
 }
 
 function sleep(ms: number) {
@@ -114,7 +133,7 @@ export function getApprovalCreateErrorMessage(error: SupabaseErrorLike) {
 
 async function insertNewApprovalDocument(
   input: Omit<CreateApprovalDraftInput, 'promoteDraftDocId' | 'draftRemarksTag'>
-): Promise<{ docId: number; docNo: string }> {
+): Promise<SubmittedApprovalDocBundle> {
   const {
     supabase,
     docType,
@@ -182,7 +201,24 @@ async function insertNewApprovalDocument(
     action_at: now,
   })
 
-  return { docId: docData.id, docNo }
+  const workApprovalNotificationSkipped =
+    linesToInsert.length > 0 && !hasWorkApprovalInboxRecipientPending(linesToInsert, writerId)
+
+  const fanoutRes = await fanoutWorkApprovalNotification(supabase, {
+    actorId: writerId,
+    approvalDocId: docData.id,
+    recipientMode: 'pending_lines',
+    type: 'approval_submit',
+    title: `결재 대기: ${title.trim()}`,
+    targetUrl: approvalDocumentInboxPath(docData.id),
+    dedupeKey: workApprovalSubmitDedupeKey(docData.id, docNo),
+    payload: { approval_doc_id: docData.id, doc_type: docType },
+  })
+  if (!fanoutRes.ok) {
+    throw new Error(fanoutRes.message)
+  }
+
+  return { docId: docData.id, docNo, workApprovalNotificationSkipped }
 }
 
 /**
@@ -190,7 +226,7 @@ async function insertNewApprovalDocument(
  */
 async function promoteWebGeneralDraftToSubmitted(
   input: CreateApprovalDraftInput & { promoteDraftDocId: number; draftRemarksTag: string }
-): Promise<{ docId: number; docNo: string } | null> {
+): Promise<SubmittedApprovalDocBundle | null> {
   const {
     supabase,
     promoteDraftDocId,
@@ -271,7 +307,24 @@ async function promoteWebGeneralDraftToSubmitted(
     action_at: now,
   })
 
-  return { docId, docNo }
+  const workApprovalNotificationSkipped =
+    linesToInsert.length > 0 && !hasWorkApprovalInboxRecipientPending(linesToInsert, writerId)
+
+  const fanoutRes = await fanoutWorkApprovalNotification(supabase, {
+    actorId: writerId,
+    approvalDocId: docId,
+    recipientMode: 'pending_lines',
+    type: 'approval_submit',
+    title: `결재 대기: ${title.trim()}`,
+    targetUrl: approvalDocumentInboxPath(docId),
+    dedupeKey: workApprovalSubmitDedupeKey(docId, docNo),
+    payload: { approval_doc_id: docId, doc_type: docType },
+  })
+  if (!fanoutRes.ok) {
+    throw new Error(fanoutRes.message)
+  }
+
+  return { docId, docNo, workApprovalNotificationSkipped }
 }
 
 /**
@@ -279,7 +332,7 @@ async function promoteWebGeneralDraftToSubmitted(
  */
 async function promoteResubmitFromComposeDoc(
   input: CreateApprovalDraftInput & { resubmitFromDocId: number }
-): Promise<{ docId: number; docNo: string } | null> {
+): Promise<SubmittedApprovalDocBundle | null> {
   const {
     supabase,
     resubmitFromDocId,
@@ -378,7 +431,24 @@ async function promoteResubmitFromComposeDoc(
     action_at: now,
   })
 
-  return { docId, docNo }
+  const workApprovalNotificationSkipped =
+    linesToInsert.length > 0 && !hasWorkApprovalInboxRecipientPending(linesToInsert, writerId)
+
+  const fanoutRes = await fanoutWorkApprovalNotification(supabase, {
+    actorId: writerId,
+    approvalDocId: docId,
+    recipientMode: 'pending_lines',
+    type: 'approval_resubmit',
+    title: `결재 대기: ${title.trim()}`,
+    targetUrl: approvalDocumentInboxPath(docId),
+    dedupeKey: workApprovalSubmitDedupeKey(docId, docNo),
+    payload: { approval_doc_id: docId, doc_type: docType },
+  })
+  if (!fanoutRes.ok) {
+    throw new Error(fanoutRes.message)
+  }
+
+  return { docId, docNo, workApprovalNotificationSkipped }
 }
 
 export async function createApprovalDraft(input: CreateApprovalDraftInput): Promise<CreateApprovalDraftResult> {

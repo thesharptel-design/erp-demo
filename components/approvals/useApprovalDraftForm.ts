@@ -590,7 +590,7 @@ export function useApprovalDraftForm({
 
     setIsSaving(true)
     try {
-      const { leftoverDraftIdToDelete } = await createApprovalDraft({
+      const { leftoverDraftIdToDelete, workApprovalNotificationSkipped } = await createApprovalDraft({
         supabase,
         docType,
         title,
@@ -608,6 +608,12 @@ export function useApprovalDraftForm({
           resubmitDocId != null ? undefined : enableServerDraft ? serverDraftDocId : undefined,
         draftRemarksTag: webDraftRemarksTag,
       })
+      if (workApprovalNotificationSkipped) {
+        toast.warning(
+          '결재 대기 알림(🔔)을 받을 다른 사용자가 없습니다. 첫 결재 대기가 본인이거나 결재선만 비어 있으면 수신 알림이 만들어지지 않습니다.',
+          { duration: 12_000 }
+        )
+      }
       if (leftoverDraftIdToDelete != null && writerId) {
         const delResult = await deleteWebGeneralDraftWithRetry(
           supabase as any,
