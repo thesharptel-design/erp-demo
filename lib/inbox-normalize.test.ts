@@ -24,6 +24,7 @@ describe('normalizeMessageRow', () => {
       created_at: '2026-01-02T00:00:00Z',
       private_messages: {
         id: 'm1',
+        sender_id: 'sender-uuid',
         subject: '제목',
         body: '본문',
         kind: 'direct',
@@ -32,6 +33,7 @@ describe('normalizeMessageRow', () => {
       },
     })
     expect(row.private_messages?.app_users?.user_name).toBe('홍길동')
+    expect(row.private_messages?.sender_id).toBe('sender-uuid')
     expect(row.private_messages?.subject).toBe('제목')
   })
 
@@ -129,6 +131,28 @@ describe('normalizeNotificationRow', () => {
     expect(row.notification_events?.title).toContain('댓글')
     expect(row.notification_events?.target_url).toBe('/groupware/board/99')
     expect(row.notification_events?.app_users?.user_name).toBe('댓글작성')
+  })
+
+  it('maps payload on notification_events', () => {
+    const row = normalizeNotificationRow({
+      id: 'n1',
+      user_id: 'u1',
+      event_id: 'e1',
+      read_at: null,
+      archived_at: null,
+      created_at: '2026-01-03T00:00:00Z',
+      notification_events: {
+        id: 'e1',
+        title: 't',
+        target_url: '/groupware/board/1',
+        category: 'board',
+        type: 'board_comment',
+        created_at: '2026-01-03T00:00:00Z',
+        payload: { post_id: 1, comment_id: 9, parent_id: null },
+        actor: { user_name: 'A' },
+      },
+    })
+    expect(row.notification_events?.payload).toEqual({ post_id: 1, comment_id: 9, parent_id: null })
   })
 })
 

@@ -1,8 +1,13 @@
 'use client'
 
-import { useId, type RefObject } from 'react'
+import { useEffect, useId, useMemo, useState, type RefObject } from 'react'
 import { AnchorPanelPortal } from '@/components/inbox/AnchorPanelPortal'
 import type { NotificationInboxRow } from '@/components/inbox/types'
+import {
+  filterNotificationsByInboxTab,
+  type NotificationInboxTab,
+  unreadNotificationsInTab,
+} from '@/lib/notification-inbox-tabs'
 
 type Props = {
   open: boolean
@@ -28,8 +33,27 @@ function categoryLabel(category: string) {
   return category
 }
 
+const TAB_DEFS: { id: NotificationInboxTab; label: string }[] = [
+  { id: 'work', label: '업무알림' },
+  { id: 'board_comment', label: '댓글 알림' },
+  { id: 'board_reply', label: '대댓글 알림' },
+]
+
+function tabHint(tab: NotificationInboxTab): string {
+  if (tab === 'work') return '결재·참조·협조 등 업무 알림입니다. 클릭 시 읽음 처리 후 기안 문서로 이동합니다.'
+  if (tab === 'board_comment') return '내 게시글에 달린 댓글입니다. 클릭 시 읽음 처리 후 해당 글·댓글 위치로 이동합니다.'
+  return '내 댓글에 달린 답글입니다. 클릭 시 읽음 처리 후 해당 글·답글 위치로 이동합니다.'
+}
+
 export function NotificationAnchorPanel({ open, anchorRef, contentAlignRef, onClose, items, loading, onRowClick }: Props) {
   const titleId = useId()
+  const [tab, setTab] = useState<NotificationInboxTab>('work')
+
+  useEffect(() => {
+    if (open) setTab('work')
+  }, [open])
+
+  const filtered = useMemo(() => filterNotificationsByInboxTab(items, tab), [items, tab])
 
   return (
     <AnchorPanelPortal anchorRef={anchorRef} contentAlignRef={contentAlignRef} open={open} onClose={onClose} labelledBy={titleId}>
@@ -38,16 +62,39 @@ export function NotificationAnchorPanel({ open, anchorRef, contentAlignRef, onCl
           <h2 id={titleId} className="text-sm font-black text-gray-900">
             알림
           </h2>
-          <p className="text-[11px] font-bold text-gray-500">클릭 시 읽음 후 이동</p>
+          <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl border-2 border-gray-200 bg-gray-50 p-1">
+            {TAB_DEFS.map((t) => {
+              const unread = unreadNotificationsInTab(items, t.id)
+              const active = tab === t.id
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setTab(t.id)}
+                  className={`relative rounded-lg px-0.5 py-1.5 text-[9px] font-black leading-tight transition-colors sm:text-[10px] ${
+                    active ? 'bg-white text-sky-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  <span className="block">{t.label}</span>
+                  {unread > 0 ? (
+                    <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[14px] items-center justify-center rounded-full border border-black bg-rose-500 px-0.5 text-[8px] font-black text-white">
+                      {unread > 99 ? '99+' : unread}
+                    </span>
+                  ) : null}
+                </button>
+              )
+            })}
+          </div>
+          <p className="mt-1.5 text-[11px] font-bold text-gray-500">{tabHint(tab)}</p>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           {loading ? (
             <p className="px-3 py-8 text-center text-xs font-bold text-gray-400">불러오는 중…</p>
-          ) : items.length === 0 ? (
-            <p className="px-3 py-8 text-center text-xs font-bold text-gray-400">새 알림이 없습니다.</p>
+          ) : filtered.length === 0 ? (
+            <p className="px-3 py-8 text-center text-xs font-bold text-gray-400">이 탭에 표시할 알림이 없습니다.</p>
           ) : (
-            <ul className="divide-y-2 divide-gray-100">
-              {items.map((row) => {
+            <ul className="divide-y divide-sky-200">
+              {filtered.map((row) => {
                 const ev = row.notification_events
                 const actorName = ev?.app_users?.user_name?.trim() || '시스템'
                 const unread = !row.read_at

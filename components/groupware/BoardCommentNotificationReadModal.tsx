@@ -155,7 +155,7 @@ export function BoardCommentNotificationReadModal({
                   <li key={row.user_id} className="flex flex-col gap-0.5 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
                     <span className="text-sm font-black text-gray-900">{displayName(row)}</span>
                     <span className={`text-[11px] font-bold ${row.read_at ? 'text-sky-800' : 'text-amber-700'}`}>
-                      {row.read_at ? `읽음 ${formatWhen(row.read_at)}` : '미읽음'}
+                      {row.read_at ? `읽음 ${formatWhen(row.read_at)}` : '미확인'}
                     </span>
                   </li>
                 ))}

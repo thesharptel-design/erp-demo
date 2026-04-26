@@ -7,6 +7,7 @@ import { MessageAnchorPanel } from '@/components/inbox/MessageAnchorPanel'
 import { NotificationAnchorPanel } from '@/components/inbox/NotificationAnchorPanel'
 import type { MessageInboxRow, MessagePanelTab, NotificationInboxRow, SentMessageRow } from '@/components/inbox/types'
 import { mergeInboxByCreatedDesc, normalizeMessageRow, normalizeNotificationRow } from '@/lib/inbox-normalize'
+import { notificationNavigateHref } from '@/lib/notification-inbox-tabs'
 
 const MSG_SELECT = `
   id,
@@ -17,6 +18,7 @@ const MSG_SELECT = `
   created_at,
   private_messages (
     id,
+    sender_id,
     subject,
     body,
     kind,
@@ -41,6 +43,7 @@ const NOTIF_SELECT = `
     target_url,
     category,
     type,
+    payload,
     created_at,
     actor:app_users!notification_events_actor_id_fkey ( user_name )
   )
@@ -313,7 +316,7 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
 
   const markNotificationReadAndGo = useCallback(
     async (row: NotificationInboxRow) => {
-      const target = row.notification_events?.target_url?.trim()
+      const target = notificationNavigateHref(row)
       if (!row.read_at) {
         const now = new Date().toISOString()
         const { error } = await supabase.from('user_notifications').update({ read_at: now }).eq('id', row.id).eq('user_id', userId)

@@ -25,6 +25,11 @@ export function normalizeMessageRow(raw: Record<string, unknown>): MessageInboxR
     private_messages: pm
       ? {
           id: String(pm.id),
+          sender_id: (() => {
+            const s = pm.sender_id
+            if (s == null || String(s).trim() === '') return null
+            return String(s)
+          })(),
           subject: String(pm.subject ?? ''),
           body: String(pm.body ?? ''),
           kind: String(pm.kind ?? ''),
@@ -62,6 +67,12 @@ export function normalizeNotificationRow(raw: Record<string, unknown>): Notifica
           category: String(ev.category ?? ''),
           type: String(ev.type ?? ''),
           created_at: String(ev.created_at ?? ''),
+          payload: (() => {
+            const p = ev.payload
+            if (p == null) return null
+            if (typeof p === 'object' && !Array.isArray(p)) return p as Record<string, unknown>
+            return null
+          })(),
           app_users: actorWrap ? { user_name: actorWrap.user_name ?? null } : null,
         }
       : null,

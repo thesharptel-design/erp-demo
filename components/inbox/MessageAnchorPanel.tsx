@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useId, useState, type RefObject } from 'react'
+import { Reply } from 'lucide-react'
 import { toast } from 'sonner'
 import { AnchorPanelPortal } from '@/components/inbox/AnchorPanelPortal'
 import type { MessageInboxRow, MessagePanelTab, MessageRecipientPreview, SentMessageRow } from '@/components/inbox/types'
@@ -115,6 +116,26 @@ export function MessageAnchorPanel({
       setPreviewRows([])
     }
   }, [tab])
+
+  const beginReplyToInboxSender = useCallback(
+    (row: MessageInboxRow) => {
+      const pm = row.private_messages
+      if (!pm) return
+      const sid = pm.sender_id?.trim()
+      if (!sid || sid === senderUserId) return
+      const name = pm.app_users?.user_name?.trim() || '이름 없음'
+      const no = pm.app_users?.employee_no ?? null
+      setDmQuery('')
+      setDmHits([])
+      setDmPick({ id: sid, user_name: name, employee_no: no })
+      const sub = (pm.subject ?? '').trim()
+      setDmSubject(sub ? `Re: ${sub}` : 'Re: ')
+      setDmBody('')
+      setDmErr(null)
+      onTabChange('compose')
+    },
+    [senderUserId, onTabChange]
+  )
 
   useEffect(() => {
     if (!open) return
@@ -397,40 +418,66 @@ export function MessageAnchorPanel({
                     const msg = row.private_messages
                     const senderName = msg?.app_users?.user_name?.trim() || '알 수 없음'
                     const unread = !row.read_at
+                    const canReply = Boolean(msg?.sender_id && msg.sender_id !== senderUserId)
                     return (
                       <li key={row.id}>
-                        <button
-                          type="button"
-                          onClick={() => void Promise.resolve(onRowClick(row))}
-                          className={`flex w-full flex-col items-start gap-1.5 px-3 py-3 text-left transition-colors hover:bg-violet-50 active:bg-violet-100 ${
+                        <div
+                          className={`flex flex-col gap-1.5 px-3 py-3 transition-colors hover:bg-violet-50/80 active:bg-violet-100 ${
                             unread ? 'bg-violet-50/60' : ''
                           }`}
                         >
-                          <span className="flex w-full items-center justify-between gap-2">
-                            <span className={`text-xs font-black ${unread ? 'text-violet-900' : 'text-gray-700'}`}>
-                              {senderName}
-                              {msg?.kind === 'broadcast' ? (
-                                <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-800">
-                                  공지
-                                </span>
-                              ) : null}
+                          <button
+                            type="button"
+                            onClick={() => void Promise.resolve(onRowClick(row))}
+                            className="flex w-full flex-col items-start gap-1.5 text-left"
+                          >
+                            <span className="flex w-full items-center justify-between gap-2">
+                              <span className={`text-xs font-black ${unread ? 'text-violet-900' : 'text-gray-700'}`}>
+                                {senderName}
+                                {msg?.kind === 'broadcast' ? (
+                                  <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-800">
+                                    공지
+                                  </span>
+                                ) : null}
+                              </span>
+                              <span className="shrink-0 text-[10px] font-bold text-gray-400">{formatWhen(row.created_at)}</span>
                             </span>
-                            <span className="shrink-0 text-[10px] font-bold text-gray-400">{formatWhen(row.created_at)}</span>
-                          </span>
-                          <span className="w-full text-xs font-bold text-gray-800">{msg?.subject?.trim() || '(제목 없음)'}</span>
-                          <div className="w-full border-t border-gray-200" aria-hidden />
+                            <span className="w-full text-xs font-bold text-gray-800">{msg?.subject?.trim() || '(제목 없음)'}</span>
+                            <div className="w-full border-t border-gray-200" aria-hidden />
+                          </button>
                           {msg ? (
                             unread ? (
-                              <p className="w-full text-[11px] font-bold leading-relaxed text-sky-800">
+                              <button
+                                type="button"
+                                onClick={() => void Promise.resolve(onRowClick(row))}
+                                className="w-full text-left text-[11px] font-bold leading-relaxed text-sky-800 hover:underline"
+                              >
                                 클릭하면 내용이 보입니다
-                              </p>
+                              </button>
                             ) : (
-                              <p className="w-full whitespace-pre-wrap text-xs font-bold leading-relaxed text-gray-800">
-                                {msg.body?.trim() ? msg.body : '(내용 없음)'}
-                              </p>
+                              <div className="flex w-full items-start gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void Promise.resolve(onRowClick(row))}
+                                  className="min-w-0 flex-1 whitespace-pre-wrap text-left text-xs font-bold leading-relaxed text-gray-800 hover:underline"
+                                >
+                                  {msg.body?.trim() ? msg.body : '(내용 없음)'}
+                                </button>
+                                {canReply ? (
+                                  <button
+                                    type="button"
+                                    title="답장 쓰기"
+                                    aria-label="답장 쓰기"
+                                    onClick={() => beginReplyToInboxSender(row)}
+                                    className="shrink-0 rounded-lg border-2 border-violet-300 bg-violet-50 p-2 text-violet-900 shadow-sm hover:bg-violet-100 active:translate-y-px"
+                                  >
+                                    <Reply className="h-4 w-4" strokeWidth={2.5} aria-hidden />
+                                  </button>
+                                ) : null}
+                              </div>
                             )
                           ) : null}
-                        </button>
+                        </div>
                       </li>
                     )
                   })}
@@ -505,7 +552,7 @@ export function MessageAnchorPanel({
                                       {no ? <span className="ml-1 font-bold text-gray-500">({no})</span> : null}
                                     </span>
                                     <span className={`shrink-0 font-black ${pr.read_at ? 'text-emerald-700' : 'text-rose-600'}`}>
-                                      {pr.read_at ? '읽음' : '미읽음'}
+                                      {pr.read_at ? '읽음' : '미확인'}
                                     </span>
                                   </li>
                                 )

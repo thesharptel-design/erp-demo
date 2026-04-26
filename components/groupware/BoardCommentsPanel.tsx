@@ -181,6 +181,20 @@ export default function BoardCommentsPanel({
     void load()
   }, [load])
 
+  /** 알림·URL 해시 `#board-comment-{id}` 로 진입 시 해당 댓글로 스크롤 */
+  useEffect(() => {
+    if (loading || typeof window === 'undefined') return
+    const hash = window.location.hash
+    const m = /^#board-comment-(\d+)$/.exec(hash)
+    if (!m) return
+    const idNum = parseInt(m[1], 10)
+    if (!Number.isFinite(idNum)) return
+    const t = window.setTimeout(() => {
+      document.getElementById(`board-comment-${idNum}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }, 120)
+    return () => window.clearTimeout(t)
+  }, [loading, rows])
+
   const submitTop = async () => {
     const body = topBody.trim()
     if (!body || !currentUserId || submittingTop) return
@@ -333,7 +347,7 @@ export default function BoardCommentsPanel({
 
             if (c.is_deleted) {
               return (
-                <li key={c.id} className="px-2 py-3 sm:px-3" style={{ paddingLeft: 12 + pad }}>
+                <li id={`board-comment-${c.id}`} key={c.id} className="px-2 py-3 sm:px-3" style={{ paddingLeft: 12 + pad }}>
                   {c.depth > 0 ? (
                     <div className="mb-1 flex items-center gap-1 text-xs text-gray-400">
                       <CornerDownRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
@@ -345,7 +359,7 @@ export default function BoardCommentsPanel({
             }
 
             return (
-              <li key={c.id} className="px-2 py-3 sm:px-3" style={{ paddingLeft: 12 + pad }}>
+              <li id={`board-comment-${c.id}`} key={c.id} className="px-2 py-3 sm:px-3" style={{ paddingLeft: 12 + pad }}>
                 {c.depth > 0 ? (
                   <div className="mb-1 flex items-center gap-1 text-xs text-gray-400">
                     <CornerDownRight className="h-3.5 w-3.5 shrink-0" aria-hidden />

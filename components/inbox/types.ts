@@ -30,6 +30,8 @@ export type MessageInboxRow = {
   created_at: string
   private_messages: {
     id: string
+    /** 발신자 `app_users.id` — 받은함 답장 수신자 프리필용 */
+    sender_id: string | null
     subject: string
     body: string
     kind: string
@@ -52,6 +54,8 @@ export type NotificationInboxRow = {
     category: string
     type: string
     created_at: string
+    /** 게시판 댓글 알림 등 JSON (Supabase jsonb) */
+    payload?: Record<string, unknown> | null
     app_users: { user_name: string | null } | null
   } | null
 }
