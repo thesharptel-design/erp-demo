@@ -7,7 +7,13 @@ import { MessageAnchorPanel } from '@/components/inbox/MessageAnchorPanel'
 import { NotificationAnchorPanel } from '@/components/inbox/NotificationAnchorPanel'
 import type { MessageInboxRow, MessagePanelTab, NotificationInboxRow, SentMessageRow } from '@/components/inbox/types'
 import { mergeInboxByCreatedDesc, normalizeMessageRow, normalizeNotificationRow } from '@/lib/inbox-normalize'
+import {
+  getArrivalSoundEnabled,
+  getArrivalToastEnabled,
+} from '@/lib/inbox-arrival-alarm-prefs'
+import { playInboxArrivalChime } from '@/lib/inbox-arrival-chime'
 import { notificationNavigateHref } from '@/lib/notification-inbox-tabs'
+import { toast } from 'sonner'
 
 const MSG_SELECT = `
   id,
@@ -73,6 +79,11 @@ function mapSentRpcRow(raw: Record<string, unknown>): SentMessageRow {
       const e = raw.primary_recipient_employee_no
       if (e == null || String(e).trim() === '') return null
       return String(e)
+    })(),
+    primary_recipient_user_id: (() => {
+      const u = raw.primary_recipient_user_id
+      if (u == null || String(u).trim() === '') return null
+      return String(u)
     })(),
   }
 }
@@ -240,6 +251,9 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
             setMessages((prev) => prev.filter((r) => r.id !== id))
             return
           }
+          if (ev === 'INSERT' && getArrivalSoundEnabled('message')) {
+            playInboxArrivalChime()
+          }
           const row = await fetchMessageByRecipientId(id)
           if (!row) {
             setMessages((prev) => prev.filter((r) => r.id !== id))
@@ -248,6 +262,14 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
           if (row.archived_at) {
             setMessages((prev) => prev.filter((r) => r.id !== id))
             return
+          }
+          if (ev === 'INSERT' && getArrivalToastEnabled('message')) {
+            const sub = row.private_messages?.subject?.trim() || '(제목 없음)'
+            const from = row.private_messages?.app_users?.user_name?.trim()
+            toast.info('새 쪽지', {
+              description: from ? `${from} · ${sub}` : sub,
+              duration: 5000,
+            })
           }
           setMessages((prev) => mergeInboxByCreatedDesc(prev, row))
         }
@@ -270,6 +292,9 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
             setNotifications((prev) => prev.filter((r) => r.id !== id))
             return
           }
+          if (ev === 'INSERT' && getArrivalSoundEnabled('notification')) {
+            playInboxArrivalChime()
+          }
           const row = await fetchNotificationById(id)
           if (!row) {
             setNotifications((prev) => prev.filter((r) => r.id !== id))
@@ -278,6 +303,14 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
           if (row.archived_at) {
             setNotifications((prev) => prev.filter((r) => r.id !== id))
             return
+          }
+          if (ev === 'INSERT' && getArrivalToastEnabled('notification')) {
+            const title = row.notification_events?.title?.trim() || '알림'
+            const actor = row.notification_events?.app_users?.user_name?.trim()
+            toast.info('새 알림', {
+              description: actor ? `${title} · ${actor}` : title,
+              duration: 5000,
+            })
           }
           setNotifications((prev) => mergeInboxByCreatedDesc(prev, row))
         }

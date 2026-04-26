@@ -266,6 +266,34 @@ export type Database = {
           notified_at: string
         }[]
       }
+      list_direct_message_thread: {
+        Args: { p_other_user_id: string; p_limit?: number }
+        Returns: {
+          message_id: string
+          direction: string
+          created_at: string
+          subject: string
+          body: string
+          inbound_recipient_id: string | null
+          my_read_at: string | null
+          peer_read_at: string | null
+        }[]
+      }
+      list_sent_private_messages_with_stats: {
+        Args: { p_limit?: number }
+        Returns: {
+          message_id: string
+          subject: string
+          body: string
+          kind: string
+          created_at: string
+          recipient_total: number
+          recipient_read: number
+          primary_recipient_name: string | null
+          primary_recipient_employee_no: string | null
+          primary_recipient_user_id: string | null
+        }[]
+      }
     }
     Enums: Record<string, never>
   }

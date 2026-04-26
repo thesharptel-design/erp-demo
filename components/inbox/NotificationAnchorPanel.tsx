@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useMemo, useState, type RefObject } from 'react'
 import { AnchorPanelPortal } from '@/components/inbox/AnchorPanelPortal'
+import { InboxArrivalAlarmToggles } from '@/components/inbox/InboxArrivalAlarmToggles'
 import type { NotificationInboxRow } from '@/components/inbox/types'
 import {
   filterNotificationsByInboxTab,
@@ -63,9 +64,12 @@ export function NotificationAnchorPanel({ open, anchorRef, contentAlignRef, onCl
     <AnchorPanelPortal anchorRef={anchorRef} contentAlignRef={contentAlignRef} open={open} onClose={onClose} labelledBy={titleId}>
       <div className="flex max-h-[inherit] flex-col overflow-hidden rounded-2xl">
         <div className="shrink-0 border-b-2 border-black px-3 py-2.5">
-          <h2 id={titleId} className="text-sm font-black text-gray-900">
-            알림
-          </h2>
+          <div className="flex items-start justify-between gap-2">
+            <h2 id={titleId} className="text-sm font-black text-gray-900">
+              알림
+            </h2>
+            <InboxArrivalAlarmToggles scope="notification" />
+          </div>
           <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl border-2 border-gray-200 bg-gray-50 p-1">
             {TAB_DEFS.map((t) => {
               const unread = unreadNotificationsInTab(items, t.id)

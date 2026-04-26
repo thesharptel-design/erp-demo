@@ -12,6 +12,8 @@ export type SentMessageRow = {
   /** kind=direct 일 때 수신자 표시용 (보낸함 UI) */
   primary_recipient_name: string | null
   primary_recipient_employee_no: string | null
+  /** kind=direct 일 때 1:1 스레드 진입용 수신자 `app_users.id` */
+  primary_recipient_user_id: string | null
 }
 
 export type MessageRecipientPreview = {

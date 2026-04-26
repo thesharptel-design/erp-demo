@@ -1,10 +1,12 @@
 'use client'
 
-import { useCallback, useEffect, useId, useState, type RefObject } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type RefObject } from 'react'
 import { Reply } from 'lucide-react'
 import { toast } from 'sonner'
 import { AnchorPanelPortal } from '@/components/inbox/AnchorPanelPortal'
+import { InboxArrivalAlarmToggles } from '@/components/inbox/InboxArrivalAlarmToggles'
 import type { MessageInboxRow, MessagePanelTab, MessageRecipientPreview, SentMessageRow } from '@/components/inbox/types'
+import { fetchDirectMessageThread, type DirectThreadRow } from '@/lib/direct-message-thread'
 import {
   searchMessageRecipientCandidates,
   sendDirectPrivateMessage,
@@ -54,6 +56,10 @@ function sentHeadline(row: SentMessageRow) {
   return `${sub} to ${name}${no ? `(${no})` : ''}`
 }
 
+type ThreadPartner = { userId: string; displayName: string; employeeNo: string | null }
+
+const THREAD_FETCH_LIMIT = 120
+
 export function MessageAnchorPanel({
   open,
   anchorRef,
@@ -96,6 +102,30 @@ export function MessageAnchorPanel({
   const [dmBusy, setDmBusy] = useState(false)
   const [dmErr, setDmErr] = useState<string | null>(null)
 
+  const [threadPartner, setThreadPartner] = useState<ThreadPartner | null>(null)
+  const [threadRows, setThreadRows] = useState<DirectThreadRow[]>([])
+  const [threadLoading, setThreadLoading] = useState(false)
+  const [threadErr, setThreadErr] = useState<string | null>(null)
+  const [replySubject, setReplySubject] = useState('')
+  const [replyBody, setReplyBody] = useState('')
+  const [replyBusy, setReplyBusy] = useState(false)
+  const [replyErr, setReplyErr] = useState<string | null>(null)
+  const threadListRef = useRef<HTMLDivElement | null>(null)
+
+  const loadThread = useCallback(async () => {
+    if (!threadPartner) return
+    setThreadLoading(true)
+    setThreadErr(null)
+    const res = await fetchDirectMessageThread(supabase, threadPartner.userId, THREAD_FETCH_LIMIT)
+    setThreadLoading(false)
+    if (!res.ok) {
+      setThreadErr(res.message)
+      setThreadRows([])
+      return
+    }
+    setThreadRows(res.rows)
+  }, [threadPartner])
+
   useEffect(() => {
     if (!open) {
       setExpandedSentId(null)
@@ -107,6 +137,12 @@ export function MessageAnchorPanel({
       setDmSubject('')
       setDmBody('')
       setDmErr(null)
+      setThreadPartner(null)
+      setThreadRows([])
+      setThreadErr(null)
+      setReplySubject('')
+      setReplyBody('')
+      setReplyErr(null)
     }
   }, [open])
 
@@ -117,24 +153,104 @@ export function MessageAnchorPanel({
     }
   }, [tab])
 
-  const beginReplyToInboxSender = useCallback(
-    (row: MessageInboxRow) => {
+  useEffect(() => {
+    if (!threadPartner || !open) return
+    void loadThread()
+  }, [threadPartner, open, loadThread])
+
+  useEffect(() => {
+    if (!open || !threadPartner) return
+    let debounceId: number | null = null
+    const schedule = () => {
+      if (debounceId != null) window.clearTimeout(debounceId)
+      debounceId = window.setTimeout(() => {
+        debounceId = null
+        void loadThread()
+      }, 400)
+    }
+    const channel = supabase
+      .channel(`dm-thread:${senderUserId}:${threadPartner.userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'private_message_recipients',
+          filter: `user_id=eq.${senderUserId}`,
+        },
+        schedule
+      )
+      .subscribe()
+    return () => {
+      if (debounceId != null) window.clearTimeout(debounceId)
+      void supabase.removeChannel(channel)
+    }
+  }, [open, threadPartner, senderUserId, loadThread])
+
+  useEffect(() => {
+    if (!threadPartner || threadLoading) return
+    const el = threadListRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [threadPartner, threadLoading, threadRows])
+
+  const exitThread = useCallback(() => {
+    setThreadPartner(null)
+    setThreadRows([])
+    setThreadErr(null)
+    setReplySubject('')
+    setReplyBody('')
+    setReplyErr(null)
+  }, [])
+
+  const openDirectThread = useCallback(
+    (partner: ThreadPartner, opts?: { replySubject?: string }) => {
+      setThreadPartner(partner)
+      setThreadErr(null)
+      setReplyErr(null)
+      setReplySubject(opts?.replySubject ?? '')
+      setReplyBody('')
+    },
+    []
+  )
+
+  const openThreadFromInboxRow = useCallback(
+    (row: MessageInboxRow, opts?: { markRead?: boolean }) => {
       const pm = row.private_messages
-      if (!pm) return
+      if (!pm || pm.kind !== 'direct') return
       const sid = pm.sender_id?.trim()
       if (!sid || sid === senderUserId) return
+      if (opts?.markRead !== false) {
+        void Promise.resolve(onRowClick(row))
+      }
       const name = pm.app_users?.user_name?.trim() || '이름 없음'
       const no = pm.app_users?.employee_no ?? null
-      setDmQuery('')
-      setDmHits([])
-      setDmPick({ id: sid, user_name: name, employee_no: no })
       const sub = (pm.subject ?? '').trim()
-      setDmSubject(sub ? `Re: ${sub}` : 'Re: ')
-      setDmBody('')
-      setDmErr(null)
-      onTabChange('compose')
+      openDirectThread(
+        { userId: sid, displayName: name, employeeNo: no },
+        { replySubject: sub ? `Re: ${sub}` : 'Re: ' }
+      )
     },
-    [senderUserId, onTabChange]
+    [senderUserId, onRowClick, openDirectThread]
+  )
+
+  const openThreadFromSentRow = useCallback(
+    (row: SentMessageRow) => {
+      if (row.kind !== 'direct') return
+      const uid = row.primary_recipient_user_id?.trim()
+      if (!uid) return
+      const name = row.primary_recipient_name?.trim() || '수신자'
+      const no = row.primary_recipient_employee_no ?? null
+      openDirectThread({ userId: uid, displayName: name, employeeNo: no }, { replySubject: '' })
+    },
+    [openDirectThread]
+  )
+
+  const beginReplyToInboxSender = useCallback(
+    (row: MessageInboxRow) => {
+      openThreadFromInboxRow(row, { markRead: true })
+    },
+    [openThreadFromInboxRow]
   )
 
   useEffect(() => {
@@ -249,6 +365,29 @@ export function MessageAnchorPanel({
     onTabChange('sent')
   }
 
+  async function handleThreadReply(e: React.FormEvent) {
+    e.preventDefault()
+    setReplyErr(null)
+    if (!threadPartner) return
+    setReplyBusy(true)
+    const res = await sendDirectPrivateMessage(supabase, {
+      senderId: senderUserId,
+      recipientUserId: threadPartner.userId,
+      subject: replySubject,
+      body: replyBody,
+    })
+    setReplyBusy(false)
+    if (!res.ok) {
+      setReplyErr(res.message)
+      return
+    }
+    setReplyBody('')
+    toast.success('답장을 보냈습니다.')
+    await loadThread()
+    onAfterDirectSend?.()
+    onRefreshSent()
+  }
+
   function tabHint() {
     if (tab === 'compose') return '1:1 또는 전체 공지(관리자)로 발송합니다.'
     if (tab === 'inbox')
@@ -294,13 +433,31 @@ export function MessageAnchorPanel({
           </ul>
         ) : null}
         {dmPick ? (
-          <p className="mb-2 rounded-lg border border-violet-300 bg-white px-2 py-1 text-[11px] font-black text-violet-900">
-            받는 사람: {dmPick.user_name?.trim() || '이름 없음'}
-            {dmPick.employee_no ? ` (${dmPick.employee_no})` : ''}
-            <button type="button" className="ml-2 text-[10px] font-black text-rose-600 underline" onClick={() => setDmPick(null)}>
-              변경
+          <div className="mb-2 rounded-lg border border-violet-300 bg-white px-2 py-1 text-[11px] font-black text-violet-900">
+            <p>
+              받는 사람: {dmPick.user_name?.trim() || '이름 없음'}
+              {dmPick.employee_no ? ` (${dmPick.employee_no})` : ''}
+              <button type="button" className="ml-2 text-[10px] font-black text-rose-600 underline" onClick={() => setDmPick(null)}>
+                변경
+              </button>
+            </p>
+            <button
+              type="button"
+              className="mt-1 text-left text-[10px] font-black text-violet-700 underline decoration-2 underline-offset-2 hover:text-violet-900"
+              onClick={() =>
+                openDirectThread(
+                  {
+                    userId: dmPick.id,
+                    displayName: dmPick.user_name?.trim() || '이름 없음',
+                    employeeNo: dmPick.employee_no ?? null,
+                  },
+                  { replySubject: '' }
+                )
+              }
+            >
+              이 사람과 쪽지 대화 보기
             </button>
-          </p>
+          </div>
         ) : null}
         <input
           value={dmSubject}
@@ -364,45 +521,101 @@ export function MessageAnchorPanel({
     </div>
   )
 
+  const threadReplyForm = threadPartner ? (
+    <form onSubmit={handleThreadReply} className="space-y-2">
+      <p className="text-[10px] font-black uppercase tracking-wide text-gray-600">답장</p>
+      <input
+        value={replySubject}
+        onChange={(e) => setReplySubject(e.target.value)}
+        placeholder="제목"
+        className="w-full rounded-lg border-2 border-black px-2 py-1.5 text-xs font-bold text-gray-900 placeholder:text-gray-400"
+        maxLength={300}
+        disabled={replyBusy}
+      />
+      <textarea
+        value={replyBody}
+        onChange={(e) => setReplyBody(e.target.value)}
+        placeholder="내용"
+        rows={3}
+        className="w-full resize-none rounded-lg border-2 border-black px-2 py-1.5 text-xs font-bold text-gray-900 placeholder:text-gray-400"
+        maxLength={20000}
+        disabled={replyBusy}
+      />
+      {replyErr ? <p className="text-[10px] font-black text-rose-600">{replyErr}</p> : null}
+      <button
+        type="submit"
+        disabled={replyBusy}
+        className="w-full rounded-xl border-2 border-black bg-violet-200 py-2 text-xs font-black text-violet-950 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-violet-300 active:translate-y-0.5 active:shadow-none disabled:opacity-50"
+      >
+        {replyBusy ? '전송 중…' : '답장 보내기'}
+      </button>
+    </form>
+  ) : null
+
   return (
     <AnchorPanelPortal anchorRef={anchorRef} contentAlignRef={contentAlignRef} open={open} onClose={onClose} labelledBy={titleId}>
       <div className="flex max-h-[inherit] min-h-0 flex-col overflow-hidden rounded-2xl">
         <div className="shrink-0 border-b-2 border-black px-3 py-2.5">
-          <h2 id={titleId} className="text-sm font-black text-gray-900">
-            쪽지
-          </h2>
-          <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl border-2 border-gray-200 bg-gray-50 p-1">
-            <button
-              type="button"
-              onClick={() => onTabChange('compose')}
-              className={`rounded-lg px-1 py-1.5 text-[10px] font-black leading-tight transition-colors sm:text-[11px] ${
-                tab === 'compose' ? 'bg-white text-violet-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              쪽지 보내기
-            </button>
-            <button
-              type="button"
-              onClick={() => onTabChange('inbox')}
-              className={`rounded-lg px-1 py-1.5 text-[10px] font-black leading-tight transition-colors sm:text-[11px] ${
-                tab === 'inbox' ? 'bg-white text-violet-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              받은쪽지
-            </button>
-            <button
-              type="button"
-              onClick={() => onTabChange('sent')}
-              className={`rounded-lg px-1 py-1.5 text-[10px] font-black leading-tight transition-colors sm:text-[11px] ${
-                tab === 'sent' ? 'bg-white text-violet-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              보낸쪽지
-            </button>
+          <div className="flex items-start justify-between gap-2">
+            <h2 id={titleId} className="text-sm font-black text-gray-900">
+              쪽지
+            </h2>
+            <InboxArrivalAlarmToggles scope="message" />
           </div>
-          <p className="mt-1.5 text-[11px] font-bold text-gray-500">{tabHint()}</p>
+          {threadPartner ? (
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={exitThread}
+                  className="rounded-lg border-2 border-black bg-white px-2 py-1 text-[10px] font-black text-gray-900 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] hover:bg-gray-50 active:translate-y-px active:shadow-none"
+                >
+                  ← 목록
+                </button>
+                <span className="text-xs font-black text-gray-900">
+                  {threadPartner.displayName}
+                  {threadPartner.employeeNo ? ` (${threadPartner.employeeNo})` : ''}님과 쪽지
+                </span>
+              </div>
+              <span className="text-[10px] font-bold text-gray-500">최근 {THREAD_FETCH_LIMIT}건까지</span>
+            </div>
+          ) : (
+            <>
+              <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl border-2 border-gray-200 bg-gray-50 p-1">
+                <button
+                  type="button"
+                  onClick={() => onTabChange('compose')}
+                  className={`rounded-lg px-1 py-1.5 text-[10px] font-black leading-tight transition-colors sm:text-[11px] ${
+                    tab === 'compose' ? 'bg-white text-violet-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  쪽지 보내기
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onTabChange('inbox')}
+                  className={`rounded-lg px-1 py-1.5 text-[10px] font-black leading-tight transition-colors sm:text-[11px] ${
+                    tab === 'inbox' ? 'bg-white text-violet-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  받은쪽지
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onTabChange('sent')}
+                  className={`rounded-lg px-1 py-1.5 text-[10px] font-black leading-tight transition-colors sm:text-[11px] ${
+                    tab === 'sent' ? 'bg-white text-violet-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  보낸쪽지
+                </button>
+              </div>
+              <p className="mt-1.5 text-[11px] font-bold text-gray-500">{tabHint()}</p>
+            </>
+          )}
         </div>
 
+        {!threadPartner ? (
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           {tab === 'compose' ? (
             composeForm
@@ -447,34 +660,56 @@ export function MessageAnchorPanel({
                           </button>
                           {msg ? (
                             unread ? (
-                              <button
-                                type="button"
-                                onClick={() => void Promise.resolve(onRowClick(row))}
-                                className="w-full text-left text-[11px] font-bold leading-relaxed text-sky-800 hover:underline"
-                              >
-                                클릭하면 내용이 보입니다
-                              </button>
-                            ) : (
-                              <div className="flex w-full items-start gap-2">
+                              <>
                                 <button
                                   type="button"
                                   onClick={() => void Promise.resolve(onRowClick(row))}
-                                  className="min-w-0 flex-1 whitespace-pre-wrap text-left text-xs font-bold leading-relaxed text-gray-800 hover:underline"
+                                  className="w-full text-left text-[11px] font-bold leading-relaxed text-sky-800 hover:underline"
                                 >
-                                  {msg.body?.trim() ? msg.body : '(내용 없음)'}
+                                  클릭하면 내용이 보입니다
                                 </button>
-                                {canReply ? (
+                                {canReply && msg.kind === 'direct' ? (
                                   <button
                                     type="button"
-                                    title="답장 쓰기"
-                                    aria-label="답장 쓰기"
-                                    onClick={() => beginReplyToInboxSender(row)}
-                                    className="shrink-0 rounded-lg border-2 border-violet-300 bg-violet-50 p-2 text-violet-900 shadow-sm hover:bg-violet-100 active:translate-y-px"
+                                    onClick={() => openThreadFromInboxRow(row)}
+                                    className="self-start text-[10px] font-black text-violet-800 underline decoration-2 underline-offset-2 hover:text-violet-950"
                                   >
-                                    <Reply className="h-4 w-4" strokeWidth={2.5} aria-hidden />
+                                    이 사람과 대화 보기
                                   </button>
                                 ) : null}
-                              </div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="flex w-full items-start gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => void Promise.resolve(onRowClick(row))}
+                                    className="min-w-0 flex-1 whitespace-pre-wrap text-left text-xs font-bold leading-relaxed text-gray-800 hover:underline"
+                                  >
+                                    {msg.body?.trim() ? msg.body : '(내용 없음)'}
+                                  </button>
+                                  {canReply ? (
+                                    <button
+                                      type="button"
+                                      title="답장·대화"
+                                      aria-label="답장·대화"
+                                      onClick={() => beginReplyToInboxSender(row)}
+                                      className="shrink-0 rounded-lg border-2 border-violet-300 bg-violet-50 p-2 text-violet-900 shadow-sm hover:bg-violet-100 active:translate-y-px"
+                                    >
+                                      <Reply className="h-4 w-4" strokeWidth={2.5} aria-hidden />
+                                    </button>
+                                  ) : null}
+                                </div>
+                                {canReply && msg.kind === 'direct' ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openThreadFromInboxRow(row, { markRead: false })}
+                                    className="self-start text-[10px] font-black text-violet-800 underline decoration-2 underline-offset-2 hover:text-violet-950"
+                                  >
+                                    이 사람과 대화 보기
+                                  </button>
+                                ) : null}
+                              </>
                             )
                           ) : null}
                         </div>
@@ -560,6 +795,15 @@ export function MessageAnchorPanel({
                             </ul>
                           )
                         ) : null}
+                        {!isBroadcast && row.primary_recipient_user_id ? (
+                          <button
+                            type="button"
+                            onClick={() => openThreadFromSentRow(row)}
+                            className="self-start text-[10px] font-black text-violet-700 underline decoration-2 underline-offset-2 hover:text-violet-900"
+                          >
+                            이 사람과 대화 보기
+                          </button>
+                        ) : null}
                       </div>
                     </li>
                   )
@@ -580,6 +824,61 @@ export function MessageAnchorPanel({
             </>
           )}
         </div>
+        ) : (
+          <>
+            <div ref={threadListRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-slate-50/80 px-3 py-3">
+              {threadLoading ? (
+                <p className="py-8 text-center text-xs font-bold text-gray-400">불러오는 중…</p>
+              ) : threadErr ? (
+                <p className="py-4 text-center text-xs font-black text-rose-600">{threadErr}</p>
+              ) : threadRows.length === 0 ? (
+                <p className="py-8 text-center text-xs font-bold text-gray-500">
+                  이 사람과 주고받은 1:1 쪽지가 아직 없습니다. 아래에서 답장을 보낼 수 있습니다.
+                </p>
+              ) : (
+                <ul className="space-y-3">
+                  {threadRows.map((tr) => {
+                    const mine = tr.direction === 'out'
+                    const sub = tr.subject?.trim() || '(제목 없음)'
+                    return (
+                      <li
+                        key={`${tr.direction}-${tr.message_id}-${tr.created_at}`}
+                        className={`flex ${mine ? 'justify-end' : 'justify-start'}`}
+                      >
+                        <div
+                          className={`max-w-[92%] rounded-xl border-2 px-3 py-2 shadow-sm sm:max-w-[85%] ${
+                            mine ? 'border-violet-400 bg-violet-100' : 'border-gray-300 bg-white'
+                          }`}
+                        >
+                          <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 gap-y-0.5">
+                            <span className={`text-[10px] font-black uppercase ${mine ? 'text-violet-950' : 'text-gray-600'}`}>
+                              {mine ? '발신(나)' : '상대 발신'}
+                            </span>
+                            <span className="text-[10px] font-bold text-gray-500">{formatWhen(tr.created_at)}</span>
+                          </div>
+                          <p className="text-[11px] font-black text-gray-900">{sub}</p>
+                          <p className="mt-1 whitespace-pre-wrap text-xs font-bold leading-relaxed text-gray-800">
+                            {tr.body?.trim() ? tr.body : ' '}
+                          </p>
+                          {mine ? (
+                            <p className="mt-1 text-[10px] font-bold text-violet-900">
+                              상대 열람: {tr.peer_read_at ? formatWhen(tr.peer_read_at) : '미확인'}
+                            </p>
+                          ) : tr.my_read_at ? (
+                            <p className="mt-1 text-[10px] font-bold text-gray-500">내 열람: {formatWhen(tr.my_read_at)}</p>
+                          ) : null}
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+            <div className="shrink-0 border-t-2 border-black bg-white px-3 py-2.5 shadow-[0_-6px_18px_rgba(0,0,0,0.05)]">
+              {threadReplyForm}
+            </div>
+          </>
+        )}
       </div>
     </AnchorPanelPortal>
   )
