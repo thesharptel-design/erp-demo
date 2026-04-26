@@ -25,6 +25,11 @@ export function normalizeMessageRow(raw: Record<string, unknown>): MessageInboxR
     private_messages: pm
       ? {
           id: String(pm.id),
+          thread_id: (() => {
+            const t = pm.thread_id
+            if (t == null || String(t).trim() === '') return null
+            return String(t)
+          })(),
           sender_id: (() => {
             const s = pm.sender_id
             if (s == null || String(s).trim() === '') return null

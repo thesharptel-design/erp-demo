@@ -24,6 +24,7 @@ describe('normalizeMessageRow', () => {
       created_at: '2026-01-02T00:00:00Z',
       private_messages: {
         id: 'm1',
+        thread_id: 't1',
         sender_id: 'sender-uuid',
         subject: '제목',
         body: '본문',
@@ -33,6 +34,7 @@ describe('normalizeMessageRow', () => {
       },
     })
     expect(row.private_messages?.app_users?.user_name).toBe('홍길동')
+    expect(row.private_messages?.thread_id).toBe('t1')
     expect(row.private_messages?.sender_id).toBe('sender-uuid')
     expect(row.private_messages?.subject).toBe('제목')
   })

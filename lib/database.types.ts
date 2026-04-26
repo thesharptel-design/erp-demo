@@ -267,7 +267,7 @@ export type Database = {
         }[]
       }
       list_direct_message_thread: {
-        Args: { p_other_user_id: string; p_limit?: number }
+        Args: { p_thread_id: string; p_limit?: number }
         Returns: {
           message_id: string
           direction: string
@@ -283,6 +283,7 @@ export type Database = {
         Args: { p_limit?: number }
         Returns: {
           message_id: string
+          thread_id: string | null
           subject: string
           body: string
           kind: string

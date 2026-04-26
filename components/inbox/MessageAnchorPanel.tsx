@@ -5,7 +5,7 @@ import { Reply } from 'lucide-react'
 import { toast } from 'sonner'
 import { AnchorPanelPortal } from '@/components/inbox/AnchorPanelPortal'
 import { InboxArrivalAlarmToggles } from '@/components/inbox/InboxArrivalAlarmToggles'
-import type { MessageInboxRow, MessagePanelTab, MessageRecipientPreview, SentMessageRow } from '@/components/inbox/types'
+import type { MessageInboxThreadRow, MessagePanelTab, MessageRecipientPreview, SentMessageRow } from '@/components/inbox/types'
 import { fetchDirectMessageThread, type DirectThreadRow } from '@/lib/direct-message-thread'
 import {
   searchMessageRecipientCandidates,
@@ -22,9 +22,9 @@ type Props = {
   onClose: () => void
   tab: MessagePanelTab
   onTabChange: (tab: MessagePanelTab) => void
-  items: MessageInboxRow[]
+  items: MessageInboxThreadRow[]
   loading: boolean
-  onRowClick: (row: MessageInboxRow) => void
+  onRowClick: (row: MessageInboxThreadRow) => void
   sentItems: SentMessageRow[]
   sentLoading: boolean
   onRefreshSent: () => void
@@ -56,7 +56,7 @@ function sentHeadline(row: SentMessageRow) {
   return `${sub} to ${name}${no ? `(${no})` : ''}`
 }
 
-type ThreadPartner = { userId: string; displayName: string; employeeNo: string | null }
+type ThreadPartner = { threadId: string; userId: string; displayName: string; employeeNo: string | null }
 
 const THREAD_FETCH_LIMIT = 120
 
@@ -116,7 +116,7 @@ export function MessageAnchorPanel({
     if (!threadPartner) return
     setThreadLoading(true)
     setThreadErr(null)
-    const res = await fetchDirectMessageThread(supabase, threadPartner.userId, THREAD_FETCH_LIMIT)
+    const res = await fetchDirectMessageThread(supabase, threadPartner.threadId, THREAD_FETCH_LIMIT)
     setThreadLoading(false)
     if (!res.ok) {
       setThreadErr(res.message)
@@ -169,7 +169,7 @@ export function MessageAnchorPanel({
       }, 400)
     }
     const channel = supabase
-      .channel(`dm-thread:${senderUserId}:${threadPartner.userId}`)
+      .channel(`dm-thread:${senderUserId}:${threadPartner.threadId}`)
       .on(
         'postgres_changes',
         {
@@ -215,19 +215,19 @@ export function MessageAnchorPanel({
   )
 
   const openThreadFromInboxRow = useCallback(
-    (row: MessageInboxRow, opts?: { markRead?: boolean }) => {
-      const pm = row.private_messages
-      if (!pm || pm.kind !== 'direct') return
-      const sid = pm.sender_id?.trim()
-      if (!sid || sid === senderUserId) return
+    (row: MessageInboxThreadRow, opts?: { markRead?: boolean }) => {
+      if (row.kind !== 'direct') return
+      const sid = row.counterpart_user_id?.trim()
+      const tid = row.thread_id?.trim()
+      if (!sid || sid === senderUserId || !tid) return
       if (opts?.markRead !== false) {
         void Promise.resolve(onRowClick(row))
       }
-      const name = pm.app_users?.user_name?.trim() || '이름 없음'
-      const no = pm.app_users?.employee_no ?? null
-      const sub = (pm.subject ?? '').trim()
+      const name = row.counterpart_name?.trim() || '이름 없음'
+      const no = row.counterpart_employee_no ?? null
+      const sub = row.latest_subject?.trim()
       openDirectThread(
-        { userId: sid, displayName: name, employeeNo: no },
+        { threadId: tid, userId: sid, displayName: name, employeeNo: no },
         { replySubject: sub ? `Re: ${sub}` : 'Re: ' }
       )
     },
@@ -238,16 +238,17 @@ export function MessageAnchorPanel({
     (row: SentMessageRow) => {
       if (row.kind !== 'direct') return
       const uid = row.primary_recipient_user_id?.trim()
-      if (!uid) return
+      const tid = row.thread_id?.trim()
+      if (!uid || !tid) return
       const name = row.primary_recipient_name?.trim() || '수신자'
       const no = row.primary_recipient_employee_no ?? null
-      openDirectThread({ userId: uid, displayName: name, employeeNo: no }, { replySubject: '' })
+      openDirectThread({ threadId: tid, userId: uid, displayName: name, employeeNo: no }, { replySubject: '' })
     },
     [openDirectThread]
   )
 
   const beginReplyToInboxSender = useCallback(
-    (row: MessageInboxRow) => {
+    (row: MessageInboxThreadRow) => {
       openThreadFromInboxRow(row, { markRead: true })
     },
     [openThreadFromInboxRow]
@@ -348,6 +349,7 @@ export function MessageAnchorPanel({
       recipientUserId: dmPick.id,
       subject: dmSubject,
       body: dmBody,
+      startNewThread: true,
     })
     setDmBusy(false)
     if (!res.ok) {
@@ -375,6 +377,7 @@ export function MessageAnchorPanel({
       recipientUserId: threadPartner.userId,
       subject: replySubject,
       body: replyBody,
+      threadId: threadPartner.threadId,
     })
     setReplyBusy(false)
     if (!res.ok) {
@@ -447,6 +450,7 @@ export function MessageAnchorPanel({
               onClick={() =>
                 openDirectThread(
                   {
+                    threadId: crypto.randomUUID(),
                     userId: dmPick.id,
                     displayName: dmPick.user_name?.trim() || '이름 없음',
                     employeeNo: dmPick.employee_no ?? null,
@@ -628,12 +632,12 @@ export function MessageAnchorPanel({
               ) : (
                 <ul className="divide-y divide-sky-200">
                   {items.map((row) => {
-                    const msg = row.private_messages
-                    const senderName = msg?.app_users?.user_name?.trim() || '알 수 없음'
-                    const unread = !row.read_at
-                    const canReply = Boolean(msg?.sender_id && msg.sender_id !== senderUserId)
+                    const isBroadcast = row.kind === 'broadcast'
+                    const senderName = isBroadcast ? '시스템 공지' : row.counterpart_name?.trim() || '알 수 없음'
+                    const unread = row.unread_count > 0
+                    const canReply = !isBroadcast && Boolean(row.counterpart_user_id && row.counterpart_user_id !== senderUserId)
                     return (
-                      <li key={row.id}>
+                      <li key={row.thread_key}>
                         <div
                           className={`flex flex-col gap-1.5 px-3 py-3 transition-colors hover:bg-violet-50/80 active:bg-violet-100 ${
                             unread ? 'bg-violet-50/60' : ''
@@ -647,70 +651,54 @@ export function MessageAnchorPanel({
                             <span className="flex w-full items-center justify-between gap-2">
                               <span className={`text-xs font-black ${unread ? 'text-violet-900' : 'text-gray-700'}`}>
                                 {senderName}
-                                {msg?.kind === 'broadcast' ? (
+                                {isBroadcast ? (
                                   <span className="ml-1.5 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-black text-amber-800">
                                     공지
                                   </span>
                                 ) : null}
+                                {!isBroadcast && unread ? (
+                                  <span className="ml-1.5 rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-black text-violet-800">
+                                    미확인 {row.unread_count}
+                                  </span>
+                                ) : null}
                               </span>
-                              <span className="shrink-0 text-[10px] font-bold text-gray-400">{formatWhen(row.created_at)}</span>
+                              <span className="shrink-0 text-[10px] font-bold text-gray-400">{formatWhen(row.latest_created_at)}</span>
                             </span>
-                            <span className="w-full text-xs font-bold text-gray-800">{msg?.subject?.trim() || '(제목 없음)'}</span>
+                            <span className="w-full text-xs font-bold text-gray-800">{row.latest_subject?.trim() || '(제목 없음)'}</span>
                             <div className="w-full border-t border-gray-200" aria-hidden />
                           </button>
-                          {msg ? (
-                            unread ? (
-                              <>
-                                <button
-                                  type="button"
-                                  onClick={() => void Promise.resolve(onRowClick(row))}
-                                  className="w-full text-left text-[11px] font-bold leading-relaxed text-sky-800 hover:underline"
-                                >
-                                  클릭하면 내용이 보입니다
-                                </button>
-                                {canReply && msg.kind === 'direct' ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => openThreadFromInboxRow(row)}
-                                    className="self-start text-[10px] font-black text-violet-800 underline decoration-2 underline-offset-2 hover:text-violet-950"
-                                  >
-                                    이 사람과 대화 보기
-                                  </button>
-                                ) : null}
-                              </>
-                            ) : (
-                              <>
-                                <div className="flex w-full items-start gap-2">
-                                  <button
-                                    type="button"
-                                    onClick={() => void Promise.resolve(onRowClick(row))}
-                                    className="min-w-0 flex-1 whitespace-pre-wrap text-left text-xs font-bold leading-relaxed text-gray-800 hover:underline"
-                                  >
-                                    {msg.body?.trim() ? msg.body : '(내용 없음)'}
-                                  </button>
-                                  {canReply ? (
-                                    <button
-                                      type="button"
-                                      title="답장·대화"
-                                      aria-label="답장·대화"
-                                      onClick={() => beginReplyToInboxSender(row)}
-                                      className="shrink-0 rounded-lg border-2 border-violet-300 bg-violet-50 p-2 text-violet-900 shadow-sm hover:bg-violet-100 active:translate-y-px"
-                                    >
-                                      <Reply className="h-4 w-4" strokeWidth={2.5} aria-hidden />
-                                    </button>
-                                  ) : null}
-                                </div>
-                                {canReply && msg.kind === 'direct' ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => openThreadFromInboxRow(row, { markRead: false })}
-                                    className="self-start text-[10px] font-black text-violet-800 underline decoration-2 underline-offset-2 hover:text-violet-950"
-                                  >
-                                    이 사람과 대화 보기
-                                  </button>
-                                ) : null}
-                              </>
-                            )
+                          {unread ? (
+                            <button
+                              type="button"
+                              onClick={() => void Promise.resolve(onRowClick(row))}
+                              className="w-full text-left text-[11px] font-bold leading-relaxed text-sky-800 hover:underline"
+                            >
+                              클릭하면 {isBroadcast ? '읽음 처리됩니다' : '이 스레드의 미확인 메시지가 읽음 처리됩니다'}
+                            </button>
+                          ) : (
+                            <p className="min-w-0 whitespace-pre-wrap text-left text-xs font-bold leading-relaxed text-gray-800">
+                              {row.latest_body?.trim() ? row.latest_body : '(내용 없음)'}
+                            </p>
+                          )}
+                          {canReply ? (
+                            <div className="flex w-full items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => openThreadFromInboxRow(row, { markRead: false })}
+                                className="self-start text-[10px] font-black text-violet-800 underline decoration-2 underline-offset-2 hover:text-violet-950"
+                              >
+                                이 사람과 대화 보기
+                              </button>
+                              <button
+                                type="button"
+                                title="답장·대화"
+                                aria-label="답장·대화"
+                                onClick={() => beginReplyToInboxSender(row)}
+                                className="shrink-0 rounded-lg border-2 border-violet-300 bg-violet-50 p-2 text-violet-900 shadow-sm hover:bg-violet-100 active:translate-y-px"
+                              >
+                                <Reply className="h-4 w-4" strokeWidth={2.5} aria-hidden />
+                              </button>
+                            </div>
                           ) : null}
                         </div>
                       </li>

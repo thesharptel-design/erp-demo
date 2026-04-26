@@ -65,7 +65,7 @@ export async function searchMessageRecipientCandidates(
 
 export async function sendDirectPrivateMessage(
   supabase: Pick<SupabaseClient, 'from'>,
-  args: { senderId: string; recipientUserId: string; subject: string; body: string }
+  args: { senderId: string; recipientUserId: string; subject: string; body: string; threadId?: string; startNewThread?: boolean }
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const subject = args.subject.trim()
   const body = args.body.trim()
@@ -79,10 +79,20 @@ export async function sendDirectPrivateMessage(
     return { ok: false, message: '본인에게는 쪽지를 보낼 수 없습니다.' }
   }
 
+  const normalizedThreadId = (() => {
+    const t = args.threadId?.trim()
+    return t && t.length > 0 ? t : null
+  })()
+  const nextThreadId = normalizedThreadId ?? (args.startNewThread === true ? crypto.randomUUID() : null)
+  if (!nextThreadId) {
+    return { ok: false, message: '스레드 정보가 없습니다. 새 쪽지로 시작하거나 기존 대화에서 답장하세요.' }
+  }
+
   const { data: msg, error: insMsgErr } = await supabase
     .from('private_messages')
     .insert({
       sender_id: args.senderId,
+      thread_id: nextThreadId,
       subject,
       body,
       kind: 'direct',

@@ -3,6 +3,7 @@ export type MessagePanelTab = 'compose' | 'inbox' | 'sent'
 
 export type SentMessageRow = {
   message_id: string
+  thread_id: string | null
   subject: string
   body: string
   kind: string
@@ -32,6 +33,7 @@ export type MessageInboxRow = {
   created_at: string
   private_messages: {
     id: string
+    thread_id: string | null
     /** 발신자 `app_users.id` — 받은함 답장 수신자 프리필용 */
     sender_id: string | null
     subject: string
@@ -40,6 +42,22 @@ export type MessageInboxRow = {
     created_at: string
     app_users: { user_name: string | null; employee_no: string | null } | null
   } | null
+}
+
+/** 받은함 표시용: direct는 상대별 1행으로 그룹, broadcast는 기존처럼 개별 행 */
+export type MessageInboxThreadRow = {
+  thread_key: string
+  kind: 'direct' | 'broadcast'
+  thread_id: string | null
+  counterpart_user_id: string | null
+  counterpart_name: string | null
+  counterpart_employee_no: string | null
+  latest_recipient_id: string
+  latest_message_id: string
+  latest_subject: string
+  latest_body: string
+  latest_created_at: string
+  unread_count: number
 }
 
 export type NotificationInboxRow = {

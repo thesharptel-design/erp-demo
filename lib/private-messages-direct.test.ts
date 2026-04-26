@@ -47,6 +47,7 @@ describe('sendDirectPrivateMessage', () => {
       recipientUserId: 'b',
       subject: '제목',
       body: '본문',
+      startNewThread: true,
     })
     expect(r).toEqual({ ok: true })
     expect(insertRec).toHaveBeenCalled()

@@ -15,15 +15,15 @@ type RpcClient = Pick<SupabaseClient, 'rpc'>
 
 export async function fetchDirectMessageThread(
   supabase: RpcClient,
-  otherUserId: string,
+  threadId: string,
   limit = 120
 ): Promise<{ ok: true; rows: DirectThreadRow[] } | { ok: false; message: string }> {
-  const oid = String(otherUserId ?? '').trim()
-  if (!oid) {
-    return { ok: false, message: '상대 사용자가 없습니다.' }
+  const tid = String(threadId ?? '').trim()
+  if (!tid) {
+    return { ok: false, message: '스레드가 없습니다.' }
   }
   const { data, error } = await supabase.rpc('list_direct_message_thread', {
-    p_other_user_id: oid,
+    p_thread_id: tid,
     p_limit: limit,
   })
   if (error) {

@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { MessageAnchorPanel } from '@/components/inbox/MessageAnchorPanel'
 import { NotificationAnchorPanel } from '@/components/inbox/NotificationAnchorPanel'
-import type { MessageInboxRow, MessagePanelTab, NotificationInboxRow, SentMessageRow } from '@/components/inbox/types'
+import type { MessageInboxRow, MessageInboxThreadRow, MessagePanelTab, NotificationInboxRow, SentMessageRow } from '@/components/inbox/types'
 import { mergeInboxByCreatedDesc, normalizeMessageRow, normalizeNotificationRow } from '@/lib/inbox-normalize'
 import {
   getArrivalSoundEnabled,
@@ -24,6 +24,7 @@ const MSG_SELECT = `
   created_at,
   private_messages (
     id,
+    thread_id,
     sender_id,
     subject,
     body,
@@ -68,6 +69,11 @@ function mapSentRpcRow(raw: Record<string, unknown>): SentMessageRow {
   const pr = raw.primary_recipient_name
   return {
     message_id: String(raw.message_id),
+    thread_id: (() => {
+      const t = raw.thread_id
+      if (t == null || String(t).trim() === '') return null
+      return String(t)
+    })(),
     subject: String(raw.subject ?? ''),
     body: String(raw.body ?? ''),
     kind: String(raw.kind ?? ''),
@@ -324,6 +330,59 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
 
   const unreadMsg = useMemo(() => messages.filter((m) => !m.read_at).length, [messages])
   const unreadNotif = useMemo(() => notifications.filter((n) => !n.read_at).length, [notifications])
+  const messageThreads = useMemo<MessageInboxThreadRow[]>(() => {
+    const directMap = new Map<string, MessageInboxThreadRow>()
+    const rows: MessageInboxThreadRow[] = []
+    for (const row of messages) {
+      const msg = row.private_messages
+      if (!msg) continue
+      if (msg.kind === 'broadcast') {
+        rows.push({
+          thread_key: `broadcast:${row.id}`,
+          kind: 'broadcast',
+          thread_id: null,
+          counterpart_user_id: null,
+          counterpart_name: '시스템 공지',
+          counterpart_employee_no: null,
+          latest_recipient_id: row.id,
+          latest_message_id: row.message_id,
+          latest_subject: msg.subject ?? '',
+          latest_body: msg.body ?? '',
+          latest_created_at: row.created_at,
+          unread_count: row.read_at ? 0 : 1,
+        })
+        continue
+      }
+      const sid = msg.sender_id?.trim()
+      const tid = msg.thread_id?.trim()
+      if (!sid || !tid) continue
+      const got = directMap.get(tid)
+      if (got) {
+        if (!row.read_at) got.unread_count += 1
+        continue
+      }
+      const name = msg.app_users?.user_name?.trim() || null
+      const no = msg.app_users?.employee_no?.trim() || null
+      const item: MessageInboxThreadRow = {
+        thread_key: `direct:${tid}`,
+        kind: 'direct',
+        counterpart_user_id: sid,
+        counterpart_name: name,
+        counterpart_employee_no: no,
+        thread_id: tid,
+        latest_recipient_id: row.id,
+        latest_message_id: row.message_id,
+        latest_subject: msg.subject ?? '',
+        latest_body: msg.body ?? '',
+        latest_created_at: row.created_at,
+        unread_count: row.read_at ? 0 : 1,
+      }
+      directMap.set(tid, item)
+      rows.push(item)
+    }
+    rows.sort((a, b) => new Date(b.latest_created_at).getTime() - new Date(a.latest_created_at).getTime())
+    return rows
+  }, [messages])
 
   const inboxHasMore = messages.length > 0 && messages.length === inboxLimit && inboxLimit < INBOX_MAX_FETCH
   const sentHasMore = sentMessages.length > 0 && sentMessages.length === sentLimit && sentLimit < INBOX_MAX_FETCH
@@ -336,16 +395,29 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
     })
   }
 
-  const markMessageRead = useCallback(async (row: MessageInboxRow) => {
-    if (row.read_at) return
+  const markInboxThreadRead = useCallback(async (row: MessageInboxThreadRow) => {
+    if (row.unread_count <= 0) return
     const now = new Date().toISOString()
-    const { error } = await supabase.from('private_message_recipients').update({ read_at: now }).eq('id', row.id).eq('user_id', userId)
+    const ids =
+      row.kind === 'broadcast'
+        ? [row.latest_recipient_id]
+        : messages
+            .filter(
+              (m) =>
+                !m.read_at &&
+                m.private_messages?.kind === 'direct' &&
+                m.private_messages?.thread_id?.trim() === row.thread_id
+            )
+            .map((m) => m.id)
+    if (ids.length === 0) return
+    const { error } = await supabase.from('private_message_recipients').update({ read_at: now }).in('id', ids).eq('user_id', userId)
     if (error) {
       console.warn('mark message read', error.message)
       return
     }
-    setMessages((prev) => prev.map((r) => (r.id === row.id ? { ...r, read_at: now } : r)))
-  }, [userId])
+    const set = new Set(ids)
+    setMessages((prev) => prev.map((r) => (set.has(r.id) ? { ...r, read_at: now } : r)))
+  }, [messages, userId])
 
   const markNotificationReadAndGo = useCallback(
     async (row: NotificationInboxRow) => {
@@ -417,7 +489,7 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
         }}
         tab={msgTab}
         onTabChange={(t) => setMsgTab(t)}
-        items={messages}
+        items={messageThreads}
         loading={msgLoading}
         inboxHasMore={inboxHasMore}
         onLoadMoreInbox={() => setInboxLimit((n) => Math.min(n + INBOX_PAGE_SIZE, INBOX_MAX_FETCH))}
@@ -426,7 +498,7 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
         onLoadMoreSent={() => setSentLimit((n) => Math.min(n + INBOX_PAGE_SIZE, INBOX_MAX_FETCH))}
         sentLoadingMore={sentLoadingMore}
         onRowClick={(row) => {
-          void markMessageRead(row)
+          void markInboxThreadRead(row)
         }}
         sentItems={sentMessages}
         sentLoading={sentLoading}
