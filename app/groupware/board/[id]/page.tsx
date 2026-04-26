@@ -40,6 +40,12 @@ type AuthorRow = {
   can_manage_permissions: boolean | null
 }
 
+type PostLikerRow = {
+  user_id: string
+  created_at: string
+  display_name: string
+}
+
 function formatDetailDate(iso: string): string {
   try {
     return new Intl.DateTimeFormat('ko-KR', {
@@ -66,6 +72,8 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
   /** 타인 글 분류(탭) 변경: 시스템 관리자 */
   const [canMoveBoardTab, setCanMoveBoardTab] = useState(false)
   const [likedPost, setLikedPost] = useState(false)
+  const [postLikers, setPostLikers] = useState<PostLikerRow[]>([])
+  const [postLikersLoading, setPostLikersLoading] = useState(false)
 
   const resolveId = useCallback(async () => {
     const resolved = await params
@@ -73,16 +81,16 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
   }, [params])
 
   const refreshPostMeta = useCallback(async (id: string) => {
-    const { data: meta } = await supabase.from('board_posts').select('comment_count').eq('id', id).maybeSingle()
-    let likeCnt = 0
-    const { count, error: likeErr } = await supabase
-      .from('board_post_likes')
-      .select('*', { head: true, count: 'exact' })
-      .eq('post_id', id)
-    if (!likeErr && count != null) likeCnt = count
+    const { data: meta } = await supabase
+      .from('board_posts')
+      .select('comment_count, like_count')
+      .eq('id', id)
+      .maybeSingle()
     if (meta) {
-      const row = meta as Pick<BoardPostDetail, 'comment_count'>
-      setPost((p) => (p ? { ...p, comment_count: row.comment_count, like_count: likeCnt } : p))
+      const row = meta as Pick<BoardPostDetail, 'comment_count' | 'like_count'>
+      setPost((p) =>
+        p ? { ...p, comment_count: row.comment_count, like_count: row.like_count ?? p.like_count } : p
+      )
     }
   }, [])
 
@@ -98,6 +106,39 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
       .eq('user_id', uid)
       .maybeSingle()
     setLikedPost(Boolean(data))
+  }, [])
+
+  const loadPostLikers = useCallback(async (postId: string) => {
+    setPostLikersLoading(true)
+    try {
+      const { data: likes, error } = await supabase
+        .from('board_post_likes')
+        .select('user_id, created_at')
+        .eq('post_id', postId)
+        .order('created_at', { ascending: true })
+      if (error || !likes?.length) {
+        setPostLikers([])
+        return
+      }
+      const userIds = [...new Set(likes.map((r) => r.user_id).filter(Boolean))] as string[]
+      const { data: users } = await supabase
+        .from('app_users')
+        .select('id, user_name, user_kind, department, can_manage_permissions')
+        .in('id', userIds)
+      const nameById = new Map<string, string>()
+      for (const u of (users ?? []) as AuthorRow[]) {
+        nameById.set(u.id, resolveBoardAuthorMeta(u).name)
+      }
+      setPostLikers(
+        likes.map((row) => ({
+          user_id: row.user_id,
+          created_at: row.created_at,
+          display_name: nameById.get(row.user_id) ?? '알 수 없음',
+        }))
+      )
+    } finally {
+      setPostLikersLoading(false)
+    }
   }, [])
 
   useEffect(() => {
@@ -144,7 +185,7 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
         const { data: row, error: fetchError } = await supabase
           .from('board_posts')
           .select(
-            'id, category, title, body_html, author_id, created_at, updated_at, view_count, comment_count, is_notice, has_images, has_attachments'
+            'id, category, title, body_html, author_id, created_at, updated_at, view_count, comment_count, like_count, is_notice, has_images, has_attachments'
           )
           .eq('id', id)
           .single()
@@ -156,15 +197,7 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
           return
         }
 
-        const raw = row as unknown as Omit<BoardPostDetail, 'like_count'>
-        let likeCnt = 0
-        const { count: likeCount, error: likeCountErr } = await supabase
-          .from('board_post_likes')
-          .select('*', { head: true, count: 'exact' })
-          .eq('post_id', id)
-        if (!likeCountErr && likeCount != null) likeCnt = likeCount
-
-        const typed: BoardPostDetail = { ...raw, like_count: likeCnt }
+        const typed = row as unknown as BoardPostDetail
         setPost(typed)
         void loadPostLikeState(id, session.user.id)
 
@@ -211,6 +244,18 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
     }
   }, [resolveId, loadPostLikeState])
 
+  useEffect(() => {
+    if (!post?.id || !currentUserId) {
+      setPostLikers([])
+      return
+    }
+    if (post.author_id !== currentUserId && !canMoveBoardTab) {
+      setPostLikers([])
+      return
+    }
+    void loadPostLikers(post.id)
+  }, [post?.id, post?.author_id, currentUserId, canMoveBoardTab, loadPostLikers])
+
   const togglePostLike = async () => {
     if (!post || !currentUserId) return
     try {
@@ -231,6 +276,9 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
         setLikedPost(true)
       }
       await refreshPostMeta(post.id)
+      if (post.author_id === currentUserId || canMoveBoardTab) {
+        void loadPostLikers(post.id)
+      }
     } catch {
       // ignore
     }
@@ -334,6 +382,32 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
           </button>
           {!currentUserId ? (
             <p className="text-xs text-gray-400">로그인 후 추천할 수 있습니다.</p>
+          ) : null}
+          {isAuthor || canMoveBoardTab ? (
+            postLikersLoading ? (
+              <p className="text-xs text-gray-400">추천자 목록 불러오는 중…</p>
+            ) : postLikers.length > 0 ? (
+              <div className="w-full max-w-md rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-left">
+                <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">
+                  추천한 사람 <span className="font-bold normal-case text-gray-400">(작성자·시스템 관리자만 표시)</span>
+                </p>
+                <ul className="mt-2 max-h-40 space-y-1.5 overflow-y-auto text-xs font-bold text-gray-800">
+                  {postLikers.map((liker) => (
+                    <li
+                      key={`${liker.user_id}-${liker.created_at}`}
+                      className="flex justify-between gap-2 border-b border-gray-100 pb-1 last:border-0"
+                    >
+                      <span className="min-w-0 truncate">{liker.display_name}</span>
+                      <time className="shrink-0 text-[10px] font-bold text-gray-400" dateTime={liker.created_at}>
+                        {formatDetailDate(liker.created_at)}
+                      </time>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : post.like_count === 0 ? (
+              <p className="text-xs text-gray-400">아직 추천한 사람이 없습니다.</p>
+            ) : null
           ) : null}
         </div>
 

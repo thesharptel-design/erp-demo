@@ -946,41 +946,6 @@ export default function DashboardPage() {
         </div>
 
       </div>
-
-      {/* 🌟 빠른 이동 (현재 사이드바 구조 완벽 동기화) */}
-      <div className="bg-white border-2 border-black rounded-2xl p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] mt-8">
-        <div className="mb-4">
-          <h2 className="text-base font-black flex items-center gap-2">🚀 QUICK LINKS <span className="text-[10px] font-bold text-gray-400 ml-2 bg-gray-100 px-2 py-1 rounded">빠른 메뉴 이동</span></h2>
-        </div>
-        
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-          {[
-            { name: '견적서 관리', path: '/quotes', icon: '📝' },
-            { name: '수주/발주 관리', path: '/purchase-orders', icon: '🛒' },
-            { name: '생산지시/BOM', path: '/production-orders', icon: '⚙️' },
-            { name: 'QC 대기/내역', path: '/qc', icon: '🔬' },
-            { name: '재고/입출고 현황', path: '/inventory', icon: '📦' },
-            { name: '출고 지시 처리', path: '/outbound-instructions', icon: '📋' },
-            { name: '자재 입/출고 등록', path: '/inbound/new', icon: '📥' },
-            { name: '거래처 마스터', path: '/customers', icon: '🏢' },
-            { name: '품목 마스터', path: '/items', icon: '🏷️' },
-            { name: '사용자 권한 관리', path: '/admin/user-permissions', icon: '🔑' },
-            { name: '로그인 모니터', path: '/admin/login-audit', icon: '🛡️' },
-            { name: '창고 관리', path: '/admin/warehouses', icon: '🏭' },
-            { name: 'CoA 파일 관리', path: '/admin/coa-files', icon: '📎' },
-            { name: '결재 문서함', path: '/approvals', icon: '✅' },
-          ].map((link, idx) => (
-            <Link 
-              key={idx} 
-              href={link.path} 
-              className="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-gray-100 hover:border-blue-600 hover:bg-blue-50 transition-all group"
-            >
-              <span className="text-2xl mb-2 group-hover:scale-110 transition-transform">{link.icon}</span>
-              <span className="text-[11px] font-black text-gray-600 group-hover:text-blue-700 text-center">{link.name}</span>
-            </Link>
-          ))}
-        </div>
-      </div>
       
     </div>
   );
