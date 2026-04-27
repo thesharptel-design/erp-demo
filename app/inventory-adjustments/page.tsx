@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { getAllowedWarehouseIds, getCurrentUserPermissions } from '@/lib/permissions'
 import { useSingleSubmit } from '@/hooks/useSingleSubmit'
@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import InlineAlertMirror from '@/components/InlineAlertMirror'
 import {
   InventoryTransferCommandCombobox,
   type TransferComboboxOption,
@@ -63,6 +64,8 @@ type AdjustmentPreviewRow = {
   quarantine_qty: number
 }
 
+const PAGE_SIZE_OPTIONS = [20, 25, 30, 50] as const
+
 function getItemTypeLabel(itemType: string) {
   switch (itemType) {
     case 'finished':
@@ -101,9 +104,12 @@ export default function InventoryAdjustmentsPage() {
   const [adjustQty, setAdjustQty] = useState('0')
   const [remarks, setRemarks] = useState('')
   const [selectedTrackedInventoryId, setSelectedTrackedInventoryId] = useState('')
+  const [selectedTrackedInventoryIds, setSelectedTrackedInventoryIds] = useState<string[]>([''])
   const [lotNo, setLotNo] = useState('')
   const [expDate, setExpDate] = useState('')
   const [serialNo, setSerialNo] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(25)
 
   useEffect(() => {
     async function loadData() {
@@ -226,6 +232,21 @@ export default function InventoryAdjustmentsPage() {
     })
   }, [filteredItems, inventorySummaryMap, selectedWarehouseId])
 
+  const totalPages = Math.max(1, Math.ceil(previewRows.length / pageSize))
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchKeyword, selectedWarehouseId, pageSize])
+
+  useEffect(() => {
+    setCurrentPage((p) => Math.min(Math.max(1, p), totalPages))
+  }, [totalPages])
+
+  const pageRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return previewRows.slice(start, start + pageSize)
+  }, [previewRows, currentPage, pageSize])
+
   const selectedItem = useMemo(() => {
     if (!selectedItemId) return null
     const item = items.find((row) => row.id === selectedItemId)
@@ -255,9 +276,18 @@ export default function InventoryAdjustmentsPage() {
     () => trackedRows.find((row) => String(row.id) === selectedTrackedInventoryId) ?? null,
     [trackedRows, selectedTrackedInventoryId]
   )
+  const selectedTrackedRowsForSn = useMemo(
+    () =>
+      selectedTrackedInventoryIds
+        .map((id) => trackedRows.find((row) => String(row.id) === id) ?? null)
+        .filter((row): row is InventoryRow => row !== null),
+    [selectedTrackedInventoryIds, trackedRows]
+  )
+  const isSnDecreaseMode = Boolean(selectedItem?.is_sn_managed && hasTrackingManaged && !isIncrease)
 
   useEffect(() => {
     setSelectedTrackedInventoryId('')
+    setSelectedTrackedInventoryIds([''])
     setLotNo('')
     setExpDate('')
     setSerialNo('')
@@ -266,6 +296,7 @@ export default function InventoryAdjustmentsPage() {
   useEffect(() => {
     if (!hasTrackingManaged) {
       setSelectedTrackedInventoryId('')
+      setSelectedTrackedInventoryIds([''])
       setLotNo('')
       setExpDate('')
       setSerialNo('')
@@ -273,6 +304,14 @@ export default function InventoryAdjustmentsPage() {
     }
     if (isIncrease) {
       setSelectedTrackedInventoryId('')
+      setSelectedTrackedInventoryIds([''])
+      return
+    }
+    if (selectedItem?.is_sn_managed) {
+      setSelectedTrackedInventoryId('')
+      setLotNo('')
+      setExpDate('')
+      setSerialNo('')
       return
     }
     if (selectedTrackedRow) {
@@ -284,7 +323,13 @@ export default function InventoryAdjustmentsPage() {
       setExpDate('')
       setSerialNo('')
     }
-  }, [isIncrease, hasTrackingManaged, selectedTrackedRow])
+  }, [isIncrease, hasTrackingManaged, selectedItem?.is_sn_managed, selectedTrackedRow])
+
+  useEffect(() => {
+    if (!isSnDecreaseMode) return
+    const selectedCount = selectedTrackedRowsForSn.length
+    setAdjustQty(String(selectedCount > 0 ? selectedCount : 0))
+  }, [isSnDecreaseMode, selectedTrackedRowsForSn])
 
   const warehouseOptions = useMemo<TransferComboboxOption[]>(
     () => warehouses.map((wh) => ({ value: String(wh.id), label: wh.name, keywords: [wh.name] })),
@@ -341,6 +386,16 @@ export default function InventoryAdjustmentsPage() {
     }))
   }, [trackedRows, selectedItem, selectedWarehouseId])
 
+  const trackedLineOptionsForSnSlot = useCallback(
+    (slotIndex: number): TransferComboboxOption[] => {
+      const selectedSet = new Set(
+        selectedTrackedInventoryIds.filter((_, index) => index !== slotIndex).filter((value) => value.trim())
+      )
+      return trackedLineOptions.filter((option) => !selectedSet.has(option.value))
+    },
+    [selectedTrackedInventoryIds, trackedLineOptions]
+  )
+
   async function handleSaveAdjustment() {
     setErrorMessage('')
     setSuccessMessage('')
@@ -367,6 +422,7 @@ export default function InventoryAdjustmentsPage() {
     let payloadLot: string | null = null
     let payloadExp: string | null = null
     let payloadSn: string | null = null
+    let snBatchRows: InventoryRow[] = []
 
     if (hasTrackingManaged) {
       if (isIncrease) {
@@ -386,23 +442,41 @@ export default function InventoryAdjustmentsPage() {
         payloadExp = selectedItem?.is_exp_managed ? expDate.trim() : null
         payloadSn = selectedItem?.is_sn_managed ? serialNo.trim() : null
       } else {
-        if (trackedRows.length > 0 && !selectedTrackedRow) {
-          setErrorMessage('감소 조정에서는 차감할 재고 라인을 선택하십시오.')
-          return
+        if (selectedItem?.is_sn_managed) {
+          const uniqueRows = new Map<number, InventoryRow>()
+          for (const row of selectedTrackedRowsForSn) {
+            uniqueRows.set(row.id, row)
+          }
+          snBatchRows = Array.from(uniqueRows.values())
+          if (snBatchRows.length === 0) {
+            setErrorMessage('SN 품목 감소 조정에서는 차감할 재고 라인을 1개 이상 선택하십시오.')
+            return
+          }
+          if (qty !== snBatchRows.length) {
+            setErrorMessage('SN 품목은 선택한 라인 수와 조정 수량이 같아야 합니다.')
+            return
+          }
+        } else {
+          if (trackedRows.length > 0 && !selectedTrackedRow) {
+            setErrorMessage('감소 조정에서는 차감할 재고 라인을 선택하십시오.')
+            return
+          }
+          payloadLot = selectedTrackedRow?.lot_no ?? null
+          payloadExp = selectedTrackedRow?.exp_date ? String(selectedTrackedRow.exp_date).slice(0, 10) : null
+          payloadSn = selectedTrackedRow?.serial_no ?? null
         }
-        payloadLot = selectedTrackedRow?.lot_no ?? null
-        payloadExp = selectedTrackedRow?.exp_date ? String(selectedTrackedRow.exp_date).slice(0, 10) : null
-        payloadSn = selectedTrackedRow?.serial_no ?? null
       }
     }
 
+    const snAvailableTotal = snBatchRows.reduce((sum, row) => sum + Number(row.available_qty ?? 0), 0)
+    const snQuarantineTotal = snBatchRows.reduce((sum, row) => sum + Number(row.quarantine_qty ?? 0), 0)
     const availableForValidation = selectedTrackedRow?.available_qty ?? selectedItem?.available_qty ?? 0
     const quarantineForValidation = selectedTrackedRow?.quarantine_qty ?? selectedItem?.quarantine_qty ?? 0
-    if (adjustmentType === 'available_decrease' && qty > availableForValidation) {
+    if (adjustmentType === 'available_decrease' && qty > (isSnDecreaseMode ? snAvailableTotal : availableForValidation)) {
       setErrorMessage('선택한 대상의 사용가능재고보다 크게 감소할 수 없습니다.')
       return
     }
-    if (adjustmentType === 'quarantine_decrease' && qty > quarantineForValidation) {
+    if (adjustmentType === 'quarantine_decrease' && qty > (isSnDecreaseMode ? snQuarantineTotal : quarantineForValidation)) {
       setErrorMessage('선택한 대상의 격리재고보다 크게 감소할 수 없습니다.')
       return
     }
@@ -413,31 +487,40 @@ export default function InventoryAdjustmentsPage() {
           data: { session },
         } = await supabase.auth.getSession()
 
-        const response = await fetch('/api/inventory/adjust', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session?.access_token ?? ''}`,
-          },
-          body: JSON.stringify({
-            item_id: selectedItemId,
-            warehouse_id: selectedWarehouseId,
-            adjustment_type: adjustmentType,
-            qty,
-            remarks: remarks.trim(),
-            lot_no: payloadLot,
-            exp_date: payloadExp,
-            serial_no: payloadSn,
-          }),
-        })
-
-        const result = await response.json()
-        if (!response.ok) {
-          setErrorMessage(result?.error ?? '재고조정 중 오류가 발생했습니다.')
-          return
+        const token = session?.access_token ?? ''
+        const postAdjust = async (requestQty: number, lot: string | null, exp: string | null, sn: string | null) => {
+          const response = await fetch('/api/inventory/adjust', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              item_id: selectedItemId,
+              warehouse_id: selectedWarehouseId,
+              adjustment_type: adjustmentType,
+              qty: requestQty,
+              remarks: remarks.trim(),
+              lot_no: lot,
+              exp_date: exp,
+              serial_no: sn,
+            }),
+          })
+          const result = await response.json()
+          if (!response.ok) throw new Error(result?.error ?? '재고조정 중 오류가 발생했습니다.')
         }
 
-        setSuccessMessage('재고조정이 저장되었습니다.')
+        if (isSnDecreaseMode) {
+          for (const row of snBatchRows) {
+            await postAdjust(1, row.lot_no ?? null, row.exp_date ? String(row.exp_date).slice(0, 10) : null, row.serial_no ?? null)
+          }
+          setSuccessMessage(`SN 라인 ${snBatchRows.length}건이 일괄 조정되었습니다.`)
+          setSelectedTrackedInventoryIds([''])
+        } else {
+          await postAdjust(qty, payloadLot, payloadExp, payloadSn)
+          setSuccessMessage('재고조정이 저장되었습니다.')
+        }
+
         setAdjustQty('0')
         setRemarks('')
         if (isIncrease) {
@@ -481,8 +564,8 @@ export default function InventoryAdjustmentsPage() {
         description="창고/품목 기준으로 재고를 확인하고, 실사 결과를 반영해 증감 조정합니다."
       />
 
-      {errorMessage ? <div className="erp-alert-error">{errorMessage}</div> : null}
-      {successMessage ? <div className="erp-alert-success">{successMessage}</div> : null}
+      {errorMessage ? <InlineAlertMirror message={errorMessage} variant="error" /> : null}
+      {successMessage ? <InlineAlertMirror message={successMessage} variant="success" /> : null}
 
       <Card className="w-full min-w-0 border-border shadow-sm">
         <CardHeader className="border-b border-border bg-muted/30">
@@ -539,14 +622,62 @@ export default function InventoryAdjustmentsPage() {
                   <p className="text-xs text-muted-foreground">
                     감소 조정은 기존 재고 라인을 선택해 해당 LOT/SN/EXP에서 차감합니다.
                   </p>
-                  <InventoryTransferCommandCombobox
-                    value={selectedTrackedInventoryId}
-                    onChange={setSelectedTrackedInventoryId}
-                    options={trackedLineOptions}
-                    placeholder={trackedLineOptions.length ? '차감 재고 라인 선택 (LOT / SN / EXP)' : '선택 가능한 추적 라인이 없습니다'}
-                    emptyText="선택 가능한 라인이 없습니다."
-                    disabled={trackedLineOptions.length === 0}
-                  />
+                  {selectedItem.is_sn_managed ? (
+                    <div className="space-y-2">
+                      {selectedTrackedInventoryIds.map((selectedId, index) => (
+                        <div key={`sn-line-${index}`} className="flex items-center gap-2">
+                          <div className="flex-1">
+                            <InventoryTransferCommandCombobox
+                              value={selectedId}
+                              onChange={(value) => {
+                                setSelectedTrackedInventoryIds((prev) =>
+                                  prev.map((current, currentIndex) => (currentIndex === index ? value : current))
+                                )
+                              }}
+                              options={trackedLineOptionsForSnSlot(index)}
+                              placeholder={trackedLineOptions.length ? `SN 차감 라인 선택 #${index + 1}` : '선택 가능한 SN 라인이 없습니다'}
+                              emptyText="선택 가능한 라인이 없습니다."
+                              disabled={trackedLineOptions.length === 0}
+                            />
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-9 px-2 text-xs"
+                            onClick={() => {
+                              setSelectedTrackedInventoryIds((prev) => {
+                                if (prev.length <= 1) return ['']
+                                return prev.filter((_, currentIndex) => currentIndex !== index)
+                              })
+                            }}
+                            disabled={selectedTrackedInventoryIds.length <= 1}
+                          >
+                            삭제
+                          </Button>
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 w-fit px-2 text-xs"
+                        onClick={() => setSelectedTrackedInventoryIds((prev) => [...prev, ''])}
+                        disabled={trackedLineOptions.length === 0 || selectedTrackedInventoryIds.length >= trackedLineOptions.length}
+                      >
+                        + 라인 추가
+                      </Button>
+                    </div>
+                  ) : (
+                    <InventoryTransferCommandCombobox
+                      value={selectedTrackedInventoryId}
+                      onChange={setSelectedTrackedInventoryId}
+                      options={trackedLineOptions}
+                      placeholder={trackedLineOptions.length ? '차감 재고 라인 선택 (LOT / SN / EXP)' : '선택 가능한 추적 라인이 없습니다'}
+                      emptyText="선택 가능한 라인이 없습니다."
+                      disabled={trackedLineOptions.length === 0}
+                    />
+                  )}
                 </div>
               ) : null}
 
@@ -605,6 +736,7 @@ export default function InventoryAdjustmentsPage() {
                 min={1}
                 value={adjustQty}
                 onChange={(e) => setAdjustQty(e.target.value)}
+                disabled={isSnDecreaseMode}
               />
             </div>
             <div className="flex flex-col gap-2 lg:col-span-2">
@@ -616,13 +748,25 @@ export default function InventoryAdjustmentsPage() {
             <div className="flex flex-col gap-2 lg:col-span-2">
               <Label>사용가능재고</Label>
               <div className="flex min-h-10 items-center rounded-lg border border-input bg-muted/30 px-3 py-2 text-sm">
-                {selectedTrackedRow ? selectedTrackedRow.available_qty : selectedItem ? selectedItem.available_qty : '-'}
+                {isSnDecreaseMode
+                  ? selectedTrackedRowsForSn.reduce((sum, row) => sum + Number(row.available_qty ?? 0), 0)
+                  : selectedTrackedRow
+                    ? selectedTrackedRow.available_qty
+                    : selectedItem
+                      ? selectedItem.available_qty
+                      : '-'}
               </div>
             </div>
             <div className="flex flex-col gap-2 lg:col-span-2">
               <Label>격리재고</Label>
               <div className="flex min-h-10 items-center rounded-lg border border-input bg-muted/30 px-3 py-2 text-sm">
-                {selectedTrackedRow ? selectedTrackedRow.quarantine_qty : selectedItem ? selectedItem.quarantine_qty : '-'}
+                {isSnDecreaseMode
+                  ? selectedTrackedRowsForSn.reduce((sum, row) => sum + Number(row.quarantine_qty ?? 0), 0)
+                  : selectedTrackedRow
+                    ? selectedTrackedRow.quarantine_qty
+                    : selectedItem
+                      ? selectedItem.quarantine_qty
+                      : '-'}
               </div>
             </div>
           </div>
@@ -682,7 +826,7 @@ export default function InventoryAdjustmentsPage() {
                     </td>
                   </tr>
                 ) : (
-                  previewRows.map((row) => (
+                  pageRows.map((row) => (
                     <tr key={row.item_id} className="transition-colors hover:bg-muted/30">
                       <td className="px-3 py-3">{row.item_code}</td>
                       <td className="px-3 py-3 font-medium">{row.item_name}</td>
@@ -708,6 +852,75 @@ export default function InventoryAdjustmentsPage() {
               </tbody>
             </table>
           </div>
+
+          {previewRows.length > 0 ? (
+            <div className="flex shrink-0 flex-col gap-3 border-t border-border bg-muted/30 px-2 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground md:text-sm">
+                <span>페이지당</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value) as (typeof PAGE_SIZE_OPTIONS)[number])
+                    setCurrentPage(1)
+                  }}
+                  className="h-9 rounded-md border border-input bg-background px-2 py-1.5 text-sm font-medium text-foreground shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="페이지당 행 수"
+                >
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <option key={n} value={n}>
+                      {n}건
+                    </option>
+                  ))}
+                </select>
+                <span>
+                  · 총 <span className="font-semibold text-foreground">{previewRows.length}</span>건 ·{' '}
+                  <span className="font-semibold text-foreground">{currentPage}</span> / {totalPages} 페이지
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage(1)}
+                >
+                  처음
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                >
+                  이전
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  다음
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage(totalPages)}
+                >
+                  마지막
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </div>

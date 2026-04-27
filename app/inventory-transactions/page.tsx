@@ -6,11 +6,12 @@ import {
   InventoryTransferCommandCombobox,
   type TransferComboboxOption,
 } from '@/app/inventory-transfers/new/InventoryTransferCommandCombobox'
-import { FilterX } from 'lucide-react'
+import { ChevronDown, ChevronRight, FilterX } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import PageHeader from '@/components/PageHeader'
+import InlineAlertMirror from '@/components/InlineAlertMirror'
 import { formatTransactionRemarksForDisplay } from '@/lib/inventory-transaction-remarks'
 import { cn } from '@/lib/utils'
 
@@ -38,6 +39,21 @@ type TxRow = {
 
 type TxFilter = 'ALL' | 'IN' | 'OUT'
 
+type SummaryGroup = {
+  key: string
+  dateKey: string
+  direction: 'IN' | 'OUT' | 'NEUTRAL'
+  transDate: string
+  qty: number
+  itemCode: string
+  itemName: string
+  unit: string | null
+  warehouseName: string | null
+  processorName: string | null
+  remarks: string
+  rows: TxRow[]
+}
+
 const IN_TYPES = new Set(['IN', 'PROD_IN', 'QC_RELEASE', 'CANCEL_IN'])
 const OUT_TYPES = new Set(['OUT', 'MATL_OUT'])
 const PAGE_SIZE_OPTIONS = [20, 25, 30, 50] as const
@@ -54,6 +70,16 @@ function transDateDayKey(iso: string): string {
   }
 }
 
+function transDateSecondKey(iso: string): string {
+  const s = String(iso ?? '').trim()
+  if (!s) return ''
+  try {
+    return new Date(s).toISOString().slice(0, 19)
+  } catch {
+    return s
+  }
+}
+
 export default function InventoryTransactionsPage() {
   const [transactions, setTransactions] = useState<TxRow[]>([])
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
@@ -67,6 +93,7 @@ export default function InventoryTransactionsPage() {
   const [processorFilter, setProcessorFilter] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(25)
+  const [expandedSummaryKeys, setExpandedSummaryKeys] = useState<string[]>([])
 
   const fetchTransactions = useCallback(async () => {
     try {
@@ -129,6 +156,10 @@ export default function InventoryTransactionsPage() {
   useEffect(() => {
     setCurrentPage(1)
   }, [filter, warehouseFilter, dateFilter, itemFilter, remarksFilter, processorFilter, pageSize])
+
+  useEffect(() => {
+    setExpandedSummaryKeys([])
+  }, [filter, warehouseFilter, dateFilter, itemFilter, remarksFilter, processorFilter])
 
   const dateFilterOptions = useMemo<TransferComboboxOption[]>(() => {
     const set = new Set<string>()
@@ -287,7 +318,49 @@ export default function InventoryTransactionsPage() {
     processorFilter,
   ])
 
-  const totalPages = Math.max(1, Math.ceil(filteredData.length / pageSize))
+  const summaryGroups = useMemo<SummaryGroup[]>(() => {
+    const groups = new Map<string, SummaryGroup>()
+    for (const tx of filteredData) {
+      const direction = resolveDirection(tx)
+      const dayKey = transDateDayKey(tx.trans_date)
+      const secondKey = transDateSecondKey(tx.trans_date)
+      const itemCode = (tx.items?.item_code ?? '').trim()
+      const warehouseName = tx.warehouses?.name ?? null
+      const processorName = tx.processor_name ?? null
+      const remarks = formatTransactionRemarksForDisplay(tx.remarks, tx.warehouses?.name) || ''
+      const key = [dayKey, secondKey, direction, itemCode, String(tx.warehouse_id ?? ''), processorName ?? '', remarks].join('|')
+
+      const prev = groups.get(key)
+      if (!prev) {
+        groups.set(key, {
+          key,
+          dateKey: dayKey,
+          direction,
+          transDate: tx.trans_date,
+          qty: Number(tx.qty ?? 0),
+          itemCode,
+          itemName: tx.items?.item_name ?? '',
+          unit: tx.items?.unit ?? null,
+          warehouseName,
+          processorName,
+          remarks,
+          rows: [tx],
+        })
+        continue
+      }
+
+      prev.qty += Number(tx.qty ?? 0)
+      prev.rows.push(tx)
+      if (new Date(tx.trans_date).getTime() > new Date(prev.transDate).getTime()) {
+        prev.transDate = tx.trans_date
+      }
+    }
+    return Array.from(groups.values()).sort((a, b) => new Date(b.transDate).getTime() - new Date(a.transDate).getTime())
+  }, [filteredData])
+
+  const pagedRows = summaryGroups
+
+  const totalPages = Math.max(1, Math.ceil(pagedRows.length / pageSize))
 
   useEffect(() => {
     setCurrentPage((p) => Math.min(Math.max(1, p), totalPages))
@@ -295,8 +368,8 @@ export default function InventoryTransactionsPage() {
 
   const pageRows = useMemo(() => {
     const start = (currentPage - 1) * pageSize
-    return filteredData.slice(start, start + pageSize)
-  }, [filteredData, currentPage, pageSize])
+    return pagedRows.slice(start, start + pageSize)
+  }, [pagedRows, currentPage, pageSize])
 
   const comboTrigger = 'h-9 min-h-9 w-full shrink-0 px-2 text-xs font-medium'
 
@@ -320,11 +393,7 @@ export default function InventoryTransactionsPage() {
         }
       />
 
-      {fetchError ? (
-        <div className="erp-alert-error shrink-0" role="alert">
-          {fetchError}
-        </div>
-      ) : null}
+      {fetchError ? <InlineAlertMirror message={fetchError} variant="error" /> : null}
 
       <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-border shadow-sm">
         <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-6">
@@ -376,7 +445,7 @@ export default function InventoryTransactionsPage() {
               <table className="w-full min-w-[56rem] table-fixed border-collapse text-left text-sm text-card-foreground">
                 <thead className="sticky top-0 z-[1] border-b border-border bg-muted/50 backdrop-blur-sm">
                   <tr>
-                    <th className="w-[9.5rem] min-w-[8.5rem] align-top px-2 py-2 md:w-[10.5rem] md:px-3">
+                    <th className="w-[10.5rem] min-w-[9.25rem] align-top px-2 py-2 text-right md:w-[11.5rem] md:px-3">
                       <span className="mb-1.5 block text-xs font-medium text-muted-foreground">일시</span>
                       <InventoryTransferCommandCombobox
                         value={dateFilter}
@@ -466,57 +535,172 @@ export default function InventoryTransactionsPage() {
                       </td>
                     </tr>
                   ) : (
-                    pageRows.map((tx) => {
-                      const dir = resolveDirection(tx)
-                      return (
-                        <tr key={tx.id} className="transition-colors hover:bg-muted/40">
-                          <td className="whitespace-nowrap px-2 py-3 text-xs font-medium text-muted-foreground md:px-3">
-                            {new Date(tx.trans_date).toLocaleString('ko-KR', {
-                              year: 'numeric',
-                              month: '2-digit',
-                              day: '2-digit',
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </td>
-                          <td className="px-2 py-3 text-center md:px-3">{getTypeLabel(tx)}</td>
-                          <td className="min-w-0 px-2 py-3 md:px-3">
-                            <div className="truncate font-semibold text-foreground" title={tx.items?.item_name ?? ''}>
-                              {tx.items?.item_name || '—'}
-                            </div>
-                            <div className="mt-0.5 truncate text-xs font-medium text-primary" title={tx.items?.item_code ?? ''}>
-                              {tx.items?.item_code ?? '—'}
-                            </div>
-                          </td>
-                          <td className="min-w-0 whitespace-normal break-words px-2 py-3 text-sm font-medium text-foreground md:px-3">
-                            {tx.warehouses?.name ?? <span className="text-muted-foreground">—</span>}
-                          </td>
-                          <td
-                            className={cn(
-                              'whitespace-nowrap px-2 py-3 text-right text-base font-semibold tabular-nums md:px-3 md:text-lg',
-                              dir === 'OUT' ? 'text-destructive' : 'text-primary'
-                            )}
-                          >
-                            {getSignedQty(tx)}
-                            <span className="ml-1 text-xs font-medium text-muted-foreground">{tx.items?.unit}</span>
-                          </td>
-                          <td className="hidden min-w-0 max-w-[18rem] px-2 py-3 lg:table-cell md:px-3">
-                            <div
-                              className="whitespace-normal break-words text-sm leading-snug text-muted-foreground"
-                              title={formatTransactionRemarksForDisplay(tx.remarks, tx.warehouses?.name)}
-                            >
-                              {formatTransactionRemarksForDisplay(tx.remarks, tx.warehouses?.name) || '—'}
-                            </div>
-                            {(tx.lot_no || tx.serial_no) && (
-                              <div className="mt-1 text-[10px] font-medium tracking-wide text-muted-foreground">
-                                {tx.lot_no ? `[LOT: ${tx.lot_no}]` : ''} {tx.serial_no ? `[SN: ${tx.serial_no}]` : ''}
+                    (pageRows as SummaryGroup[]).map((group) => {
+                      if (group.rows.length <= 1) {
+                        const tx = group.rows[0]
+                        const dir = resolveDirection(tx)
+                        return (
+                          <tr key={tx.id} className="transition-colors hover:bg-muted/40">
+                            <td className="whitespace-nowrap px-2 py-3 text-right text-xs font-medium text-muted-foreground md:px-3">
+                              {new Date(tx.trans_date).toLocaleString('ko-KR', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </td>
+                            <td className="px-2 py-3 text-center md:px-3">{getTypeLabel(tx)}</td>
+                            <td className="min-w-0 px-2 py-3 md:px-3">
+                              <div className="truncate font-semibold text-foreground" title={tx.items?.item_name ?? ''}>
+                                {tx.items?.item_name || '—'}
                               </div>
-                            )}
-                          </td>
-                          <td className="hidden whitespace-nowrap px-2 py-3 text-center text-sm font-medium text-foreground xl:table-cell md:px-3">
-                            {tx.processor_name ?? '—'}
-                          </td>
-                        </tr>
+                              <div className="mt-0.5 truncate text-xs font-medium text-primary" title={tx.items?.item_code ?? ''}>
+                                {tx.items?.item_code ?? '—'}
+                              </div>
+                            </td>
+                            <td className="min-w-0 whitespace-normal break-words px-2 py-3 text-sm font-medium text-foreground md:px-3">
+                              {tx.warehouses?.name ?? <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td
+                              className={cn(
+                                'whitespace-nowrap px-2 py-3 text-right text-base font-semibold tabular-nums md:px-3 md:text-lg',
+                                dir === 'OUT' ? 'text-destructive' : 'text-primary'
+                              )}
+                            >
+                              {getSignedQty(tx)}
+                              <span className="ml-1 text-xs font-medium text-muted-foreground">{tx.items?.unit}</span>
+                            </td>
+                            <td className="hidden min-w-0 max-w-[18rem] px-2 py-3 lg:table-cell md:px-3">
+                              <div
+                                className="whitespace-normal break-words text-sm leading-snug text-muted-foreground"
+                                title={formatTransactionRemarksForDisplay(tx.remarks, tx.warehouses?.name)}
+                              >
+                                {formatTransactionRemarksForDisplay(tx.remarks, tx.warehouses?.name) || '—'}
+                              </div>
+                              {(tx.lot_no || tx.serial_no) && (
+                                <div className="mt-1 text-[10px] font-medium tracking-wide text-muted-foreground">
+                                  {tx.lot_no ? `[LOT: ${tx.lot_no}]` : ''} {tx.serial_no ? `[SN: ${tx.serial_no}]` : ''}
+                                </div>
+                              )}
+                            </td>
+                            <td className="hidden whitespace-nowrap px-2 py-3 text-center text-sm font-medium text-foreground xl:table-cell md:px-3">
+                              {tx.processor_name ?? '—'}
+                            </td>
+                          </tr>
+                        )
+                      }
+
+                      const isExpanded = expandedSummaryKeys.includes(group.key)
+                      const signedQty = group.direction === 'OUT' ? `-${group.qty}` : `+${group.qty}`
+                      return (
+                        <React.Fragment key={`summary-wrap-${group.key}`}>
+                          <tr key={`summary-${group.key}`} className="transition-colors hover:bg-muted/40">
+                            <td className="whitespace-nowrap px-2 py-3 text-right text-xs font-medium text-muted-foreground md:px-3">
+                              <div className="inline-flex items-center">
+                                <button
+                                  type="button"
+                                  className="inline-flex h-5 w-5 items-center justify-center rounded border border-border bg-background text-[10px]"
+                                  onClick={() =>
+                                    setExpandedSummaryKeys((prev) =>
+                                      prev.includes(group.key) ? prev.filter((key) => key !== group.key) : [...prev, group.key]
+                                    )
+                                  }
+                                  aria-label={isExpanded ? '상세 접기' : '상세 펼치기'}
+                                >
+                                  {isExpanded ? <ChevronDown className="size-2.5" /> : <ChevronRight className="size-2.5" />}
+                                </button>
+                                <span className="ml-1.5">
+                                  {new Date(group.transDate).toLocaleString('ko-KR', {
+                                    year: 'numeric',
+                                    month: '2-digit',
+                                    day: '2-digit',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="px-2 py-3 text-center md:px-3">{group.direction === 'IN' ? <Badge className="border-blue-200 bg-blue-100 font-semibold text-blue-800 hover:bg-blue-100">입고</Badge> : group.direction === 'OUT' ? <Badge className="border-red-200 bg-red-100 font-semibold text-red-800 hover:bg-red-100">출고</Badge> : <Badge variant="secondary" className="font-semibold">조정</Badge>}</td>
+                            <td className="min-w-0 px-2 py-3 md:px-3">
+                              <div className="truncate font-semibold text-foreground" title={group.itemName}>
+                                {group.itemName || '—'}
+                              </div>
+                              <div className="mt-0.5 truncate text-xs font-medium text-primary" title={group.itemCode}>
+                                {group.itemCode || '—'}
+                              </div>
+                            </td>
+                            <td className="min-w-0 whitespace-normal break-words px-2 py-3 text-sm font-medium text-foreground md:px-3">
+                              {group.warehouseName ?? <span className="text-muted-foreground">—</span>}
+                            </td>
+                            <td
+                              className={cn(
+                                'whitespace-nowrap px-2 py-3 text-right text-base font-semibold tabular-nums md:px-3 md:text-lg',
+                                group.direction === 'OUT' ? 'text-destructive' : 'text-primary'
+                              )}
+                            >
+                              {signedQty}
+                              <span className="ml-1 text-xs font-medium text-muted-foreground">{group.unit}</span>
+                            </td>
+                            <td className="hidden min-w-0 max-w-[18rem] px-2 py-3 lg:table-cell md:px-3">
+                              <div className="whitespace-normal break-words text-sm leading-snug text-muted-foreground" title={group.remarks}>
+                                {group.remarks || '—'}
+                              </div>
+                            </td>
+                            <td className="hidden whitespace-nowrap px-2 py-3 text-center text-sm font-medium text-foreground xl:table-cell md:px-3">
+                              {group.processorName ?? '—'}
+                            </td>
+                          </tr>
+                          {isExpanded
+                            ? group.rows.map((tx) => {
+                                const dir = resolveDirection(tx)
+                                return (
+                                  <tr key={`detail-${group.key}-${tx.id}`} className="bg-muted/20">
+                                    <td className="whitespace-nowrap px-2 py-2 text-right text-xs font-medium text-muted-foreground md:px-3">
+                                      └ {new Date(tx.trans_date).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                    </td>
+                                    <td className="px-2 py-2 text-center md:px-3">{getTypeLabel(tx)}</td>
+                                    <td className="min-w-0 px-2 py-2 md:px-3">
+                                      <div className="truncate font-semibold text-foreground" title={tx.items?.item_name ?? ''}>
+                                        {tx.items?.item_name || '—'}
+                                      </div>
+                                      <div className="mt-0.5 truncate text-xs font-medium text-primary" title={tx.items?.item_code ?? ''}>
+                                        {tx.items?.item_code ?? '—'}
+                                      </div>
+                                    </td>
+                                    <td className="min-w-0 whitespace-normal break-words px-2 py-2 text-sm font-medium text-foreground md:px-3">
+                                      {tx.warehouses?.name ?? <span className="text-muted-foreground">—</span>}
+                                    </td>
+                                    <td
+                                      className={cn(
+                                        'whitespace-nowrap px-2 py-2 text-right text-sm font-semibold tabular-nums md:px-3',
+                                        dir === 'OUT' ? 'text-destructive' : 'text-primary'
+                                      )}
+                                    >
+                                      {getSignedQty(tx)}
+                                      <span className="ml-1 text-xs font-medium text-muted-foreground">{tx.items?.unit}</span>
+                                    </td>
+                                    <td className="hidden min-w-0 max-w-[18rem] px-2 py-2 lg:table-cell md:px-3">
+                                      <div
+                                        className="whitespace-normal break-words text-xs leading-snug text-muted-foreground"
+                                        title={formatTransactionRemarksForDisplay(tx.remarks, tx.warehouses?.name)}
+                                      >
+                                        {formatTransactionRemarksForDisplay(tx.remarks, tx.warehouses?.name) || '—'}
+                                      </div>
+                                      {(tx.lot_no || tx.serial_no) && (
+                                        <div className="mt-1 text-[10px] font-medium tracking-wide text-muted-foreground">
+                                          {tx.lot_no ? `[LOT: ${tx.lot_no}]` : ''} {tx.serial_no ? `[SN: ${tx.serial_no}]` : ''}
+                                        </div>
+                                      )}
+                                    </td>
+                                    <td className="hidden whitespace-nowrap px-2 py-2 text-center text-xs font-medium text-foreground xl:table-cell md:px-3">
+                                      {tx.processor_name ?? '—'}
+                                    </td>
+                                  </tr>
+                                )
+                              })
+                            : null}
+                        </React.Fragment>
                       )
                     })
                   )}
@@ -545,7 +729,7 @@ export default function InventoryTransactionsPage() {
                   ))}
                 </select>
                 <span>
-                  · 총 <span className="font-semibold text-foreground">{filteredData.length}</span>건 ·{' '}
+                  · 총 <span className="font-semibold text-foreground">{pagedRows.length}</span>건 ·{' '}
                   <span className="font-semibold text-foreground">{currentPage}</span> / {totalPages} 페이지
                 </span>
               </div>

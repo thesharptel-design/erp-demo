@@ -58,6 +58,11 @@ type ProcessSummary = {
   failed: number
 }
 
+type ProcessInboundResult = {
+  summary: ProcessSummary
+  rowResults: ProcessRowResult[]
+}
+
 function normalizeText(value: unknown): string {
   return String(value ?? '').trim()
 }
@@ -123,6 +128,7 @@ export default function NewInboundPage() {
   const [uploadFileName, setUploadFileName] = useState('')
   const [processSummary, setProcessSummary] = useState<ProcessSummary | null>(null)
   const [processRows, setProcessRows] = useState<ProcessRowResult[]>([])
+  const [missingTrackingCount, setMissingTrackingCount] = useState(0)
 
   const selectedItem = useMemo(
     () => items.find((i) => String(i.id) === selectedItemId) ?? null,
@@ -208,6 +214,30 @@ export default function NewInboundPage() {
     })()
   }, [])
 
+  useEffect(() => {
+    void (async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      const accessToken = session?.access_token ?? ''
+      if (!accessToken) {
+        setMissingTrackingCount(0)
+        return
+      }
+      const response = await fetch('/api/inbound/tracking-missing?only_missing=true&count_only=true', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        setMissingTrackingCount(0)
+        return
+      }
+      const nextCount = Number(result?.count ?? 0)
+      setMissingTrackingCount(Number.isFinite(nextCount) && nextCount > 0 ? nextCount : 0)
+    })()
+  }, [processSummary])
+
   const handleTemplateUpload = async (file: File) => {
     const rawRows = await parseTemplateSheet(file)
     const parsed: UploadRow[] = rawRows.map((row, index) => {
@@ -237,14 +267,11 @@ export default function NewInboundPage() {
     setProcessRows([])
   }
 
-  const processInbound = async (payloadRows: UploadRow[], fileName?: string) => {
+  const processInbound = async (payloadRows: UploadRow[], fileName?: string): Promise<ProcessInboundResult> => {
     const {
       data: { session },
     } = await supabase.auth.getSession()
-    if (!session?.access_token) {
-      alert('세션이 만료되었습니다. 다시 로그인 후 시도해주세요.')
-      return
-    }
+    if (!session?.access_token) throw new Error('세션이 만료되었습니다. 다시 로그인 후 시도해주세요.')
     const response = await fetch('/api/inbound/process', {
       method: 'POST',
       headers: {
@@ -259,12 +286,11 @@ export default function NewInboundPage() {
     })
     const result = await response.json()
     if (!response.ok) throw new Error(result?.error ?? '입고 처리에 실패했습니다.')
-    setProcessSummary(result.summary as ProcessSummary)
-    setProcessRows((result.rowResults ?? []) as ProcessRowResult[])
-    if ((result.summary?.failed ?? 0) === 0) {
-      alert(`입고 처리 완료 (총 ${result.summary.total}건)`)
-      router.refresh()
-    }
+    const summary = (result.summary ?? { total: payloadRows.length, success: 0, failed: payloadRows.length }) as ProcessSummary
+    const rowResults = (result.rowResults ?? []) as ProcessRowResult[]
+    setProcessSummary(summary)
+    setProcessRows(rowResults)
+    return { summary, rowResults }
   }
 
   const handleSingleSubmit = async (e: React.FormEvent) => {
@@ -272,10 +298,6 @@ export default function NewInboundPage() {
     if (!selectedItem) return alert('품목을 선택해주세요.')
     if (!warehouseId) return alert('창고를 선택해주세요.')
     if (!qty || qty <= 0) return alert('수량은 0보다 커야 합니다.')
-    if (selectedItem.is_sn_managed && qty !== 1) return alert('S/N 관리 품목은 수량이 1이어야 합니다.')
-    if (selectedItem.is_lot_managed && !normalizeText(lotNo)) return alert('LOT 관리 품목은 LOT 번호가 필요합니다.')
-    if (selectedItem.is_exp_managed && !normalizeText(expDate)) return alert('EXP 관리 품목은 유효기간이 필요합니다.')
-    if (selectedItem.is_sn_managed && !normalizeText(serialNo)) return alert('S/N 관리 품목은 시리얼 번호가 필요합니다.')
 
     const wh = warehouses.find((w) => String(w.id) === warehouseId)
     const cust = customers.find((c) => String(c.id) === customerId)
@@ -297,7 +319,26 @@ export default function NewInboundPage() {
     await runSingleSubmit(async () => {
       setSaving(true)
       try {
-        await processInbound([row])
+        const outcome = await processInbound([row])
+        if ((outcome.summary.failed ?? 0) === 0) {
+          const hasTrackingMissing =
+            (selectedItem.is_lot_managed && !normalizeText(lotNo)) ||
+            (selectedItem.is_exp_managed && !normalizeText(expDate)) ||
+            (selectedItem.is_sn_managed && !normalizeText(serialNo))
+
+          if (hasTrackingMissing) {
+            const moveToComplete = confirm(
+              '입고는 등록되었습니다.\nSN/LOT/EXP 누락 항목이 있습니다.\n입고 보완 입력 화면으로 이동할까요?'
+            )
+            if (moveToComplete) {
+              router.push('/inbound/complete-tracking')
+              return
+            }
+          } else {
+            alert(`입고 처리 완료 (총 ${outcome.summary.total}건)`)
+          }
+          router.refresh()
+        }
       } catch (e: any) {
         alert(`입고 처리 실패: ${String(e?.message ?? e)}`)
       } finally {
@@ -311,7 +352,31 @@ export default function NewInboundPage() {
     await runSingleSubmit(async () => {
       setSaving(true)
       try {
-        await processInbound(uploadRows, uploadFileName)
+        const outcome = await processInbound(uploadRows, uploadFileName)
+        if ((outcome.summary.failed ?? 0) === 0) {
+          const itemByCode = new Map(items.map((item) => [item.item_code, item]))
+          const hasTrackingMissing = uploadRows.some((row) => {
+            const matchedItem = itemByCode.get(row.item_code)
+            if (!matchedItem) return false
+            const lotMissing = matchedItem.is_lot_managed && !normalizeText(row.lot_no)
+            const expMissing = matchedItem.is_exp_managed && !normalizeText(row.exp_date)
+            const snMissing = matchedItem.is_sn_managed && !normalizeText(row.serial_no)
+            return lotMissing || expMissing || snMissing
+          })
+
+          if (hasTrackingMissing) {
+            const moveToComplete = confirm(
+              '입고는 등록되었습니다.\nSN/LOT/EXP 누락 항목이 있습니다.\n입고 보완 입력 화면으로 이동할까요?'
+            )
+            if (moveToComplete) {
+              router.push('/inbound/complete-tracking')
+              return
+            }
+          } else {
+            alert(`입고 처리 완료 (총 ${outcome.summary.total}건)`)
+          }
+          router.refresh()
+        }
       } catch (e: any) {
         alert(`템플릿 처리 실패: ${String(e?.message ?? e)}`)
       } finally {
@@ -332,7 +397,7 @@ export default function NewInboundPage() {
       </div>
 
       <div className="rounded-xl border border-gray-300 bg-white p-3">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-5">
           <button
             type="button"
             className={`rounded border px-3 py-2 text-sm font-black ${mode === 'single' ? 'border-black bg-black text-white' : 'border-gray-300 bg-white text-gray-700'}`}
@@ -354,6 +419,17 @@ export default function NewInboundPage() {
           >
             템플릿 다운로드
           </button>
+          <Link
+            href="/inbound/complete-tracking"
+            className="rounded border border-indigo-300 bg-indigo-50 px-3 py-2 text-center text-sm font-black text-indigo-700"
+          >
+            <span className="inline-flex items-center justify-center gap-2">
+              <span>입고 보완 입력</span>
+              {missingTrackingCount > 0 ? (
+                <span className="rounded-full bg-indigo-600 px-2 py-0.5 text-[10px] leading-none text-white">{missingTrackingCount}</span>
+              ) : null}
+            </span>
+          </Link>
           <Link
             href="/admin/inbound-logs"
             className="rounded border border-emerald-300 bg-emerald-50 px-3 py-2 text-center text-sm font-black text-emerald-700"
@@ -382,11 +458,7 @@ export default function NewInboundPage() {
               <div className="border-b px-3 py-2">
                 <SearchableCombobox
                   value={selectedItemId}
-                  onChange={(v) => {
-                    setSelectedItemId(v)
-                    const found = items.find((x) => String(x.id) === v)
-                    if (found?.is_sn_managed) setQty(1)
-                  }}
+                  onChange={(v) => setSelectedItemId(v)}
                   options={itemOptions}
                   placeholder="품목 선택"
                 />
@@ -406,7 +478,6 @@ export default function NewInboundPage() {
                   min={1}
                   value={qty}
                   onChange={(e) => setQty(Number(e.target.value))}
-                  disabled={Boolean(selectedItem?.is_sn_managed)}
                   className="w-full rounded border border-gray-300 px-3 py-2"
                 />
               </div>
@@ -416,7 +487,7 @@ export default function NewInboundPage() {
                   type="text"
                   value={lotNo}
                   onChange={(e) => setLotNo(e.target.value)}
-                  placeholder={selectedItem?.is_lot_managed ? 'LOT 필수' : '해당없음'}
+                  placeholder={selectedItem?.is_lot_managed ? '미입력 가능 (보완입력에서 등록 가능)' : '해당없음'}
                   className="w-full rounded border border-gray-300 px-3 py-2"
                 />
               </div>
@@ -426,7 +497,7 @@ export default function NewInboundPage() {
                   type="text"
                   value={expDate}
                   onChange={(e) => setExpDate(e.target.value)}
-                  placeholder={selectedItem?.is_exp_managed ? 'YYYY-MM-DD or YYYYMMDD' : '해당없음'}
+                  placeholder={selectedItem?.is_exp_managed ? '미입력 가능 (보완입력에서 등록 가능)' : '해당없음'}
                   className="w-full rounded border border-gray-300 px-3 py-2"
                 />
               </div>
@@ -436,7 +507,7 @@ export default function NewInboundPage() {
                   type="text"
                   value={serialNo}
                   onChange={(e) => setSerialNo(e.target.value)}
-                  placeholder={selectedItem?.is_sn_managed ? 'S/N 필수' : '해당없음'}
+                  placeholder={selectedItem?.is_sn_managed ? '미입력 가능 (보완입력에서 등록 가능)' : '해당없음'}
                   className="w-full rounded border border-gray-300 px-3 py-2"
                 />
               </div>

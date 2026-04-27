@@ -215,10 +215,8 @@ export async function POST(request: NextRequest) {
         const expNorm = normalizeDateText(row.exp_date)
         if (expNorm.error) throw new Error(expNorm.error)
 
-        if (item.is_lot_managed && !lotNo) throw new Error('LOT 관리 품목은 LOT 번호가 필수입니다.')
-        if (item.is_exp_managed && !expNorm.value) throw new Error('EXP 관리 품목은 유효기간이 필수입니다.')
-        if (item.is_sn_managed && !serialNo) throw new Error('S/N 관리 품목은 시리얼 번호가 필수입니다.')
-        if (item.is_sn_managed && qty !== 1) throw new Error('S/N 관리 품목은 수량이 반드시 1이어야 합니다.')
+        // 운영 편의상 입고 시점에는 추적정보 누락을 허용하고, 보완 입력 화면에서 후처리합니다.
+        // 다만 값이 전달된 경우 날짜 형식 등 기본 정합성 검증은 유지합니다.
 
         const { data: stocks, error: stockErr } = await adminClient
           .from('inventory')

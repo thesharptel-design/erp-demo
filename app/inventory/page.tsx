@@ -56,6 +56,8 @@ type InventoryDetailRow = {
       }[];
 };
 
+const PAGE_SIZE_OPTIONS = [20, 25, 30, 50] as const;
+
 export default function InventoryPage() {
   const [groupedInventory, setGroupedInventory] = useState<GroupedInventoryRow[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
@@ -64,6 +66,8 @@ export default function InventoryPage() {
   const [itemCodeFilter, setItemCodeFilter] = useState('');
   const [itemNameFilter, setItemNameFilter] = useState('');
   const [isLoading, setIsLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(25);
 
   const fetchInventory = useCallback(async () => {
       setIsLoading(true);
@@ -217,6 +221,21 @@ export default function InventoryPage() {
     return itemCodeMatches && itemNameMatches;
   });
 
+  const totalPages = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [itemCodeFilter, itemNameFilter, warehouseFilter, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage((p) => Math.min(Math.max(1, p), totalPages));
+  }, [totalPages]);
+
+  const pageRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize;
+    return filteredGroups.slice(start, start + pageSize);
+  }, [filteredGroups, currentPage, pageSize]);
+
   const warehouseNameMap = useMemo(() => {
     const map = new Map<number, string>();
     warehouses.forEach((warehouse) => {
@@ -319,7 +338,7 @@ export default function InventoryPage() {
                       </td>
                     </tr>
                   ) : (
-                    filteredGroups.map((group) => (
+                    pageRows.map((group) => (
                       <tr key={group.group_key} className="transition-colors hover:bg-muted/40">
                         <td className="px-3 py-3 font-medium text-foreground">{group.item_code}</td>
                         <td className="px-3 py-3 font-medium text-foreground">{group.warehouse_name}</td>
@@ -345,6 +364,75 @@ export default function InventoryPage() {
               </table>
             </div>
           </div>
+
+          {!isLoading && filteredGroups.length > 0 ? (
+            <div className="flex shrink-0 flex-col gap-3 border-t border-border bg-muted/30 px-2 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground md:text-sm">
+                <span>페이지당</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value) as (typeof PAGE_SIZE_OPTIONS)[number]);
+                    setCurrentPage(1);
+                  }}
+                  className="h-9 rounded-md border border-input bg-background px-2 py-1.5 text-sm font-medium text-foreground shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="페이지당 행 수"
+                >
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <option key={n} value={n}>
+                      {n}건
+                    </option>
+                  ))}
+                </select>
+                <span>
+                  · 총 <span className="font-semibold text-foreground">{filteredGroups.length}</span>건 ·{' '}
+                  <span className="font-semibold text-foreground">{currentPage}</span> / {totalPages} 페이지
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage(1)}
+                >
+                  처음
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                >
+                  이전
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  다음
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage(totalPages)}
+                >
+                  마지막
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </div>

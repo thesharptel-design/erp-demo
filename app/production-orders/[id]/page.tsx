@@ -8,6 +8,7 @@ import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
 import { getCurrentUserPermissions, hasManagePermission } from '@/lib/permissions'
 import SearchableCombobox from '@/components/SearchableCombobox'
 import { useSingleSubmit } from '@/hooks/useSingleSubmit'
+import InlineAlertMirror from '@/components/InlineAlertMirror'
 
 type Item = {
   id: number
@@ -1008,8 +1009,8 @@ export default function ProductionOrderDetailPage({
           )}
         </div>
 
-        {errorMessage && <div className="erp-alert-error">{errorMessage}</div>}
-        {successMessage && <div className="erp-alert-success">{successMessage}</div>}
+        {errorMessage ? <InlineAlertMirror message={errorMessage} variant="error" /> : null}
+        {successMessage ? <InlineAlertMirror message={successMessage} variant="success" /> : null}
         {actionMessage && <div className="erp-alert-info">{actionMessage}</div>}
 
         <div className="erp-btn-row">

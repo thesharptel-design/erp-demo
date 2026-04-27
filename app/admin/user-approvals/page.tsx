@@ -230,7 +230,20 @@ export default function UserApprovalsPage() {
         alert(`🗑️ ${result.count}명 삭제 완료!`);
         await fetchPendingUsers();
       } else {
-        alert('삭제 에러: ' + result.error);
+        const failedMessage =
+          Array.isArray(result?.failed) && result.failed.length > 0
+            ? result.failed
+                .slice(0, 3)
+                .map((row: { id?: string; reason?: string }) => `- ${row.id ?? '알 수 없는 사용자'}: ${row.reason ?? '삭제 실패'}`)
+                .join('\n')
+            : '';
+        const fallbackMessage =
+          typeof result?.error === 'string'
+            ? result.error
+            : typeof result?.message === 'string'
+              ? result.message
+              : '삭제 처리 중 오류가 발생했습니다.';
+        alert(`삭제 에러:\n${failedMessage || fallbackMessage}`);
       }
     } catch (e: any) {
       alert('삭제 중 오류가 발생했습니다: ' + e.message);

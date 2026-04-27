@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase'
 import { generateNextSerialDocNo } from '@/lib/serial-doc-no'
 import SearchableCombobox from '@/components/SearchableCombobox'
 import { useSingleSubmit } from '@/hooks/useSingleSubmit'
+import InlineAlertMirror from '@/components/InlineAlertMirror'
 
 type Customer = {
   id: number
@@ -418,7 +419,7 @@ export default function NewPurchaseOrderPage() {
           </div>
         </div>
 
-        {errorMessage && <div className="erp-alert-error">{errorMessage}</div>}
+        {errorMessage ? <InlineAlertMirror message={errorMessage} variant="error" /> : null}
 
         <div className="erp-btn-row">
           <button

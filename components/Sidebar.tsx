@@ -43,6 +43,7 @@ export default function Sidebar() {
     '기준정보 (기초)': true,
     '시스템 관리': true,
   });
+  const [inboundMissingCount, setInboundMissingCount] = useState(0)
 
   useEffect(() => {
     async function getUserData() {
@@ -72,6 +73,33 @@ export default function Sidebar() {
     }
     loadCompanyLogo()
   }, [])
+
+  useEffect(() => {
+    async function loadInboundMissingCount() {
+      const { data: { session } } = await supabase.auth.getSession()
+      const accessToken = session?.access_token ?? ''
+      if (!accessToken) {
+        setInboundMissingCount(0)
+        return
+      }
+      try {
+        const response = await fetch('/api/inbound/tracking-missing?only_missing=true&count_only=true', {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${accessToken}` },
+        })
+        const result = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          setInboundMissingCount(0)
+          return
+        }
+        const nextCount = Number(result?.count ?? 0)
+        setInboundMissingCount(Number.isFinite(nextCount) && nextCount > 0 ? nextCount : 0)
+      } catch {
+        setInboundMissingCount(0)
+      }
+    }
+    void loadInboundMissingCount()
+  }, [pathname])
 
   const toggleGroup = (title: string) => {
     setOpenGroups(prev => ({ ...prev, [title]: !prev[title] }));
@@ -125,6 +153,7 @@ export default function Sidebar() {
       title: '자재 관리',
       items: [
         { name: '입고 등록', href: '/inbound/new', perm: 'can_material_manage' }, 
+        { name: '입고 보완 입력', href: '/inbound/complete-tracking', perm: 'can_material_manage' },
         { name: '자재 이동', href: '/inventory-transfers/new', perm: 'can_material_manage' },
         { name: '출고 지시 현황', href: '/outbound-instructions', perm: 'can_material_manage'},
         { name: '재고 실사/조정', href: '/inventory-adjustments', perm: 'can_material_manage' },
@@ -245,7 +274,14 @@ export default function Sidebar() {
                                 : 'text-gray-500 hover:text-black hover:bg-gray-50/50'
                             }`}
                           >
-                            {item.name}
+                            <span className="inline-flex items-center gap-1.5">
+                              <span>{item.name}</span>
+                              {item.href === '/inbound/complete-tracking' && inboundMissingCount > 0 ? (
+                                <span className="rounded-full bg-indigo-600 px-1.5 py-0.5 text-[10px] font-black leading-none text-white">
+                                  {inboundMissingCount}
+                                </span>
+                              ) : null}
+                            </span>
                           </Link>
                         ) : (
                           <div className="flex justify-between items-center px-4 py-2 text-[13px] text-gray-300 italic select-none">

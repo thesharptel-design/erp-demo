@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import InlineAlertMirror from '@/components/InlineAlertMirror'
 
 type QcRequestRow = {
   id: number
@@ -207,7 +208,7 @@ export default function QcPage() {
         </p>
       </div>
 
-      {errorMessage && <div className="erp-alert-error">{errorMessage}</div>}
+      {errorMessage ? <InlineAlertMirror message={errorMessage} variant="error" /> : null}
 
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
         <div className="overflow-x-auto">

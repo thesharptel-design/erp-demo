@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { getAllowedWarehouseIds, getCurrentUserPermissions, hasManagePermission } from '@/lib/permissions'
 import { useSingleSubmit } from '@/hooks/useSingleSubmit'
@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import PageHeader from '@/components/PageHeader'
+import InlineAlertMirror from '@/components/InlineAlertMirror'
 import {
   InventoryTransferCommandCombobox,
   type TransferComboboxOption,
@@ -61,6 +62,7 @@ export default function NewInventoryTransferPage() {
   const [sourceWarehouseFilterId, setSourceWarehouseFilterId] = useState('')
   const [sourceItemFilterId, setSourceItemFilterId] = useState('')
   const [sourceInventoryId, setSourceInventoryId] = useState('')
+  const [sourceInventoryIds, setSourceInventoryIds] = useState<string[]>([''])
   const [toWarehouseId, setToWarehouseId] = useState('')
   const [transferQty, setTransferQty] = useState('1')
   const [remarks, setRemarks] = useState('')
@@ -104,6 +106,7 @@ export default function NewInventoryTransferPage() {
         setSourceWarehouseFilterId('')
         setSourceItemFilterId('')
         setSourceInventoryId('')
+        setSourceInventoryIds([''])
         setToWarehouseId('')
         setIsLoading(false)
         return
@@ -253,9 +256,57 @@ export default function NewInventoryTransferPage() {
     })
   }, [filteredInventoryRows, itemMap, warehouseNameMap])
 
+  const selectedSourceRows = useMemo(() => {
+    const unique = new Map<number, InventoryRow>()
+    for (const id of sourceInventoryIds) {
+      const row = inventoryRows.find((r) => String(r.id) === id)
+      if (!row) continue
+      unique.set(row.id, row)
+    }
+    return Array.from(unique.values())
+  }, [inventoryRows, sourceInventoryIds])
+
   const selectedSource = useMemo(
     () => inventoryRows.find((row) => String(row.id) === sourceInventoryId) ?? null,
     [inventoryRows, sourceInventoryId]
+  )
+
+  const primarySource = useMemo(() => selectedSourceRows[0] ?? selectedSource, [selectedSourceRows, selectedSource])
+
+  const selectedSourceWarehouseId = useMemo(() => {
+    if (selectedSourceRows.length > 0) return selectedSourceRows[0].warehouse_id
+    return selectedSource?.warehouse_id ?? null
+  }, [selectedSourceRows, selectedSource])
+
+  const isMultiLineSelection = selectedSourceRows.length > 1
+
+  const maxQty = useMemo(() => {
+    if (selectedSourceRows.length > 0) {
+      return selectedSourceRows.reduce((sum, row) => sum + Number(row.available_qty ?? 0), 0)
+    }
+    return selectedSource ? Number(selectedSource.available_qty ?? 0) : 0
+  }, [selectedSourceRows, selectedSource])
+
+  const isSerialLine = useMemo(() => {
+    if (selectedSourceRows.length > 1) return true
+    return !!(selectedSource?.serial_no?.trim())
+  }, [selectedSourceRows.length, selectedSource])
+
+  const sourceInventoryOptionsForSlot = useCallback(
+    (slotIndex: number): TransferComboboxOption[] => {
+      const selectedSet = new Set(
+        sourceInventoryIds.filter((_, index) => index !== slotIndex).filter((value) => value.trim())
+      )
+      const baseWarehouseId = selectedSourceWarehouseId
+      return sourceInventoryOptions.filter((option) => {
+        if (selectedSet.has(option.value)) return false
+        if (!baseWarehouseId) return true
+        const row = inventoryRows.find((r) => String(r.id) === option.value)
+        if (!row) return false
+        return row.warehouse_id === baseWarehouseId
+      })
+    },
+    [sourceInventoryIds, selectedSourceWarehouseId, sourceInventoryOptions, inventoryRows]
   )
 
   useEffect(() => {
@@ -275,31 +326,50 @@ export default function NewInventoryTransferPage() {
   }, [sourceWarehouseFilterId, sourceItemFilterId, inventoryRows, sourceInventoryId])
 
   useEffect(() => {
-    if (!selectedSource?.serial_no?.trim()) return
-    const m = Number(selectedSource.available_qty ?? 0)
-    if (m > 0) setTransferQty(String(m))
-  }, [selectedSource?.id, selectedSource?.serial_no, selectedSource?.available_qty])
+    setSourceInventoryIds((prev) => {
+      const valid = prev.filter((id) => {
+        if (!id.trim()) return true
+        const row = inventoryRows.find((r) => String(r.id) === id)
+        if (!row) return false
+        if (sourceWarehouseFilterId && String(row.warehouse_id) !== sourceWarehouseFilterId) return false
+        if (sourceItemFilterId && String(row.item_id) !== sourceItemFilterId) return false
+        return true
+      })
+      if (valid.length === 0) return ['']
+      return valid
+    })
+  }, [inventoryRows, sourceWarehouseFilterId, sourceItemFilterId])
+
+  useEffect(() => {
+    const first = sourceInventoryIds.find((id) => id.trim()) ?? ''
+    if (first !== sourceInventoryId) {
+      setSourceInventoryId(first)
+    }
+  }, [sourceInventoryIds, sourceInventoryId])
+
+  useEffect(() => {
+    if (!isSerialLine && !isMultiLineSelection) return
+    if (maxQty > 0) setTransferQty(String(maxQty))
+  }, [isSerialLine, isMultiLineSelection, maxQty])
 
   const destinationWarehouseOptions = useMemo(() => {
-    if (!selectedSource) return []
+    if (!primarySource) return []
     return warehouses
-      .filter((warehouse) => warehouse.id !== selectedSource.warehouse_id)
+      .filter((warehouse) => warehouse.id !== primarySource.warehouse_id)
       .map((warehouse) => ({
         value: String(warehouse.id),
         label: `${warehouse.code ? `[${warehouse.code}] ` : ''}${warehouse.name}`,
         keywords: [warehouse.code ?? '', warehouse.name],
       }))
-  }, [warehouses, selectedSource])
-
-  const maxQty = selectedSource ? Number(selectedSource.available_qty ?? 0) : 0
-  const isSerialLine = !!(selectedSource?.serial_no?.trim())
+  }, [warehouses, primarySource])
   const handleSourceInventoryChange = (id: string) => {
     setSourceInventoryId(id)
+    setSourceInventoryIds([id])
   }
 
   const departureWarehouseLabel =
-    selectedSource != null
-      ? (warehouseNameMap.get(selectedSource.warehouse_id) ?? '-')
+    selectedSourceWarehouseId != null
+      ? (warehouseNameMap.get(selectedSourceWarehouseId) ?? '-')
       : sourceWarehouseFilterId
         ? (warehouseNameMap.get(Number(sourceWarehouseFilterId)) ?? '-')
         : '-'
@@ -310,7 +380,8 @@ export default function NewInventoryTransferPage() {
     setErrorMessage('')
     setSuccessMessage('')
 
-    if (!sourceInventoryId) {
+    const transferRows = selectedSourceRows.length > 0 ? selectedSourceRows : selectedSource ? [selectedSource] : []
+    if (transferRows.length === 0) {
       setErrorMessage('이동할 재고를 선택하세요.')
       return
     }
@@ -327,6 +398,10 @@ export default function NewInventoryTransferPage() {
       setErrorMessage(`이동 수량은 가용재고(${maxQty})를 초과할 수 없습니다.`)
       return
     }
+    if (transferRows.some((row) => row.warehouse_id === Number(toWarehouseId))) {
+      setErrorMessage('출발 창고와 도착 창고가 같은 라인이 포함되어 있습니다.')
+      return
+    }
 
     await runSingleSubmit(async () => {
       try {
@@ -334,30 +409,39 @@ export default function NewInventoryTransferPage() {
           data: { session },
         } = await supabase.auth.getSession()
 
-        const response = await fetch('/api/inventory/transfer', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${session?.access_token ?? ''}`,
-          },
-          body: JSON.stringify({
-            source_inventory_id: Number(sourceInventoryId),
-            to_warehouse_id: Number(toWarehouseId),
-            qty,
-            remarks: remarks.trim(),
-          }),
-        })
-
-        const result = await response.json()
-        if (!response.ok) {
-          setErrorMessage(result?.error ?? '자재 이동에 실패했습니다.')
-          return
+        const token = session?.access_token ?? ''
+        const postTransfer = async (sourceInventoryIdNumber: number, moveQty: number) => {
+          const response = await fetch('/api/inventory/transfer', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              source_inventory_id: sourceInventoryIdNumber,
+              to_warehouse_id: Number(toWarehouseId),
+              qty: moveQty,
+              remarks: remarks.trim(),
+            }),
+          })
+          const result = await response.json()
+          if (!response.ok) throw new Error(result?.error ?? '자재 이동에 실패했습니다.')
         }
 
-        setSuccessMessage('자재 이동이 완료되었습니다.')
+        if (transferRows.length > 1) {
+          for (const row of transferRows) {
+            await postTransfer(row.id, Number(row.available_qty ?? 0))
+          }
+          setSuccessMessage(`자재 이동이 완료되었습니다. (${transferRows.length}개 라인)`)
+        } else {
+          await postTransfer(transferRows[0].id, qty)
+          setSuccessMessage('자재 이동이 완료되었습니다.')
+        }
+
         setSourceWarehouseFilterId('')
         setSourceItemFilterId('')
         setSourceInventoryId('')
+        setSourceInventoryIds([''])
         setToWarehouseId('')
         setTransferQty('1')
         setRemarks('')
@@ -413,8 +497,8 @@ export default function NewInventoryTransferPage() {
         description="창고 간 재고를 이동하고 입출고 이력을 동시에 기록합니다."
       />
 
-      {errorMessage ? <div className="erp-alert-error">{errorMessage}</div> : null}
-      {successMessage ? <div className="erp-alert-success">{successMessage}</div> : null}
+      {errorMessage ? <InlineAlertMirror message={errorMessage} variant="error" /> : null}
+      {successMessage ? <InlineAlertMirror message={successMessage} variant="success" /> : null}
 
       <Card className="w-full min-w-0 overflow-visible border-border shadow-sm">
         <CardHeader className="border-b border-border bg-muted/30">
@@ -486,19 +570,73 @@ export default function NewInventoryTransferPage() {
                   ) : null}
                 </div>
                 <div className="flex w-full flex-col gap-2">
-                  <InventoryTransferCommandCombobox
-                    value={sourceInventoryId}
-                    onChange={handleSourceInventoryChange}
-                    options={sourceInventoryOptions}
-                    placeholder={
-                      sourceInventoryOptions.length === 0
-                        ? '조건에 맞는 재고가 없습니다'
-                        : '재고 라인 선택 (LOT / SN / EXP)'
-                    }
-                    emptyText="가용 재고가 없습니다."
-                    disabled={sourceInventoryOptions.length === 0}
-                    triggerClassName="relative z-10"
-                  />
+                  {scopeHasTracking ? (
+                    <div className="space-y-2">
+                      {sourceInventoryIds.map((selectedId, index) => (
+                        <div key={`source-line-${index}`} className="flex items-center gap-2">
+                          <div className="flex-1">
+                            <InventoryTransferCommandCombobox
+                              value={selectedId}
+                              onChange={(value) => {
+                                setSourceInventoryIds((prev) => prev.map((v, i) => (i === index ? value : v)))
+                                if (index === 0) setSourceInventoryId(value)
+                              }}
+                              options={sourceInventoryOptionsForSlot(index)}
+                              placeholder={
+                                sourceInventoryOptions.length === 0
+                                  ? '조건에 맞는 재고가 없습니다'
+                                  : `재고 라인 선택 #${index + 1} (LOT / SN / EXP)`
+                              }
+                              emptyText="가용 재고가 없습니다."
+                              disabled={sourceInventoryOptions.length === 0}
+                              triggerClassName="relative z-10"
+                            />
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-9 px-2 text-xs"
+                            onClick={() =>
+                              setSourceInventoryIds((prev) => {
+                                if (prev.length <= 1) return ['']
+                                const next = prev.filter((_, currentIndex) => currentIndex !== index)
+                                setSourceInventoryId(next[0] ?? '')
+                                return next
+                              })
+                            }
+                            disabled={sourceInventoryIds.length <= 1}
+                          >
+                            삭제
+                          </Button>
+                        </div>
+                      ))}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 w-fit px-2 text-xs"
+                        onClick={() => setSourceInventoryIds((prev) => [...prev, ''])}
+                        disabled={sourceInventoryOptions.length === 0 || sourceInventoryIds.length >= sourceInventoryOptions.length}
+                      >
+                        + 라인 추가
+                      </Button>
+                    </div>
+                  ) : (
+                    <InventoryTransferCommandCombobox
+                      value={sourceInventoryId}
+                      onChange={handleSourceInventoryChange}
+                      options={sourceInventoryOptions}
+                      placeholder={
+                        sourceInventoryOptions.length === 0
+                          ? '조건에 맞는 재고가 없습니다'
+                          : '재고 라인 선택 (LOT / SN / EXP)'
+                      }
+                      emptyText="가용 재고가 없습니다."
+                      disabled={sourceInventoryOptions.length === 0}
+                      triggerClassName="relative z-10"
+                    />
+                  )}
                 </div>
               </div>
             </div>
@@ -516,13 +654,17 @@ export default function NewInventoryTransferPage() {
                 min={1}
                 max={maxQty || undefined}
                 value={transferQty}
-                disabled={isSerialLine}
-                readOnly={isSerialLine}
+                disabled={isSerialLine || isMultiLineSelection}
+                readOnly={isSerialLine || isMultiLineSelection}
                 onChange={(event) => setTransferQty(event.target.value)}
-                className={isSerialLine ? 'bg-muted' : ''}
+                className={isSerialLine || isMultiLineSelection ? 'bg-muted' : ''}
               />
-              {isSerialLine ? (
-                <p className="text-xs text-muted-foreground">시리얼(SN) 재고는 해당 라인 가용 수량 전체가 이동됩니다.</p>
+              {isSerialLine || isMultiLineSelection ? (
+                <p className="text-xs text-muted-foreground">
+                  {isMultiLineSelection
+                    ? '여러 라인을 선택하면 이동 수량은 선택 라인의 가용 재고 합으로 자동 설정됩니다.'
+                    : '시리얼(SN) 재고는 해당 라인 가용 수량 전체가 이동됩니다.'}
+                </p>
               ) : null}
             </div>
           </div>
@@ -541,7 +683,7 @@ export default function NewInventoryTransferPage() {
                 onChange={setToWarehouseId}
                 options={destinationWarehouseOptions}
                 placeholder="도착 창고 선택"
-                disabled={!selectedSource}
+                disabled={!primarySource}
               />
             </div>
           </div>

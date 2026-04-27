@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import ProtectedCreateButton from '@/components/ProtectedCreateButton'
+import InlineAlertMirror from '@/components/InlineAlertMirror'
 
 type ProductionOrderRow = {
   id: number
@@ -233,7 +234,7 @@ export default function ProductionOrdersPage() {
         />
       </div>
 
-      {errorMessage && <div className="erp-alert-error">{errorMessage}</div>}
+      {errorMessage ? <InlineAlertMirror message={errorMessage} variant="error" /> : null}
 
       <div className="overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
