@@ -91,6 +91,21 @@ function mapCommentRow(c: Record<string, unknown>): BoardCommentRow {
   }
 }
 
+function describeUnknownError(e: unknown): string {
+  if (e instanceof Error) return e.message
+  if (e && typeof e === 'object') {
+    const anyErr = e as { message?: unknown; details?: unknown; hint?: unknown; code?: unknown }
+    const parts = [
+      typeof anyErr.message === 'string' ? anyErr.message : null,
+      typeof anyErr.details === 'string' ? anyErr.details : null,
+      typeof anyErr.hint === 'string' ? anyErr.hint : null,
+      typeof anyErr.code === 'string' ? `(code: ${anyErr.code})` : null,
+    ].filter((v): v is string => Boolean(v))
+    if (parts.length > 0) return parts.join(' | ')
+  }
+  return '알 수 없는 오류가 발생했습니다.'
+}
+
 type Props = {
   postId: string
   currentUserId: string | null
@@ -212,7 +227,8 @@ export default function BoardCommentsPanel({
       await load()
       onMetaChange?.()
     } catch (e: unknown) {
-      const description = e instanceof Error ? e.message : '댓글 등록 중 오류가 발생했습니다.'
+      const description = describeUnknownError(e)
+      console.error('[board-comments] submitTop failed', e)
       toast.error('댓글 등록 실패', { description })
     } finally {
       setSubmittingTop(false)
@@ -238,7 +254,8 @@ export default function BoardCommentsPanel({
       await load()
       onMetaChange?.()
     } catch (e: unknown) {
-      const description = e instanceof Error ? e.message : '대댓글 등록 중 오류가 발생했습니다.'
+      const description = describeUnknownError(e)
+      console.error('[board-comments] submitReply failed', e)
       toast.error('대댓글 등록 실패', { description })
     } finally {
       setSubmittingReply(false)
