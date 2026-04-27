@@ -7,6 +7,10 @@ import { openApprovalDocFromInbox } from '@/lib/approval-popup';
 import { getApprovalDocDetailedStatusPresentation, getDocDetailOpenHref } from '@/lib/approval-status';
 import type { ApprovalDocLike } from '@/lib/approval-status';
 import { isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions';
+import {
+  mapInboxRpcItemToDashboardApprovalRow,
+  parseApprovalInboxRpcPayload,
+} from '@/lib/approval-inbox-rpc';
 
 // --- 타입 정의 ---
 type InventoryRow = { item_id: number; current_qty: number; available_qty?: number | null; quarantine_qty?: number | null; };
@@ -206,11 +210,28 @@ export default function DashboardPage() {
           { data: coaFileData }, { data: loginAuditData },
         ] = await Promise.all([
           supabase.from('inventory').select('item_id, current_qty, available_qty, quarantine_qty'),
-          supabase
-            .from('approval_docs')
-            .select('id, doc_no, title, status, remarks, current_line_no, drafted_at, doc_type, writer_id, outbound_requests(id)')
-            .order('id', { ascending: false })
-            .limit(5),
+          (async () => {
+            const { data: rawInbox, error: inboxErr } = await supabase.rpc('approval_inbox_query', {
+              p_doc_no: null,
+              p_doc_type: null,
+              p_title: null,
+              p_draft_date: null,
+              p_approver_line: null,
+              p_progress: null,
+              p_status: null,
+              p_limit: 5,
+              p_offset: 0,
+            });
+            if (inboxErr) {
+              console.error('Dashboard approvals (inbox RPC):', inboxErr);
+              return { data: [] as ApprovalDocRow[] };
+            }
+            const payload = parseApprovalInboxRpcPayload(rawInbox);
+            if (!payload) return { data: [] as ApprovalDocRow[] };
+            return {
+              data: payload.items.map(mapInboxRpcItemToDashboardApprovalRow),
+            };
+          })(),
           supabase.from('production_orders').select(`id, prod_no, status, prod_date, inbound_completed, items:item_id(item_name)`).order('id', { ascending: false }).limit(5),
           supabase.from('purchase_orders').select(`id, po_no, status, po_date, remarks, customers:customer_id(customer_name)`).order('id', { ascending: false }).limit(5),
           supabase.from('inventory_transactions').select('id, trans_type, trans_date').order('id', { ascending: false }),

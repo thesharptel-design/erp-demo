@@ -3,7 +3,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { getProcessNameFromMetadata } from '@/lib/item-config';
-import { getAllowedWarehouseIds, getCurrentUserPermissions } from '@/lib/permissions';
 import Link from 'next/link';
 import SearchableCombobox from '@/components/SearchableCombobox';
 
@@ -58,6 +57,7 @@ export default function InventoryPage() {
   const [groupedInventory, setGroupedInventory] = useState<GroupedInventoryRow[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
   const [warehouseFilter, setWarehouseFilter] = useState<string>('all');
+  const [hasWarehouseAccess, setHasWarehouseAccess] = useState(true);
   const [itemCodeFilter, setItemCodeFilter] = useState('');
   const [processNameFilter, setProcessNameFilter] = useState('');
   const [itemNameFilter, setItemNameFilter] = useState('');
@@ -67,8 +67,34 @@ export default function InventoryPage() {
   useEffect(() => {
     async function fetchInventory() {
       setIsLoading(true);
-      const currentUser = await getCurrentUserPermissions();
-      const allowedWarehouseIds = await getAllowedWarehouseIds(currentUser);
+      setHasWarehouseAccess(true);
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      const accessToken = session?.access_token ?? '';
+
+      let allowedWarehouseIds: number[] | null = []
+      let allowedWarehouses: WarehouseRow[] = []
+      if (accessToken) {
+        const accessRes = await fetch('/api/warehouses/accessible', {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+          },
+        })
+        if (accessRes.ok) {
+          const payload = (await accessRes.json()) as {
+            has_full_access?: boolean
+            warehouse_ids?: number[]
+            warehouses?: WarehouseRow[]
+          }
+          const hasFullAccess = payload.has_full_access === true
+          allowedWarehouseIds = hasFullAccess ? null : (payload.warehouse_ids ?? [])
+          allowedWarehouses = (payload.warehouses ?? []).filter(
+            (warehouse) => Number.isInteger(Number(warehouse.id)) && Number(warehouse.id) > 0
+          )
+        }
+      }
 
       // 1. 재고 데이터와 품목의 관리 옵션(is_lot, is_exp, is_sn)을 함께 가져옵니다.
       const { data, error } = await supabase
@@ -94,30 +120,23 @@ export default function InventoryPage() {
         `)
         .gt('current_qty', 0) // 잔량이 있는 것만 조회
         .order('exp_date', { ascending: true });
-      let warehouseQuery = supabase
-        .from('warehouses')
-        .select('id, name')
-        .eq('is_active', true)
-        .order('sort_order');
-      if (allowedWarehouseIds !== null) {
-        if (allowedWarehouseIds.length === 0) {
-          setWarehouses([]);
-          setWarehouseFilter('all');
-          setGroupedInventory([]);
-          setIsLoading(false);
-          return;
-        }
-        warehouseQuery = warehouseQuery.in('id', allowedWarehouseIds);
+      if (allowedWarehouseIds !== null && allowedWarehouseIds.length === 0) {
+        setHasWarehouseAccess(false);
+        setWarehouses([]);
+        setWarehouseFilter('all');
+        setGroupedInventory([]);
+        setIsLoading(false);
+        return;
       }
-      const { data: warehouseData } = await warehouseQuery;
-      setWarehouses(warehouseData || []);
+
+      setWarehouses(allowedWarehouses);
 
       const nextWarehouseFilter =
-        allowedWarehouseIds === null
-          ? warehouseFilter
-          : allowedWarehouseIds.includes(Number(warehouseFilter))
+        warehouseFilter === 'all'
+          ? 'all'
+          : allowedWarehouses.some((warehouse) => String(warehouse.id) === warehouseFilter)
             ? warehouseFilter
-            : String(allowedWarehouseIds[0]);
+            : 'all';
       if (nextWarehouseFilter !== warehouseFilter) {
         setWarehouseFilter(nextWarehouseFilter);
       }
@@ -129,7 +148,7 @@ export default function InventoryPage() {
       }
 
       const groups: Record<string, GroupedInventoryRow> = {};
-      const warehouseMap = new Map((warehouseData as WarehouseRow[] | null)?.map((wh) => [wh.id, wh.name]) ?? []);
+      const warehouseMap = new Map(allowedWarehouses.map((wh) => [wh.id, wh.name]));
       
       (data as unknown as InventoryDetailRow[] | null)?.forEach((row) => {
         if (allowedWarehouseIds !== null && !allowedWarehouseIds.includes(Number(row.warehouse_id))) return;
@@ -223,11 +242,14 @@ export default function InventoryPage() {
   }, [warehouseFilter, warehouseNameMap]);
 
   const emptyStateMessage = useMemo(() => {
+    if (!hasWarehouseAccess) {
+      return '창고 권한이 없습니다. 관리자에게 창고 접근 권한을 요청해 주세요.';
+    }
     if (warehouseFilter !== 'all' && selectedWarehouseLabel) {
       return `${selectedWarehouseLabel} 창고는 현재 재고가 없습니다.`;
     }
     return '조건에 맞는 재고 데이터가 없습니다.';
-  }, [warehouseFilter, selectedWarehouseLabel]);
+  }, [hasWarehouseAccess, warehouseFilter, selectedWarehouseLabel]);
 
   const openOutboundRequestDraftPopup = useCallback(() => {
     const popup = window.open(
@@ -298,6 +320,7 @@ export default function InventoryPage() {
               ...warehouses.map((wh) => ({ value: String(wh.id), label: wh.name, keywords: [wh.name] })),
             ]}
             placeholder="창고 선택"
+            showClearOption={false}
           />
         </div>
       </div>

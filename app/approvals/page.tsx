@@ -16,6 +16,10 @@ import {
 } from '@/lib/approval-status';
 import type { ApprovalDocLike, ApprovalLineWithName } from '@/lib/approval-status';
 import { isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions';
+import {
+  type InboxRpcItem,
+  parseApprovalInboxRpcPayload,
+} from '@/lib/approval-inbox-rpc';
 
 type ApprovalsDocRow = ApprovalDocLike & {
   id: number;
@@ -34,29 +38,6 @@ type ApprovalsDocRow = ApprovalDocLike & {
   departments?: { dept_name?: string } | { dept_name?: string }[] | null;
   progressLabel: string;
   approverLineNames: string;
-};
-
-type InboxRpcItem = {
-  id: number;
-  doc_no: string | null;
-  title: string | null;
-  status: string;
-  remarks: string | null;
-  drafted_at: string | null;
-  completed_at: string | null;
-  doc_type: string | null;
-  writer_id: string | null;
-  dept_id: number | null;
-  current_line_no: number | null;
-  approver_line_names: string;
-  writer_user_name: string | null;
-  dept_name: string | null;
-  outbound_request_id: number | null;
-};
-
-type InboxRpcPayload = {
-  total: number;
-  items: InboxRpcItem[];
 };
 
 const DOC_TYPE_FILTER_OPTIONS = [
@@ -90,15 +71,6 @@ function InboxTruncated({
       {display}
     </span>
   );
-}
-
-function parseInboxPayload(raw: unknown): InboxRpcPayload | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const o = raw as Record<string, unknown>;
-  const total = typeof o.total === 'number' ? o.total : Number(o.total);
-  const items = Array.isArray(o.items) ? o.items : [];
-  if (!Number.isFinite(total)) return null;
-  return { total, items: items as InboxRpcItem[] };
 }
 
 function mapRpcRowToDoc(
@@ -231,7 +203,7 @@ export default function ApprovalsPage() {
         return;
       }
 
-      const payload = parseInboxPayload(rawPayload);
+      const payload = parseApprovalInboxRpcPayload(rawPayload);
       if (!payload) {
         setFetchError('목록 응답 형식이 올바르지 않습니다.');
         setDocs([]);

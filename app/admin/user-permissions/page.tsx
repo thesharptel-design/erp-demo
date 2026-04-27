@@ -126,6 +126,21 @@ function normalizeString(value: string): string | null {
   return trimmed ? trimmed : null;
 }
 
+function compareUsersForDisplay(a: AppUser, b: AppUser): number {
+  const aActive = a.is_active === true ? 1 : 0;
+  const bActive = b.is_active === true ? 1 : 0;
+  if (aActive !== bActive) return bActive - aActive;
+
+  const aName = String(a.user_name ?? '').trim();
+  const bName = String(b.user_name ?? '').trim();
+  const byName = aName.localeCompare(bName, 'ko');
+  if (byName !== 0) return byName;
+
+  const aNo = String(a.employee_no ?? '');
+  const bNo = String(b.employee_no ?? '');
+  return aNo.localeCompare(bNo, 'ko');
+}
+
 function uniqueTextOptions(values: string[]) {
   return Array.from(new Set(values))
     .sort((a, b) => a.localeCompare(b, 'ko'))
@@ -267,11 +282,11 @@ export default function UserPermissionsPage() {
     if (warehousesResult.error) alert(`창고 조회 실패: ${warehousesResult.error.message}`);
     if (mappingsResult.error) alert(`창고 권한 조회 실패: ${mappingsResult.error.message}`);
 
-    const normalizedUsers = (usersResult.data ?? []).map((row) => ({
+    const normalizedUsers = ((usersResult.data ?? []).map((row) => ({
       ...row,
       user_kind: parseUserKind(row.user_kind),
       can_approval_participate: row.can_approval_participate === true,
-    })) as AppUser[];
+    })) as AppUser[]).sort(compareUsersForDisplay);
     setUsers(normalizedUsers);
     setWarehouses((warehousesResult.data ?? []) as Warehouse[]);
 
@@ -331,23 +346,7 @@ export default function UserPermissionsPage() {
 
   const handleBulkDelete = async () => {
     if (selectedIds.length === 0) return alert('삭제할 사용자를 선택해주세요.');
-    if (!confirm(`선택한 ${selectedIds.length}명의 계정을 완전히 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
-
-    setLoading(true);
-    const res = await fetch('/api/admin/delete-users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userIds: selectedIds }),
-    });
-
-    if (res.ok) {
-      alert('선택한 계정이 삭제되었습니다.');
-      await fetchUsersAndWarehouses();
-    } else {
-      const err = await res.json();
-      alert(`삭제 실패: ${err.error ?? '알 수 없는 오류'}`);
-      setLoading(false);
-    }
+    alert('삭제 버튼 활성화 고민중입니다');
   };
 
   const handleToggleActive = async (user: AppUser) => {
@@ -360,20 +359,8 @@ export default function UserPermissionsPage() {
     else await fetchUsersAndWarehouses();
   };
 
-  const handleDeleteUser = async (user: AppUser) => {
-    if (!confirm(`[${user.user_name ?? '-'}] 계정을 완전히 삭제하시겠습니까?`)) return;
-    const res = await fetch('/api/admin/delete-users', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ userIds: [user.id] }),
-    });
-    if (res.ok) {
-      alert('계정이 삭제되었습니다.');
-      await fetchUsersAndWarehouses();
-    } else {
-      const err = await res.json();
-      alert(`삭제 실패: ${err.error ?? '알 수 없는 오류'}`);
-    }
+  const handleDeleteUser = async (_user: AppUser) => {
+    alert('삭제 버튼 활성화 고민중입니다');
   };
 
   const togglePermission = async (user: AppUser, key: PermissionKey) => {
