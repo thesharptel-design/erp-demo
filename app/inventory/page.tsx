@@ -215,6 +215,20 @@ export default function InventoryPage() {
     return map;
   }, [warehouses]);
 
+  const selectedWarehouseLabel = useMemo(() => {
+    if (warehouseFilter === 'all') return null;
+    const selectedId = Number(warehouseFilter);
+    if (!Number.isInteger(selectedId) || selectedId <= 0) return null;
+    return warehouseNameMap.get(selectedId) ?? `창고#${selectedId}`;
+  }, [warehouseFilter, warehouseNameMap]);
+
+  const emptyStateMessage = useMemo(() => {
+    if (warehouseFilter !== 'all' && selectedWarehouseLabel) {
+      return `${selectedWarehouseLabel} 창고는 현재 재고가 없습니다.`;
+    }
+    return '조건에 맞는 재고 데이터가 없습니다.';
+  }, [warehouseFilter, selectedWarehouseLabel]);
+
   const openOutboundRequestDraftPopup = useCallback(() => {
     const popup = window.open(
       '/outbound-requests/new',
@@ -312,7 +326,7 @@ export default function InventoryPage() {
             ) : filteredGroups.length === 0 ? (
               <tr>
                 <td colSpan={7} className="px-6 py-16 text-center text-gray-400 font-bold">
-                  조건에 맞는 재고 데이터가 없습니다.
+                  {emptyStateMessage}
                 </td>
               </tr>
             ) : (

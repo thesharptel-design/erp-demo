@@ -94,6 +94,10 @@ function normalizeNullableText(value: unknown): string | null {
   return normalized ? normalized : null
 }
 
+function buildUniqueUserName(baseUserName: string, attempt: number): string {
+  return attempt === 0 ? baseUserName : `${baseUserName}${attempt + 1}`
+}
+
 function validateByUserKind(payload: {
   userKind: UserKind
   department: string
@@ -188,14 +192,16 @@ export async function POST(request: NextRequest) {
       .eq('id', user.id)
       .maybeSingle()
 
+    let resolvedUserName = userName
     let upsertError: { message: string } | null = null
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const uniqueUserName = buildUniqueUserName(userName, attempt)
       const employeeNo = existingAppUser?.employee_no || (await generateEmployeeNoWithRetry(adminClient))
       const { error } = await adminClient.from('app_users').upsert(
         {
           id: user.id,
           email,
-          user_name: userName,
+          user_name: uniqueUserName,
           user_kind: userKind,
           department: userKind === 'staff' ? department : '',
           job_rank: userKind === 'staff' ? jobRank : '',
@@ -215,12 +221,17 @@ export async function POST(request: NextRequest) {
       )
 
       if (!error) {
+        resolvedUserName = uniqueUserName
         upsertError = null
         break
       }
 
       upsertError = error
-      if (!existingAppUser?.employee_no && error.message.toLowerCase().includes('employee_no')) {
+      const lowerMessage = error.message.toLowerCase()
+      if (!existingAppUser?.employee_no && lowerMessage.includes('employee_no')) {
+        continue
+      }
+      if (lowerMessage.includes('user_name')) {
         continue
       }
       break
@@ -235,7 +246,7 @@ export async function POST(request: NextRequest) {
       await notifySystemAdminsForPendingSignup({
         adminClient,
         applicantId: user.id,
-        applicantName: userName,
+        applicantName: resolvedUserName,
         applicantEmployeeNo: empNo,
         userKind,
       })

@@ -1,16 +1,19 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import SearchableCombobox from '@/components/SearchableCombobox'
 import { STAFF_DEPARTMENTS, STAFF_RANKS } from '@/lib/staff-profile-options'
+import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 /** Dev Strict Mode runs effects twice; a bad refresh token would otherwise trigger two failing getSession calls. */
 let loginSessionProbeInFlight = false
 
 export default function LoginPage() {
   const router = useRouter()
+  const { isSubmitting: isSubmittingSignup, run: runSingleSubmit } = useSingleSubmit({ minLockMs: 800 })
+  const signUpSubmitLockRef = useRef(false)
 
   const [isSignUp, setIsSignUp] = useState(false)
   const [email, setEmail] = useState('')
@@ -64,6 +67,11 @@ export default function LoginPage() {
         }
 
         if (session?.user) {
+          if (isSignUp) {
+            setIsChecking(false)
+            return
+          }
+
           const { data: userData } = await supabase
             .from('app_users')
             .select('role_name, is_active')
@@ -92,7 +100,7 @@ export default function LoginPage() {
       }
     }
     void syncSession()
-  }, [router])
+  }, [isSignUp, router])
 
   const handlePrivacyScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
@@ -115,58 +123,70 @@ export default function LoginPage() {
       if (userKind === 'student' && (!schoolName || !trainingProgram || !gradeLevel || !major)) {
         return setErrorMessage('학생은 학교, 교육프로그램, 학년, 전공이 필요합니다.')
       }
+      if (signUpSubmitLockRef.current) return
       
+      signUpSubmitLockRef.current = true
       setIsLoading(true)
-      try {
-        const { data, error: authError } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { data: { full_name: userName } },
-        })
-        if (authError) throw authError
-        
-        if (data.user) {
-          const accessToken = data.session?.access_token ?? (await supabase.auth.getSession()).data.session?.access_token
-          if (!accessToken) throw new Error('회원가입 세션을 확인할 수 없습니다. 다시 시도해 주세요.')
-
-          const response = await fetch('/api/auth/register-profile', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${accessToken}`,
-            },
-            body: JSON.stringify({
-              user_name: userName,
-              email,
-              phone,
-              user_kind: userKind,
-              department,
-              job_rank: jobRank,
-              school_name: schoolName,
-              training_program: trainingProgram,
-              teacher_subject: teacherSubject,
-              grade_level: gradeLevel,
-              major,
-              privacy_consented: privacyAgreed,
-              role_name: 'pending',
-            }),
+      await runSingleSubmit(async () => {
+        try {
+          const { data, error: authError } = await supabase.auth.signUp({
+            email,
+            password,
+            options: { data: { full_name: userName } },
           })
+          if (authError) throw authError
+          
+          if (data.user) {
+            const accessToken = data.session?.access_token ?? (await supabase.auth.getSession()).data.session?.access_token
+            if (!accessToken) throw new Error('회원가입 세션을 확인할 수 없습니다. 다시 시도해 주세요.')
 
-          if (!response.ok) {
-            const result = (await response.json().catch(() => ({}))) as { error?: string }
-            throw new Error(result.error || '가입 프로필 저장 중 오류가 발생했습니다.')
+            const response = await fetch('/api/auth/register-profile', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${accessToken}`,
+              },
+              body: JSON.stringify({
+                user_name: userName,
+                email,
+                phone,
+                user_kind: userKind,
+                department,
+                job_rank: jobRank,
+                school_name: schoolName,
+                training_program: trainingProgram,
+                teacher_subject: teacherSubject,
+                grade_level: gradeLevel,
+                major,
+                privacy_consented: privacyAgreed,
+                role_name: 'pending',
+              }),
+            })
+
+            if (!response.ok) {
+              const result = (await response.json().catch(() => ({}))) as { error?: string }
+              throw new Error(result.error || '가입 프로필 저장 중 오류가 발생했습니다.')
+            }
           }
+          
+          await supabase.auth.signOut()
+          alert('신청이 완료되었습니다. 관리자 승인 후 시스템 이용이 가능합니다.')
+          setIsSignUp(false)
+          setEmail('')
+          setPassword('')
+          setPasswordConfirm('')
+        } catch (err: any) {
+          const rawMessage = String(err?.message ?? '')
+          if (rawMessage.toLowerCase().includes('user already registered')) {
+            setErrorMessage('이미 신청/가입된 이메일입니다. 비밀번호 찾기 또는 관리자에게 문의하세요.')
+            return
+          }
+          setErrorMessage(rawMessage || '가입 처리 중 오류가 발생했습니다.')
+        } finally {
+          signUpSubmitLockRef.current = false
+          setIsLoading(false)
         }
-        
-        await supabase.auth.signOut() 
-        alert('신청이 완료되었습니다. 관리자 승인 후 시스템 이용이 가능합니다.')
-        setIsSignUp(false)
-        setEmail(''); setPassword('');
-      } catch (err: any) {
-        setErrorMessage(err.message)
-      } finally {
-        setIsLoading(false)
-      }
+      })
     } else {
       // ========== 🛑 로그인 로직 (알림창 강화됨) ==========
       setIsLoading(true)
@@ -333,7 +353,7 @@ export default function LoginPage() {
 
           {errorMessage && <div className="text-xs font-bold text-red-600 bg-red-50 p-4 rounded-xl border border-red-200 whitespace-pre-wrap">⚠️ {errorMessage}</div>}
 
-          <button type="submit" disabled={isLoading} className="w-full h-16 mt-4 bg-blue-600 text-white rounded-3xl font-black text-lg shadow-xl hover:bg-blue-700 transition-all active:scale-95 disabled:bg-gray-400">
+          <button type="submit" disabled={isLoading || (isSignUp && isSubmittingSignup)} className="w-full h-16 mt-4 bg-blue-600 text-white rounded-3xl font-black text-lg shadow-xl hover:bg-blue-700 transition-all active:scale-95 disabled:bg-gray-400">
             {isLoading ? '처리 중...' : isSignUp ? '등록 신청하기' : '로그인'}
           </button>
         </form>
