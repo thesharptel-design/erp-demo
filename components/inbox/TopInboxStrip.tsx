@@ -465,20 +465,20 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
     if (n <= 0) return null
     const label = n > 99 ? '99+' : String(n)
     return (
-      <span className="absolute -right-1 -top-1 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-black bg-rose-500 px-1 text-[10px] font-black text-white">
+      <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-[14px] items-center justify-center rounded-full border border-black bg-rose-500 px-0.5 text-[9px] font-black leading-none text-white">
         {label}
       </span>
     )
   }
 
   return (
-    <div className="flex w-full flex-wrap items-center justify-end gap-2 overflow-visible border-t-2 border-dashed border-gray-200 pt-2.5 pr-1 sm:pr-2">
+    <div className="flex w-full flex-wrap items-center justify-end gap-1.5 overflow-visible border-t-2 border-dashed border-gray-200 pt-1.5 pr-1 sm:pr-2 lg:inline-flex lg:w-auto lg:max-w-full lg:flex-nowrap">
       <div className="relative">
         <button
           ref={msgBtnRef}
           type="button"
           onClick={() => toggle('messages')}
-          className="relative inline-flex h-11 min-w-[44px] items-center justify-center rounded-xl border-2 border-black bg-white px-3 text-base shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-violet-50 active:translate-y-0.5 active:shadow-none"
+          className="relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 border-gray-300 bg-white text-sm font-black text-gray-700 transition-colors hover:bg-gray-50"
           aria-label="쪽지"
           aria-expanded={open === 'messages'}
         >
@@ -491,7 +491,7 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
           ref={notifBtnRef}
           type="button"
           onClick={() => toggle('notifications')}
-          className="relative inline-flex h-11 min-w-[44px] items-center justify-center rounded-xl border-2 border-black bg-white px-3 text-base shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-sky-50 active:translate-y-0.5 active:shadow-none"
+          className="relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 border-gray-300 bg-white text-sm font-black text-gray-700 transition-colors hover:bg-gray-50"
           aria-label="알림"
           aria-expanded={open === 'notifications'}
         >

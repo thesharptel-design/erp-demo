@@ -117,112 +117,111 @@ export default function AppTopChrome({ onMenuClick }: Props) {
   return (
     <section
       ref={topChromeAlignRef}
-      className={`mb-4 rounded-2xl border-2 bg-white p-2.5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] sm:mb-6 sm:p-3 ${
+      className={`mb-3 rounded-2xl border-2 bg-white p-2 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] sm:mb-4 sm:p-2.5 ${
         isWarning ? 'border-amber-500' : 'border-black'
       }`}
       aria-live="polite"
     >
-      <div className="flex w-full flex-col gap-3.5">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 flex-col gap-3">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onMenuClick}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border-2 border-black bg-white text-lg font-black text-gray-800 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] lg:hidden"
-                aria-label="메뉴 열기"
-              >
-                ☰
-              </button>
-            </div>
-            <div className="min-w-0">
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <span className="truncate text-lg font-black tracking-tight text-gray-900 sm:text-xl">
+      <div className="flex w-full flex-col gap-2">
+        <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start lg:justify-between lg:gap-4">
+          {/* 좌측: 1줄 이름·메타 → 그 아래 활성 권한 */}
+          <div className="flex min-w-0 flex-1 items-start gap-2">
+            <button
+              type="button"
+              onClick={onMenuClick}
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-black bg-white text-base font-black text-gray-800 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] lg:hidden"
+              aria-label="메뉴 열기"
+            >
+              ☰
+            </button>
+            <div className="flex min-w-0 flex-1 flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className="truncate text-base font-black tracking-tight text-gray-900 sm:text-lg">
                   {userIcon} {user?.user_name ?? '사용자'}
                 </span>
-                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-700">
+                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">
                   {userKindLabel}
                 </span>
                 {userMetaLabels.map((label) => (
-                  <span key={label} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">
+                  <span key={label} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700">
                     {label}
                   </span>
                 ))}
-                <span className="max-w-full break-all rounded-full bg-gray-100 px-2.5 py-1 text-xs font-bold text-gray-600">
+                <span className="max-w-full break-all rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600">
                   {user?.email ?? '이메일 없음'}
                 </span>
-                <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-bold text-indigo-700">
+                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700">
                   사번 {user?.employee_no ?? '-'}
                 </span>
               </div>
+              {user ? (
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="text-[10px] font-black uppercase tracking-wide text-gray-400">활성 권한</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {permissionLabels.length === 0 ? (
+                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-500">권한 없음</span>
+                    ) : (
+                      permissionLabels.map((label) => (
+                        <span key={label} className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-700">
+                          {label}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
 
-          <div className="flex min-w-0 flex-1 flex-col gap-2.5 sm:max-w-none sm:flex-row sm:flex-wrap sm:items-end sm:justify-end">
-            <div className="flex w-full min-w-0 flex-col gap-2.5 sm:w-auto sm:items-end">
-              <div className="flex flex-wrap gap-2 sm:justify-end">
-                <Link
-                  href="/dashboard"
-                  className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-sm font-black text-gray-700 hover:bg-gray-50"
-                >
-                  홈
-                </Link>
+          {/* 우측: 1줄 홈·로그아웃·타이머 → 점선 아래 쪽지·알림 */}
+          <div className="flex w-full shrink-0 flex-col items-stretch gap-0 lg:w-auto lg:items-end">
+            <div className="flex flex-nowrap items-center justify-end gap-1.5 overflow-x-auto pb-0.5">
+              <Link
+                href="/dashboard"
+                className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg border-2 border-gray-300 bg-white px-3.5 text-xs font-black text-gray-700 hover:bg-gray-50 sm:px-4 sm:text-sm"
+              >
+                홈
+              </Link>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg border-2 border-gray-300 bg-white px-3.5 text-xs font-black text-gray-700 hover:bg-gray-50 sm:px-4 sm:text-sm"
+              >
+                로그아웃
+              </button>
+              <div className="inline-flex h-9 min-w-[140px] shrink-0 items-center justify-between gap-1.5 rounded-lg border-2 border-gray-300 bg-gray-50 px-2.5">
+                <div className="leading-none">
+                  <p className="text-[8px] font-black uppercase tracking-wide text-gray-500">AUTO LOGOUT</p>
+                  <p className={`text-xs font-black tracking-tight sm:text-sm ${isWarning ? 'text-amber-700' : 'text-gray-900'}`}>
+                    {formatRemainingMs(remainingMs)}
+                  </p>
+                </div>
                 <button
                   type="button"
-                  onClick={handleLogout}
-                  className="inline-flex h-10 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-4 text-sm font-black text-gray-700 hover:bg-gray-50"
+                  onClick={extendSession}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 border-black bg-white text-[10px] font-black text-gray-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-gray-50 active:translate-y-0.5 active:shadow-none"
+                  aria-label="세션 연장"
+                  title="세션 연장"
                 >
-                  로그아웃
+                  ↻
                 </button>
-                <div className="inline-flex h-10 min-w-[156px] items-center justify-between gap-2 rounded-xl border-2 border-gray-300 bg-gray-50 px-3">
-                  <div className="leading-none">
-                    <p className="text-[9px] font-black uppercase tracking-wide text-gray-500">AUTO LOGOUT</p>
-                    <p className={`text-sm font-black tracking-tight ${isWarning ? 'text-amber-700' : 'text-gray-900'}`}>
-                      {formatRemainingMs(remainingMs)}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={extendSession}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border-2 border-black bg-white text-xs font-black text-gray-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-gray-50 active:translate-y-0.5 active:shadow-none"
-                    aria-label="세션 연장"
-                    title="세션 연장"
-                  >
-                    ↻
-                  </button>
-                </div>
               </div>
-              {user?.id ? (
-                <TopInboxStrip
-                  userId={user.id}
-                  canSendBroadcast={isSystemAdminUser(user)}
-                  contentAlignRef={topChromeAlignRef}
-                />
-              ) : null}
             </div>
+            {user?.id ? (
+              <TopInboxStrip
+                userId={user.id}
+                canSendBroadcast={isSystemAdminUser(user)}
+                contentAlignRef={topChromeAlignRef}
+              />
+            ) : null}
           </div>
         </div>
 
         {isWarning ? (
-          <p className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-700">
+          <p className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-bold text-amber-700">
             곧 유휴 로그아웃됩니다. 마우스/키보드 입력 또는 세션 연장 버튼으로 시간을 갱신하세요.
           </p>
         ) : null}
-
-        <div className="flex flex-wrap items-center gap-2">
-          <p className="text-[11px] font-black uppercase tracking-wide text-gray-400">활성 권한</p>
-          <div className="flex flex-wrap gap-2">
-            {permissionLabels.length === 0 ? (
-              <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-bold text-gray-500">권한 없음</span>
-            ) : (
-              permissionLabels.map((label) => (
-                <span key={label} className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-700">
-                  {label}
-                </span>
-              ))
-            )}
-          </div>
-        </div>
       </div>
     </section>
   )

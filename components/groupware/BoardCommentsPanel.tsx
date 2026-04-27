@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { boardAnonymousDisplayName, resolveBoardAuthorMeta, type BoardAuthorMeta } from '@/lib/groupware-board'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 
 export type BoardCommentRow = {
@@ -210,6 +211,9 @@ export default function BoardCommentsPanel({
       setTopBody('')
       await load()
       onMetaChange?.()
+    } catch (e: unknown) {
+      const description = e instanceof Error ? e.message : '댓글 등록 중 오류가 발생했습니다.'
+      toast.error('댓글 등록 실패', { description })
     } finally {
       setSubmittingTop(false)
     }
@@ -233,6 +237,9 @@ export default function BoardCommentsPanel({
       setReplyingTo(null)
       await load()
       onMetaChange?.()
+    } catch (e: unknown) {
+      const description = e instanceof Error ? e.message : '대댓글 등록 중 오류가 발생했습니다.'
+      toast.error('대댓글 등록 실패', { description })
     } finally {
       setSubmittingReply(false)
     }
