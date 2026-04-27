@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 
 import SearchableCombobox from '@/components/SearchableCombobox'
+import PageHeader from '@/components/PageHeader'
 import { getAllowedWarehouseIds } from '@/lib/permissions'
 import { supabase } from '@/lib/supabase'
 import { useSingleSubmit } from '@/hooks/useSingleSubmit'
@@ -84,10 +85,10 @@ function parseTemplateSheet(file: File): Promise<Record<string, unknown>[]> {
 
 function downloadInboundTemplate() {
   const ws = XLSX.utils.aoa_to_sheet([
-    ['입고일자', '품목코드', '창고코드', '거래처코드', '수량', 'LOT번호', '유효기간', '시리얼번호', '비고'],
-    ['2026-04-28', 'ITEM-001', 'WH-001', 'CUST-001', 10, 'LOT-240428-A', '2027-04-28', '', '일반 LOT 입고'],
-    ['2026-04-28', 'ITEM-SN-001', 'WH-001', 'CUST-001', 1, '', '', 'SN-0001-2026', 'SN 개별 입고'],
-    ['2026-04-28', 'ITEM-EXP-001', 'WH-002', 'CUST-002', 5, 'EXP-LOT-1', '20270430', '', 'EXP 숫자형 허용'],
+    ['품목코드', '창고코드', '거래처코드', '수량', 'LOT번호', '유효기간', '시리얼번호', '비고'],
+    ['ITEM-001', 'WH-001', 'CUST-001', 10, 'LOT-240428-A', '2027-04-28', '', '일반 LOT 입고'],
+    ['ITEM-SN-001', 'WH-001', 'CUST-001', 1, '', '', 'SN-0001-2026', 'SN 개별 입고'],
+    ['ITEM-EXP-001', 'WH-002', 'CUST-002', 5, 'EXP-LOT-1', '20270430', '', 'EXP 숫자형 허용'],
   ])
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, '입고업로드')
@@ -212,6 +213,7 @@ export default function NewInboundPage() {
     const parsed: UploadRow[] = rawRows.map((row, index) => {
       const entry: UploadRow = {
         row_no: index + 2,
+        /* 입고일자 열 없음 → 업로드일(today). 구형 파일은 입고일자/inbound_date 우선 */
         inbound_date: normalizeText(row['입고일자'] ?? row['inbound_date']) || today,
         item_code: normalizeText(row['품목코드'] ?? row['item_code']),
         warehouse_code: normalizeText(row['창고코드'] ?? row['warehouse_code']),
@@ -321,10 +323,12 @@ export default function NewInboundPage() {
   return (
     <div className="mx-auto max-w-[1120px] space-y-4 p-4 md:p-6">
       <div className="rounded-xl border-2 border-black bg-white p-4">
-        <h1 className="text-2xl font-black tracking-tight text-gray-900 md:text-3xl">입고 등록</h1>
-        <p className="mt-1 text-xs font-bold text-gray-500">
-          자재과 입고 전용 · 단건 등록 / 템플릿 업로드 병행 · 서버 단일 검증/처리
-        </p>
+        <PageHeader
+          title="입고 등록"
+          description="자재과 입고 전용 · 단건 등록 / 템플릿 업로드 병행 · 서버 단일 검증/처리"
+          className="gap-0"
+          descriptionClassName="text-xs font-bold text-gray-500"
+        />
       </div>
 
       <div className="rounded-xl border border-gray-300 bg-white p-3">
@@ -465,6 +469,10 @@ export default function NewInboundPage() {
         <div className="space-y-4">
           <div className="rounded-xl border-2 border-black bg-white p-4">
             <p className="mb-2 text-xs font-black text-gray-500">업로드 파일</p>
+            <p className="mb-3 text-xs leading-relaxed text-gray-600">
+              템플릿에는 입고일자 열이 없습니다. 업로드·처리 시점의 날짜가 자동으로 적용됩니다. 예전 양식에{' '}
+              <span className="font-bold">입고일자</span> 열이 있으면 그 값을 그대로 사용합니다.
+            </p>
             <div className="flex flex-col gap-2 sm:flex-row">
               <button
                 type="button"
@@ -501,11 +509,11 @@ export default function NewInboundPage() {
               업로드 미리보기 ({uploadRows.length}행)
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[980px] text-sm">
+              <table className="w-full min-w-[880px] text-sm">
                 <thead className="border-b bg-gray-50 text-[11px] font-black text-gray-500">
                   <tr>
                     <th className="px-3 py-2 text-left">행</th>
-                    <th className="px-3 py-2 text-left">입고일</th>
+                    <th className="px-3 py-2 text-left">적용 입고일</th>
                     <th className="px-3 py-2 text-left">품목코드</th>
                     <th className="px-3 py-2 text-left">창고코드</th>
                     <th className="px-3 py-2 text-left">거래처코드</th>

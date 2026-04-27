@@ -101,17 +101,44 @@ body {
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
 }
 
-h1, .ui-h1 {
-  font-size: 1.875rem;
-  line-height: 2.25rem;
-  font-weight: 800;
-  letter-spacing: -0.025em;
-}
+/* 페이지 제목 1차 통일: 입출고현황 톤을 전역 h1에 우선 적용 */
+@layer base {
+  h1,
+  .ui-h1 {
+    font-size: 1.25rem !important; /* text-xl */
+    line-height: 1.75rem !important; /* leading-snug 근접 */
+    font-weight: 400 !important; /* font-normal */
+    letter-spacing: -0.025em !important;
+  }
 
-h2, .ui-h2 {
-  font-size: 1.25rem;
-  line-height: 1.75rem;
-  font-weight: 700;
+  h2,
+  .ui-h2 {
+    font-size: 1.25rem;
+    line-height: 1.75rem;
+    font-weight: 700;
+  }
+
+  @media (max-width: 640px) {
+    h1,
+    .ui-h1 {
+      font-size: 1.25rem !important;
+      line-height: 1.75rem !important;
+    }
+
+    h2,
+    .ui-h2 {
+      font-size: 1.05rem;
+      line-height: 1.5rem;
+    }
+  }
+
+  @media (min-width: 640px) {
+    h1,
+    .ui-h1 {
+      font-size: 1.5rem !important; /* sm:text-2xl */
+      line-height: 2rem !important;
+    }
+  }
 }
 
 /* ===== ERP UI Common ===== */
@@ -407,18 +434,6 @@ h2, .ui-h2 {
 
 /* ===== Mobile readability tuning (global) ===== */
 @media (max-width: 640px) {
-  h1,
-  .ui-h1 {
-    font-size: 1.375rem;
-    line-height: 1.8rem;
-  }
-
-  h2,
-  .ui-h2 {
-    font-size: 1.05rem;
-    line-height: 1.5rem;
-  }
-
   .erp-page {
     gap: 1rem;
   }

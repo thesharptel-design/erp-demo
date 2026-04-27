@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { resolveAccessibleWarehouses } from '@/lib/server/resolve-accessible-warehouses'
 
 type WarehouseRow = {
   id: number
@@ -38,58 +39,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: '현재 사용자 인증을 확인할 수 없습니다.' }, { status: 401 })
     }
 
-    const { data: appUser, error: appUserError } = await adminClient
-      .from('app_users')
-      .select('id, role_name, can_manage_permissions, can_admin_manage')
-      .eq('id', user.id)
-      .single()
-
-    if (appUserError || !appUser) {
-      return NextResponse.json({ error: '사용자 정보를 확인할 수 없습니다.' }, { status: 400 })
-    }
-
-    const hasFullAccess =
-      String(appUser.role_name ?? '').toLowerCase() === 'admin' ||
-      appUser.can_manage_permissions === true ||
-      appUser.can_admin_manage === true
-
-    let warehouses: WarehouseRow[] = []
-    if (hasFullAccess) {
-      const { data: rows, error } = await adminClient
-        .from('warehouses')
-        .select('id, name')
-        .eq('is_active', true)
-        .order('sort_order')
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 })
-      }
-      warehouses = (rows ?? []) as WarehouseRow[]
-    } else {
-      const { data: rows, error } = await adminClient
-        .from('app_user_warehouses')
-        .select('warehouse_id, warehouses!inner(id, name, is_active)')
-        .eq('user_id', user.id)
-        .eq('warehouses.is_active', true)
-
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 })
-      }
-
-      const uniqueById = new Map<number, WarehouseRow>()
-      for (const row of rows ?? []) {
-        const warehouse = Array.isArray(row.warehouses) ? row.warehouses[0] : row.warehouses
-        const id = Number(warehouse?.id)
-        const name = String(warehouse?.name ?? '').trim()
-        if (!Number.isInteger(id) || id <= 0 || !name) continue
-        uniqueById.set(id, { id, name })
-      }
-      warehouses = Array.from(uniqueById.values()).sort((a, b) => a.id - b.id)
+    const resolved = await resolveAccessibleWarehouses(adminClient, user.id)
+    if (!resolved.ok) {
+      return NextResponse.json({ error: resolved.error }, { status: resolved.status })
     }
 
     const response: AccessResponse = {
-      has_full_access: hasFullAccess,
-      warehouse_ids: warehouses.map((warehouse) => warehouse.id),
-      warehouses,
+      has_full_access: resolved.hasFullAccess,
+      warehouse_ids: resolved.warehouses.map((warehouse) => warehouse.id),
+      warehouses: resolved.warehouses as WarehouseRow[],
     }
     return NextResponse.json(response)
   } catch (error) {

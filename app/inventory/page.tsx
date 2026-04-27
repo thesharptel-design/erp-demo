@@ -2,9 +2,13 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { getProcessNameFromMetadata } from '@/lib/item-config';
-import Link from 'next/link';
-import SearchableCombobox from '@/components/SearchableCombobox';
+import PageHeader from '@/components/PageHeader';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import {
+  InventoryTransferCommandCombobox,
+  type TransferComboboxOption,
+} from '@/app/inventory-transfers/new/InventoryTransferCommandCombobox';
 
 type WarehouseRow = { id: number; name: string };
 type GroupedInventoryRow = {
@@ -13,7 +17,6 @@ type GroupedInventoryRow = {
   item_name: string;
   item_spec: string | null;
   unit: string | null;
-  process_name: string;
   warehouse_id: number | null;
   warehouse_name: string;
   is_lot: boolean;
@@ -59,13 +62,10 @@ export default function InventoryPage() {
   const [warehouseFilter, setWarehouseFilter] = useState<string>('all');
   const [hasWarehouseAccess, setHasWarehouseAccess] = useState(true);
   const [itemCodeFilter, setItemCodeFilter] = useState('');
-  const [processNameFilter, setProcessNameFilter] = useState('');
   const [itemNameFilter, setItemNameFilter] = useState('');
-  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    async function fetchInventory() {
+  const fetchInventory = useCallback(async () => {
       setIsLoading(true);
       setHasWarehouseAccess(true);
       const {
@@ -165,7 +165,6 @@ export default function InventoryPage() {
             item_name: rowItem.item_name,
             item_spec: rowItem.item_spec,
             unit: rowItem.unit,
-            process_name: getProcessNameFromMetadata(rowItem.process_metadata ?? null),
             warehouse_id: isAllWarehouses ? null : row.warehouse_id,
             warehouse_name: isAllWarehouses ? '전체(합산)' : (warehouseMap.get(row.warehouse_id) ?? `창고#${row.warehouse_id}`),
             is_lot: rowItem.is_lot_managed,
@@ -182,32 +181,16 @@ export default function InventoryPage() {
 
       setGroupedInventory(Object.values(groups));
       setIsLoading(false);
-    }
-
-    fetchInventory();
   }, [warehouseFilter]);
 
-  const toggleRow = (code: string, isTrackable: boolean) => {
-    // 추적 관리 대상이 아니면 아예 열리지 않도록 차단
-    if (!isTrackable) return;
-    
-    setExpandedRows(prev => ({
-      ...prev,
-      [code]: !prev[code]
-    }));
-  };
+  useEffect(() => {
+    void fetchInventory();
+  }, [fetchInventory]);
 
   const itemCodeOptions = useMemo(() => {
     const values = Array.from(new Set(groupedInventory.map((group) => group.item_code))).sort((a, b) =>
       a.localeCompare(b)
     );
-    return values.map((value) => ({ value, label: value, keywords: [value] }));
-  }, [groupedInventory]);
-
-  const processNameOptions = useMemo(() => {
-    const values = Array.from(
-      new Set(groupedInventory.map((group) => group.process_name.trim()).filter(Boolean))
-    ).sort((a, b) => a.localeCompare(b));
     return values.map((value) => ({ value, label: value, keywords: [value] }));
   }, [groupedInventory]);
 
@@ -218,12 +201,20 @@ export default function InventoryPage() {
     return values.map((value) => ({ value, label: value, keywords: [value] }));
   }, [groupedInventory]);
 
+  const warehouseFilterOptions = useMemo<TransferComboboxOption[]>(
+    () => [
+      { value: 'all', label: '전체 창고', keywords: ['전체'] },
+      ...warehouses.map((wh) => ({ value: String(wh.id), label: wh.name, keywords: [wh.name] })),
+    ],
+    [warehouses]
+  );
+
+  const comboTrigger = 'h-9 min-h-9 w-full shrink-0 px-2 text-xs font-medium';
+
   const filteredGroups = groupedInventory.filter((group) => {
-    const itemCodeMatches = !itemCodeFilter || group.item_code.toLowerCase().includes(itemCodeFilter.toLowerCase());
-    const processMatches =
-      !processNameFilter || group.process_name.toLowerCase().includes(processNameFilter.toLowerCase());
-    const itemNameMatches = !itemNameFilter || group.item_name.toLowerCase().includes(itemNameFilter.toLowerCase());
-    return itemCodeMatches && processMatches && itemNameMatches;
+    const itemCodeMatches = !itemCodeFilter || group.item_code === itemCodeFilter;
+    const itemNameMatches = !itemNameFilter || group.item_name === itemNameFilter;
+    return itemCodeMatches && itemNameMatches;
   });
 
   const warehouseNameMap = useMemo(() => {
@@ -251,212 +242,111 @@ export default function InventoryPage() {
     return '조건에 맞는 재고 데이터가 없습니다.';
   }, [hasWarehouseAccess, warehouseFilter, selectedWarehouseLabel]);
 
-  const openOutboundRequestDraftPopup = useCallback(() => {
-    const popup = window.open(
-      '/outbound-requests/new',
-      'outboundRequestDraftPopup',
-      'popup=yes,width=1280,height=920,scrollbars=yes,resizable=yes'
-    );
-    if (!popup) {
-      window.location.href = '/outbound-requests/new';
-      return;
-    }
-    popup.focus();
-  }, []);
-
   return (
-    <div className="p-4 max-w-[1800px] mx-auto font-sans bg-gray-50 min-h-screen space-y-4">
-      
-      {/* 🌟 헤더 및 상단 퀵 버튼 추가 */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight text-gray-900">현재고 현황</h1>
-          <p className="mt-1 text-xs font-bold text-gray-500">전체창고 선택 시 창고별 재고를 합산해 표시합니다.</p>
-        </div>
-        <div className="flex gap-2">
-          <Link href="/inbound/new" className="px-3 py-1.5 border border-blue-200 text-blue-700 bg-blue-50 rounded-lg text-xs font-black hover:bg-blue-100 transition-colors shadow-sm">
-            + 입고 등록
-          </Link>
-          <button
-            type="button"
-            onClick={openOutboundRequestDraftPopup}
-            className="px-3 py-1.5 border border-red-200 text-red-700 bg-red-50 rounded-lg text-xs font-black hover:bg-red-100 transition-colors shadow-sm"
-          >
-            - 수동 출고
-          </button>
-        </div>
-      </div>
+    <div className="mx-auto flex min-h-screen max-w-[1800px] flex-col gap-4 bg-background p-4 font-sans md:p-6">
+      <PageHeader
+        title="현재고 현황"
+        description="전체창고 선택 시 창고별 재고를 합산해 표시합니다."
+        actions={
+          <Button type="button" variant="outline" size="sm" onClick={() => void fetchInventory()}>
+            새로고침
+          </Button>
+        }
+      />
 
-      {/* 🌟 검색 바 추가 */}
-      <div className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm">
-        <div className="flex flex-wrap gap-2">
-          <SearchableCombobox
-            className="w-full sm:w-56"
-            value={itemCodeFilter}
-            onChange={setItemCodeFilter}
-            options={itemCodeOptions}
-            placeholder="품목코드"
-          />
-          <SearchableCombobox
-            className="w-full sm:w-52"
-            value={processNameFilter}
-            onChange={setProcessNameFilter}
-            options={processNameOptions}
-            placeholder="공정명"
-          />
-          <SearchableCombobox
-            className="w-full sm:w-56"
-            value={itemNameFilter}
-            onChange={setItemNameFilter}
-            options={itemNameOptions}
-            placeholder="품목명"
-          />
-          <SearchableCombobox
-            className="w-full sm:w-44"
-            value={warehouseFilter}
-            onChange={setWarehouseFilter}
-            options={[
-              { value: 'all', label: '전체 창고' },
-              ...warehouses.map((wh) => ({ value: String(wh.id), label: wh.name, keywords: [wh.name] })),
-            ]}
-            placeholder="창고 선택"
-            showClearOption={false}
-          />
-        </div>
-      </div>
+      <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-border shadow-sm">
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-6">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-medium text-muted-foreground">품목코드</span>
+              <InventoryTransferCommandCombobox
+                value={itemCodeFilter}
+                onChange={setItemCodeFilter}
+                options={itemCodeOptions}
+                placeholder="전체 품목코드"
+                emptyText="품목코드가 없습니다."
+                triggerClassName={comboTrigger}
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-medium text-muted-foreground">품목명</span>
+              <InventoryTransferCommandCombobox
+                value={itemNameFilter}
+                onChange={setItemNameFilter}
+                options={itemNameOptions}
+                placeholder="전체 품목명"
+                emptyText="품목명이 없습니다."
+                triggerClassName={comboTrigger}
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <span className="text-xs font-medium text-muted-foreground">창고</span>
+              <InventoryTransferCommandCombobox
+                value={warehouseFilter}
+                onChange={setWarehouseFilter}
+                options={warehouseFilterOptions}
+                placeholder="전체 창고"
+                showClearOption={false}
+                disabled={warehouses.length === 0}
+                triggerClassName={comboTrigger}
+              />
+            </div>
+          </div>
 
-      {/* 🌟 모바일 가로 스크롤(overflow-x-auto) 및 whitespace-nowrap 적용 */}
-      <div className="overflow-x-auto rounded-2xl bg-white shadow-sm border border-gray-200">
-        <table className="min-w-[980px] w-full text-xs whitespace-nowrap text-left">
-          <thead className="bg-gray-50 border-b border-gray-200 text-[11px]">
-            <tr>
-              <th className="w-10 px-3 py-2.5"></th>
-              <th className="px-3 py-2.5 font-black text-gray-500 uppercase tracking-wider">품목코드</th>
-              <th className="px-3 py-2.5 font-black text-gray-500 uppercase tracking-wider">창고</th>
-              <th className="px-3 py-2.5 font-black text-gray-500 uppercase tracking-wider">공정명</th>
-              <th className="px-3 py-2.5 font-black text-gray-500 uppercase tracking-wider">품목명 / 관리옵션</th>
-              <th className="px-3 py-2.5 font-black text-gray-500 uppercase tracking-wider">규격</th>
-              <th className="px-3 py-2.5 text-right font-black text-gray-800 uppercase tracking-wider">총 재고수량</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-100">
-            {isLoading ? (
-              <tr>
-                <td colSpan={7} className="px-6 py-16 text-center text-gray-400 font-bold">
-                  재고 데이터를 불러오는 중입니다...
-                </td>
-              </tr>
-            ) : filteredGroups.length === 0 ? (
-              <tr>
-                <td colSpan={7} className="px-6 py-16 text-center text-gray-400 font-bold">
-                  {emptyStateMessage}
-                </td>
-              </tr>
-            ) : (
-              filteredGroups.map((group) => {
-                const isTrackable = group.is_lot || group.is_exp || group.is_sn;
-
-                return (
-                  <React.Fragment key={group.group_key}>
-                    <tr 
-                      onClick={() => toggleRow(group.group_key, isTrackable)} 
-                      className={`transition-colors ${
-                        isTrackable ? 'cursor-pointer hover:bg-gray-50' : 'bg-white'
-                      } ${expandedRows[group.group_key] ? 'bg-blue-50/30' : ''}`}
-                    >
-                      <td className="px-3 py-2.5 text-center text-gray-400 font-black text-xs transition-transform duration-200">
-                        {isTrackable ? (expandedRows[group.group_key] ? '▼' : '▶') : '-'}
-                      </td>
-                      <td className="px-3 py-2.5 font-bold text-gray-600">
-                        {group.item_code}
-                      </td>
-                      <td className="px-3 py-2.5 font-bold text-gray-700">
-                        {group.warehouse_name}
-                      </td>
-                      <td className="px-3 py-2.5 text-[11px] font-bold text-gray-600">
-                        {group.process_name.trim() ? group.process_name : '—'}
-                      </td>
-                      <td className="px-3 py-2.5 font-black text-gray-900 text-sm">
-                        <div className="flex items-center gap-2">
-                          <div className="flex gap-1">
-                            {group.is_lot && <span className="px-1.5 py-0.5 text-[10px] font-black bg-blue-100 text-blue-700 rounded uppercase tracking-wider">LOT</span>}
-                            {group.is_exp && <span className="px-1.5 py-0.5 text-[10px] font-black bg-green-100 text-green-700 rounded uppercase tracking-wider">EXP</span>}
-                            {group.is_sn && <span className="px-1.5 py-0.5 text-[10px] font-black bg-purple-100 text-purple-700 rounded uppercase tracking-wider">S/N</span>}
-                          </div>
-                          <span>{group.item_name}</span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2.5 font-medium text-gray-500">
-                        {group.item_spec || '-'}
-                      </td>
-                      <td className="px-3 py-2.5 font-black text-blue-600 text-right text-base">
-                        {group.total_qty.toLocaleString()} <span className="text-xs text-gray-400 font-bold ml-1">{group.unit}</span>
+          <div className="flex min-h-[min(60vh,32rem)] min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-full min-w-[56rem] table-fixed border-collapse text-left text-sm text-card-foreground">
+                <thead className="sticky top-0 z-[1] border-b border-border bg-muted/50 backdrop-blur-sm">
+                  <tr>
+                    <th className="w-[11rem] px-3 py-3 text-xs font-medium text-muted-foreground">품목코드</th>
+                    <th className="w-[10rem] px-3 py-3 text-xs font-medium text-muted-foreground">창고</th>
+                    <th className="min-w-[16rem] px-3 py-3 text-xs font-medium text-muted-foreground">품목명 / 관리옵션</th>
+                    <th className="w-[12rem] px-3 py-3 text-xs font-medium text-muted-foreground">규격</th>
+                    <th className="w-[8rem] px-3 py-3 text-right text-xs font-medium text-muted-foreground">수량</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {isLoading ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-12 text-center text-sm font-medium text-muted-foreground">
+                        재고 데이터를 불러오는 중입니다...
                       </td>
                     </tr>
-
-                    {isTrackable && expandedRows[group.group_key] && (
-                      <tr className="bg-gray-50/50">
-                        <td colSpan={7} className="p-0 border-b border-gray-200">
-                          <div className="px-8 py-3 animate-in fade-in slide-in-from-top-2 duration-200 overflow-x-auto">
-                            <table className="min-w-full text-xs bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden whitespace-nowrap">
-                              <thead className="bg-gray-100/80 text-gray-500 font-bold">
-                                <tr>
-                                  {warehouseFilter === 'all' ? <th className="px-4 py-3 text-left">창고</th> : null}
-                                  <th className="px-4 py-3 text-left">LOT 번호</th>
-                                  <th className="px-4 py-3 text-left">유효기간 (EXP)</th>
-                                  <th className="px-4 py-3 text-left">시리얼 번호 (S/N)</th>
-                                  <th className="px-4 py-3 text-right">보유 수량</th>
-                                </tr>
-                              </thead>
-                              <tbody className="divide-y divide-gray-100">
-                                {group.details.map((detail: InventoryDetailRow, idx: number) => (
-                                  <tr key={detail.id || idx} className="hover:bg-gray-50">
-                                    {warehouseFilter === 'all' ? (
-                                      <td className="px-4 py-3 font-bold text-gray-700">
-                                        {warehouseNameMap.get(detail.warehouse_id) ?? `창고#${detail.warehouse_id}`}
-                                      </td>
-                                    ) : null}
-                                    <td className="px-4 py-3 font-bold text-gray-700">
-                                      {detail.lot_no ? (
-                                        <span className="bg-gray-100 text-gray-700 px-2.5 py-1 rounded-md font-bold text-xs border border-gray-200">{detail.lot_no}</span>
-                                      ) : (
-                                        <span className="text-gray-300">-</span>
-                                      )}
-                                    </td>
-                                    <td className="px-4 py-3 font-bold text-green-700">
-                                      {detail.exp_date ? (
-                                        <span className={`px-2.5 py-1 rounded-md font-bold text-xs border ${
-                                          new Date(detail.exp_date) < new Date() 
-                                            ? 'bg-red-50 text-red-600 border-red-200' 
-                                            : 'bg-green-50 text-green-700 border-green-200'
-                                        }`}>
-                                          {detail.exp_date}
-                                        </span>
-                                      ) : (
-                                        <span className="text-gray-300">-</span>
-                                      )}
-                                    </td>
-                                    <td className="px-4 py-3 font-bold text-purple-700">
-                                      {detail.serial_no || <span className="text-gray-300">-</span>}
-                                    </td>
-                                    <td className="px-4 py-3 font-black text-right text-base text-gray-800">
-                                      {detail.current_qty}
-                                    </td>
-                                  </tr>
-                                ))}
-                              </tbody>
-                            </table>
+                  ) : filteredGroups.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="px-4 py-12 text-center text-sm font-medium text-muted-foreground">
+                        {emptyStateMessage}
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredGroups.map((group) => (
+                      <tr key={group.group_key} className="transition-colors hover:bg-muted/40">
+                        <td className="px-3 py-3 font-medium text-foreground">{group.item_code}</td>
+                        <td className="px-3 py-3 font-medium text-foreground">{group.warehouse_name}</td>
+                        <td className="px-3 py-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <div className="flex gap-1">
+                              {group.is_lot ? <span className="rounded border border-blue-200 bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-800">LOT</span> : null}
+                              {group.is_exp ? <span className="rounded border border-emerald-200 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">EXP</span> : null}
+                              {group.is_sn ? <span className="rounded border border-purple-200 bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold text-purple-800">SN</span> : null}
+                            </div>
+                            <span className="truncate font-medium text-foreground">{group.item_name}</span>
                           </div>
                         </td>
+                        <td className="px-3 py-3 font-medium text-muted-foreground">{group.item_spec || '-'}</td>
+                        <td className="px-3 py-3 text-right text-base font-semibold text-primary">
+                          {group.total_qty.toLocaleString()}
+                          <span className="ml-1 text-xs font-medium text-muted-foreground">{group.unit}</span>
+                        </td>
                       </tr>
-                    )}
-                  </React.Fragment>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

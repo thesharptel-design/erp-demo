@@ -1,308 +1,600 @@
-'use client';
+'use client'
 
-import React, { useCallback, useMemo, useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
-import { getProcessNameFromMetadata } from '@/lib/item-config';
-import SearchableCombobox from '@/components/SearchableCombobox';
-import { getAllowedWarehouseIds, getCurrentUserPermissions } from '@/lib/permissions';
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { supabase } from '@/lib/supabase'
+import {
+  InventoryTransferCommandCombobox,
+  type TransferComboboxOption,
+} from '@/app/inventory-transfers/new/InventoryTransferCommandCombobox'
+import { FilterX } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import PageHeader from '@/components/PageHeader'
+import { formatTransactionRemarksForDisplay } from '@/lib/inventory-transaction-remarks'
+import { cn } from '@/lib/utils'
 
 type Warehouse = {
-  id: number;
-  name: string;
-};
+  id: number
+  name: string
+}
 
 type TxRow = {
-  id: number;
-  trans_date: string;
-  trans_type: string;
-  qty: number;
-  remarks: string | null;
-  created_by: string | null;
-  lot_no: string | null;
-  serial_no: string | null;
-  exp_date: string | null;
-  warehouse_id: number | null;
-  inventory_id: number | null;
-  items?: { item_code: string; item_name: string; unit: string | null; process_metadata?: unknown } | null;
-  warehouses?: { name: string | null } | null;
-  processor_name?: string;
-};
+  id: number
+  trans_date: string
+  trans_type: string
+  qty: number
+  remarks: string | null
+  created_by: string | null
+  lot_no: string | null
+  serial_no: string | null
+  exp_date: string | null
+  warehouse_id: number | null
+  inventory_id: number | null
+  items?: { item_code: string; item_name: string; unit: string | null; process_metadata?: unknown } | null
+  warehouses?: { name: string | null } | null
+  processor_name?: string
+}
 
-type TxFilter = 'ALL' | 'IN' | 'OUT';
+type TxFilter = 'ALL' | 'IN' | 'OUT'
 
-const IN_TYPES = new Set(['IN', 'PROD_IN', 'QC_RELEASE', 'CANCEL_IN']);
-const OUT_TYPES = new Set(['OUT', 'MATL_OUT']);
+const IN_TYPES = new Set(['IN', 'PROD_IN', 'QC_RELEASE', 'CANCEL_IN'])
+const OUT_TYPES = new Set(['OUT', 'MATL_OUT'])
+const PAGE_SIZE_OPTIONS = [20, 25, 30, 50] as const
+/** Empty-looking trigger; popover uses `commandInputPlaceholder`. */
+const FILTER_TRIGGER_PLACEHOLDER = '\u00A0'
+
+function transDateDayKey(iso: string): string {
+  const s = String(iso ?? '').trim()
+  if (s.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10)
+  try {
+    return new Date(s).toISOString().slice(0, 10)
+  } catch {
+    return ''
+  }
+}
 
 export default function InventoryTransactionsPage() {
-  const [transactions, setTransactions] = useState<TxRow[]>([]);
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<TxFilter>('ALL');
-  const [warehouseFilter, setWarehouseFilter] = useState<string>('all');
-  const [searchTerm, setSearchTerm] = useState('');
+  const [transactions, setTransactions] = useState<TxRow[]>([])
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([])
+  const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
+  const [filter, setFilter] = useState<TxFilter>('ALL')
+  const [warehouseFilter, setWarehouseFilter] = useState<string>('all')
+  const [dateFilter, setDateFilter] = useState('')
+  const [itemFilter, setItemFilter] = useState('')
+  const [remarksFilter, setRemarksFilter] = useState('')
+  const [processorFilter, setProcessorFilter] = useState('')
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(25)
 
   const fetchTransactions = useCallback(async () => {
     try {
-      setLoading(true);
-      const currentUser = await getCurrentUserPermissions();
-      const allowedWarehouseIds = await getAllowedWarehouseIds(currentUser);
+      setLoading(true)
+      setFetchError(null)
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      const accessToken = session?.access_token ?? ''
 
-      if (allowedWarehouseIds !== null && allowedWarehouseIds.length === 0) {
-        setWarehouses([]);
-        setTransactions([]);
-        setWarehouseFilter('all');
-        setLoading(false);
-        return;
+      if (!accessToken) {
+        setWarehouses([])
+        setTransactions([])
+        setWarehouseFilter('all')
+        setLoading(false)
+        return
       }
 
-      let warehouseQuery = supabase
-        .from('warehouses')
-        .select('id, name')
-        .eq('is_active', true)
-        .order('sort_order', { ascending: true });
-      if (allowedWarehouseIds !== null) {
-        warehouseQuery = warehouseQuery.in('id', allowedWarehouseIds);
+      const res = await fetch('/api/inventory/transactions', {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+
+      const payload = (await res.json()) as {
+        error?: string
+        transactions?: TxRow[]
+        warehouses?: Warehouse[]
       }
 
-      const nextWarehouseFilter =
-        allowedWarehouseIds === null
-          ? warehouseFilter
-          : allowedWarehouseIds.includes(Number(warehouseFilter))
-            ? warehouseFilter
-            : String(allowedWarehouseIds[0]);
-      if (nextWarehouseFilter !== warehouseFilter) {
-        setWarehouseFilter(nextWarehouseFilter);
+      if (!res.ok) {
+        setFetchError(payload.error ?? `조회 실패 (${res.status})`)
+        setWarehouses([])
+        setTransactions([])
+        setLoading(false)
+        return
       }
 
-      const [warehouseRes, usersRes, txRes] = await Promise.all([
-        warehouseQuery,
-        supabase.from('app_users').select('id, user_name'),
-        supabase
-          .from('inventory_transactions')
-          .select(`
-            id,
-            trans_date,
-            trans_type,
-            qty,
-            remarks,
-            created_by,
-            lot_no,
-            serial_no,
-            exp_date,
-            warehouse_id,
-            inventory_id,
-            items (item_code, item_name, unit, process_metadata),
-            warehouses (name)
-          `)
-          .order('trans_date', { ascending: false })
-          .order('id', { ascending: false })
-          .limit(1000),
-      ]);
-
-      if (warehouseRes.error) throw warehouseRes.error;
-      if (usersRes.error) throw usersRes.error;
-      if (txRes.error) throw txRes.error;
-
-      setWarehouses((warehouseRes.data as Warehouse[]) || []);
-      const userMap = new Map((usersRes.data || []).map((u) => [u.id, u.user_name]));
-
-      const mapped = ((txRes.data as any[]) || [])
-        .filter((tx) => {
-          if (allowedWarehouseIds !== null && !allowedWarehouseIds.includes(Number(tx.warehouse_id))) return false;
-          return nextWarehouseFilter === 'all'
-            ? true
-            : String(tx.warehouse_id ?? '') === nextWarehouseFilter;
-        })
-        .map((tx) => ({
-          ...tx,
-          items: Array.isArray(tx.items) ? tx.items[0] ?? null : tx.items ?? null,
-          warehouses: Array.isArray(tx.warehouses) ? tx.warehouses[0] ?? null : tx.warehouses ?? null,
-          processor_name: userMap.get(tx.created_by ?? '') || '시스템',
-        })) as TxRow[];
-
-      setTransactions(mapped);
-    } catch (err: any) {
-      console.error('데이터 로드 실패:', err.message);
+      setWarehouses(payload.warehouses ?? [])
+      setTransactions(payload.transactions ?? [])
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : '데이터 로드 실패'
+      setFetchError(message)
+      console.error(message)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  }, [warehouseFilter]);
+  }, [])
 
   useEffect(() => {
-    fetchTransactions();
-  }, [fetchTransactions]);
+    void fetchTransactions()
+  }, [fetchTransactions])
+
+  useEffect(() => {
+    const validIds = new Set(warehouses.map((w) => String(w.id)))
+    if (warehouseFilter !== 'all' && !validIds.has(warehouseFilter)) {
+      setWarehouseFilter('all')
+    }
+  }, [warehouses, warehouseFilter])
+
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [filter, warehouseFilter, dateFilter, itemFilter, remarksFilter, processorFilter, pageSize])
+
+  const dateFilterOptions = useMemo<TransferComboboxOption[]>(() => {
+    const set = new Set<string>()
+    for (const tx of transactions) {
+      const k = transDateDayKey(tx.trans_date)
+      if (k) set.add(k)
+    }
+    return Array.from(set)
+      .sort((a, b) => b.localeCompare(a))
+      .map((d) => ({
+        value: d,
+        label: new Date(d + 'T12:00:00').toLocaleDateString('ko-KR', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          weekday: 'short',
+        }),
+        keywords: [d],
+      }))
+  }, [transactions])
+
+  const itemFilterOptions = useMemo<TransferComboboxOption[]>(() => {
+    const map = new Map<string, string>()
+    for (const tx of transactions) {
+      const code = (tx.items?.item_code ?? '').trim()
+      if (!code) continue
+      if (!map.has(code)) map.set(code, (tx.items?.item_name ?? '').trim())
+    }
+    return Array.from(map.entries())
+      .sort((a, b) => a[0].localeCompare(b[0], 'ko'))
+      .map(([code, name]) => ({
+        value: code,
+        label: name ? `[${code}] ${name}` : code,
+        keywords: [code, name],
+      }))
+  }, [transactions])
+
+  const warehouseFilterOptions = useMemo<TransferComboboxOption[]>(
+    () => [
+      { value: 'all', label: '전체 창고', keywords: ['전체'] },
+      ...warehouses.map((wh) => ({
+        value: String(wh.id),
+        label: wh.name,
+        keywords: [wh.name],
+      })),
+    ],
+    [warehouses]
+  )
+
+  const remarksFilterOptions = useMemo<TransferComboboxOption[]>(() => {
+    const set = new Set<string>()
+    for (const tx of transactions) {
+      const r = (tx.remarks ?? '').trim()
+      if (r) set.add(r)
+    }
+    const rows = Array.from(set).sort((a, b) => b.localeCompare(a))
+    const opts: TransferComboboxOption[] = []
+    if (transactions.some((tx) => !(tx.remarks ?? '').trim())) {
+      opts.push({ value: '__EMPTY__', label: '(비고 없음)', keywords: ['비고', '없음'] })
+    }
+    for (const r of rows.slice(0, 200)) {
+      opts.push({
+        value: r,
+        label: r.length > 72 ? `${r.slice(0, 72)}…` : r,
+        keywords: [r],
+      })
+    }
+    return opts
+  }, [transactions])
+
+  const processorFilterOptions = useMemo<TransferComboboxOption[]>(() => {
+    const set = new Set<string>()
+    for (const tx of transactions) {
+      const p = (tx.processor_name ?? '').trim()
+      if (p) set.add(p)
+    }
+    return Array.from(set)
+      .sort((a, b) => a.localeCompare(b, 'ko'))
+      .map((p) => ({ value: p, label: p, keywords: [p] }))
+  }, [transactions])
 
   const resolveDirection = (tx: TxRow): 'IN' | 'OUT' | 'NEUTRAL' => {
-    if (IN_TYPES.has(tx.trans_type)) return 'IN';
-    if (OUT_TYPES.has(tx.trans_type)) return 'OUT';
+    if (IN_TYPES.has(tx.trans_type)) return 'IN'
+    if (OUT_TYPES.has(tx.trans_type)) return 'OUT'
     if (tx.trans_type === 'ADJUST') {
-      if ((tx.remarks ?? '').includes('증가')) return 'IN';
-      if ((tx.remarks ?? '').includes('감소')) return 'OUT';
+      if ((tx.remarks ?? '').includes('증가')) return 'IN'
+      if ((tx.remarks ?? '').includes('감소')) return 'OUT'
     }
-    return 'NEUTRAL';
-  };
+    return 'NEUTRAL'
+  }
 
   const getTypeLabel = (tx: TxRow) => {
-    const direction = resolveDirection(tx);
-    if (direction === 'IN') return <span className="px-2.5 py-1 bg-blue-100 text-blue-700 font-bold rounded-md text-xs border border-blue-200 shadow-sm">입고</span>;
-    if (direction === 'OUT') return <span className="px-2.5 py-1 bg-red-100 text-red-700 font-bold rounded-md text-xs border border-red-200 shadow-sm">출고</span>;
-    return <span className="px-2.5 py-1 bg-yellow-100 text-yellow-800 font-bold rounded-md text-xs border border-yellow-200 shadow-sm">조정</span>;
-  };
+    const direction = resolveDirection(tx)
+    if (direction === 'IN')
+      return (
+        <Badge className="border-blue-200 bg-blue-100 font-semibold text-blue-800 hover:bg-blue-100">입고</Badge>
+      )
+    if (direction === 'OUT')
+      return (
+        <Badge className="border-red-200 bg-red-100 font-semibold text-red-800 hover:bg-red-100">출고</Badge>
+      )
+    return (
+      <Badge variant="secondary" className="font-semibold">
+        조정
+      </Badge>
+    )
+  }
 
   const getSignedQty = (tx: TxRow) => {
-    const direction = resolveDirection(tx);
-    if (direction === 'OUT') return `-${tx.qty}`;
-    return `+${tx.qty}`;
-  };
+    const direction = resolveDirection(tx)
+    if (direction === 'OUT') return `-${tx.qty}`
+    return `+${tx.qty}`
+  }
 
   const filteredData = useMemo(() => {
     return transactions.filter((tx) => {
-      const direction = resolveDirection(tx);
+      const direction = resolveDirection(tx)
       const matchType =
         filter === 'ALL' ||
         (filter === 'IN' && direction === 'IN') ||
-        (filter === 'OUT' && direction === 'OUT');
-      const term = searchTerm.toLowerCase();
-      const processName = getProcessNameFromMetadata(
-        (tx.items?.process_metadata ?? null) as Record<string, unknown> | null
-      );
-      const matchSearch =
-        (tx.items?.item_name || '').toLowerCase().includes(term) ||
-        (tx.items?.item_code || '').toLowerCase().includes(term) ||
-        processName.toLowerCase().includes(term) ||
-        (tx.warehouses?.name || '').toLowerCase().includes(term) ||
-        (tx.remarks || '').toLowerCase().includes(term);
-      return matchType && matchSearch;
-    });
-  }, [transactions, filter, searchTerm]);
+        (filter === 'OUT' && direction === 'OUT')
+
+      if (dateFilter) {
+        if (transDateDayKey(tx.trans_date) !== dateFilter) return false
+      }
+
+      if (itemFilter) {
+        if ((tx.items?.item_code ?? '').trim() !== itemFilter) return false
+      }
+
+      if (warehouseFilter !== 'all') {
+        if (String(tx.warehouse_id ?? '') !== warehouseFilter) return false
+      }
+
+      if (remarksFilter) {
+        if (remarksFilter === '__EMPTY__') {
+          if ((tx.remarks ?? '').trim()) return false
+        } else if ((tx.remarks ?? '').trim() !== remarksFilter) {
+          return false
+        }
+      }
+
+      if (processorFilter) {
+        if ((tx.processor_name ?? '').trim() !== processorFilter) return false
+      }
+
+      return matchType
+    })
+  }, [
+    transactions,
+    filter,
+    warehouseFilter,
+    dateFilter,
+    itemFilter,
+    remarksFilter,
+    processorFilter,
+  ])
+
+  const totalPages = Math.max(1, Math.ceil(filteredData.length / pageSize))
+
+  useEffect(() => {
+    setCurrentPage((p) => Math.min(Math.max(1, p), totalPages))
+  }, [totalPages])
+
+  const pageRows = useMemo(() => {
+    const start = (currentPage - 1) * pageSize
+    return filteredData.slice(start, start + pageSize)
+  }, [filteredData, currentPage, pageSize])
+
+  const comboTrigger = 'h-9 min-h-9 w-full shrink-0 px-2 text-xs font-medium'
+
+  const resetColumnFilters = useCallback(() => {
+    setFilter('ALL')
+    setWarehouseFilter('all')
+    setDateFilter('')
+    setItemFilter('')
+    setRemarksFilter('')
+    setProcessorFilter('')
+  }, [])
 
   return (
-    <div className="p-8 max-w-7xl mx-auto font-sans bg-gray-50 min-h-screen space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-black tracking-tight text-gray-900">입출고 현황 (수불부)</h1>
-          <p className="mt-2 text-sm font-bold text-gray-500">`inventory_transactions` 기준 입출고 이력을 조회합니다.</p>
-        </div>
-      </div>
+    <div className="mx-auto flex min-h-screen max-w-[1800px] flex-col gap-4 bg-background p-4 font-sans md:p-6">
+      <PageHeader
+        title="입출고 현황 (수불부)"
+        actions={
+          <Button type="button" variant="outline" size="sm" onClick={() => void fetchTransactions()}>
+            새로고침
+          </Button>
+        }
+      />
 
-      <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex flex-col md:flex-row justify-between gap-4 items-center">
-        <div className="flex gap-2 w-full md:w-auto flex-wrap">
-          <button
-            onClick={() => setFilter('ALL')}
-            className={`flex-1 md:flex-none px-5 py-2.5 rounded-xl font-bold text-sm transition-all shadow-sm ${filter === 'ALL' ? 'bg-gray-900 text-white' : 'bg-white border border-gray-200 text-gray-500 hover:bg-gray-50'}`}
-          >
-            전체 보기
-          </button>
-          <button
-            onClick={() => setFilter('IN')}
-            className={`flex-1 md:flex-none px-5 py-2.5 rounded-xl font-bold text-sm transition-all shadow-sm ${filter === 'IN' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white border border-gray-200 text-gray-500 hover:text-blue-600 hover:border-blue-200'}`}
-          >
-            입고 내역
-          </button>
-          <button
-            onClick={() => setFilter('OUT')}
-            className={`flex-1 md:flex-none px-5 py-2.5 rounded-xl font-bold text-sm transition-all shadow-sm ${filter === 'OUT' ? 'bg-red-600 text-white border-red-600' : 'bg-white border border-gray-200 text-gray-500 hover:text-red-600 hover:border-red-200'}`}
-          >
-            출고 내역
-          </button>
+      {fetchError ? (
+        <div className="erp-alert-error shrink-0" role="alert">
+          {fetchError}
         </div>
+      ) : null}
 
-        <div className="w-full md:w-48">
-          <SearchableCombobox
-            value={warehouseFilter}
-            onChange={setWarehouseFilter}
-            options={[
-              { value: 'all', label: '전체 창고' },
-              ...warehouses.map((wh) => ({ value: String(wh.id), label: wh.name, keywords: [wh.name] })),
-            ]}
-            placeholder="창고 선택"
-          />
-        </div>
+      <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-border shadow-sm">
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-6">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant={filter === 'ALL' ? 'default' : 'outline'}
+                size="sm"
+                className="min-h-9 flex-1 sm:flex-none"
+                onClick={() => setFilter('ALL')}
+              >
+                전체
+              </Button>
+              <Button
+                type="button"
+                variant={filter === 'IN' ? 'default' : 'outline'}
+                size="sm"
+                className="min-h-9 flex-1 sm:flex-none"
+                onClick={() => setFilter('IN')}
+              >
+                입고
+              </Button>
+              <Button
+                type="button"
+                variant={filter === 'OUT' ? 'default' : 'outline'}
+                size="sm"
+                className="min-h-9 flex-1 sm:flex-none"
+                onClick={() => setFilter('OUT')}
+              >
+                출고
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+                title="열 필터 초기화"
+                aria-label="열 필터 초기화"
+                onClick={resetColumnFilters}
+              >
+                <FilterX className="size-3.5" aria-hidden />
+              </Button>
+            </div>
+          </div>
 
-        <div className="w-full md:w-80">
-          <input
-            type="text"
-            placeholder="품목·공정명·창고·비고 검색..."
-            className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:border-blue-500 font-bold text-sm transition-colors"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-      </div>
-
-      <section className="bg-white border border-gray-200 rounded-3xl shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-sm whitespace-nowrap">
-            <thead className="bg-gray-50 border-b border-gray-100 text-gray-500">
-              <tr>
-                <th className="px-5 py-4 font-bold">일시</th>
-                <th className="px-5 py-4 font-bold text-center w-24">구분</th>
-                <th className="px-5 py-4 font-bold">품목정보</th>
-                <th className="px-5 py-4 font-bold">공정명</th>
-                <th className="px-5 py-4 font-bold text-blue-700">창고</th>
-                <th className="px-5 py-4 font-bold text-right w-32">수량</th>
-                <th className="px-5 py-4 font-bold text-gray-500">비고 (사유)</th>
-                <th className="px-5 py-4 font-bold text-center">처리자</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100">
-              {loading ? (
-                <tr>
-                  <td colSpan={8} className="px-5 py-16 text-center font-bold text-gray-400">데이터를 불러오는 중입니다...</td>
-                </tr>
-              ) : filteredData.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="px-5 py-16 text-center font-bold text-gray-400">조회된 입출고 내역이 없습니다.</td>
-                </tr>
-              ) : (
-                filteredData.map((tx) => {
-                  const rowProcessName = getProcessNameFromMetadata(
-                    (tx.items?.process_metadata ?? null) as Record<string, unknown> | null
-                  )
-                  return (
-                  <tr key={tx.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-5 py-4 font-bold text-gray-400 text-xs tracking-tight">
-                      {new Date(tx.trans_date).toLocaleString('ko-KR', {
-                        year: 'numeric', month: '2-digit', day: '2-digit',
-                        hour: '2-digit', minute: '2-digit'
-                      })}
-                    </td>
-                    <td className="px-5 py-4 text-center">{getTypeLabel(tx)}</td>
-                    <td className="px-5 py-4">
-                      <div className="font-black text-gray-800">{tx.items?.item_name || '-'}</div>
-                      <div className="text-xs font-bold text-blue-600 mt-0.5">{tx.items?.item_code || '정보없음'}</div>
-                    </td>
-                    <td className="px-5 py-4 text-sm font-bold text-gray-600">
-                      {rowProcessName.trim() ? rowProcessName : '—'}
-                    </td>
-                    <td className="px-5 py-4 font-bold text-gray-700">
-                      {tx.warehouses?.name || <span className="text-gray-300 italic">-</span>}
-                    </td>
-                    <td className={`px-5 py-4 font-black text-right text-lg ${resolveDirection(tx) === 'OUT' ? 'text-red-500' : 'text-blue-600'}`}>
-                      {getSignedQty(tx)}
-                      <span className="text-xs text-gray-400 font-bold ml-1">{tx.items?.unit}</span>
-                    </td>
-                    <td className="px-5 py-4">
-                      <div className="font-medium text-gray-500 max-w-[250px] truncate" title={tx.remarks ?? ''}>
-                        {tx.remarks || <span className="text-gray-300 italic">-</span>}
-                      </div>
-                      {(tx.lot_no || tx.serial_no) && (
-                        <div className="text-[10px] text-gray-400 font-bold mt-1 tracking-wider">
-                          {tx.lot_no && `[LOT: ${tx.lot_no}]`} {tx.serial_no && `[SN: ${tx.serial_no}]`}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-4 font-bold text-gray-600 text-center">
-                      {tx.processor_name}
-                    </td>
+          <div className="flex min-h-[min(60vh,32rem)] min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-full min-w-[56rem] table-fixed border-collapse text-left text-sm text-card-foreground">
+                <thead className="sticky top-0 z-[1] border-b border-border bg-muted/50 backdrop-blur-sm">
+                  <tr>
+                    <th className="w-[9.5rem] min-w-[8.5rem] align-top px-2 py-2 md:w-[10.5rem] md:px-3">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">일시</span>
+                      <InventoryTransferCommandCombobox
+                        value={dateFilter}
+                        onChange={setDateFilter}
+                        options={dateFilterOptions}
+                        placeholder={FILTER_TRIGGER_PLACEHOLDER}
+                        commandInputPlaceholder="검색…"
+                        emptyText="일자 목록이 없습니다."
+                        disabled={transactions.length === 0}
+                        triggerClassName={comboTrigger}
+                      />
+                    </th>
+                    <th className="w-[4.5rem] min-w-[4rem] align-top px-2 py-2 text-center md:px-3">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">구분</span>
+                      <div className="h-9 shrink-0" aria-hidden />
+                    </th>
+                    <th className="min-w-[12rem] align-top px-2 py-2 md:min-w-[14rem] md:px-3">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">품목</span>
+                      <InventoryTransferCommandCombobox
+                        value={itemFilter}
+                        onChange={setItemFilter}
+                        options={itemFilterOptions}
+                        placeholder={FILTER_TRIGGER_PLACEHOLDER}
+                        commandInputPlaceholder="검색…"
+                        emptyText="품목이 없습니다."
+                        disabled={transactions.length === 0}
+                        triggerClassName={comboTrigger}
+                      />
+                    </th>
+                    <th className="min-w-[8.5rem] align-top px-2 py-2 md:min-w-[10rem] md:px-3">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">창고</span>
+                      <InventoryTransferCommandCombobox
+                        value={warehouseFilter}
+                        onChange={setWarehouseFilter}
+                        options={warehouseFilterOptions}
+                        placeholder={FILTER_TRIGGER_PLACEHOLDER}
+                        commandInputPlaceholder="검색…"
+                        showClearOption={false}
+                        triggerPlaceholderValues={['all']}
+                        disabled={transactions.length === 0}
+                        triggerClassName={comboTrigger}
+                      />
+                    </th>
+                    <th className="w-[5.5rem] min-w-[4.5rem] align-top px-2 py-2 text-right md:px-3">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">수량</span>
+                      <div className="h-9 shrink-0" aria-hidden />
+                    </th>
+                    <th className="hidden min-w-[8rem] max-w-[18rem] align-top px-2 py-2 lg:table-cell md:px-3">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">비고</span>
+                      <InventoryTransferCommandCombobox
+                        value={remarksFilter}
+                        onChange={setRemarksFilter}
+                        options={remarksFilterOptions}
+                        placeholder={FILTER_TRIGGER_PLACEHOLDER}
+                        commandInputPlaceholder="검색…"
+                        emptyText="비고 목록이 없습니다."
+                        disabled={transactions.length === 0}
+                        triggerClassName={comboTrigger}
+                      />
+                    </th>
+                    <th className="hidden min-w-[6rem] align-top px-2 py-2 text-center xl:table-cell md:px-3">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">처리자</span>
+                      <InventoryTransferCommandCombobox
+                        value={processorFilter}
+                        onChange={setProcessorFilter}
+                        options={processorFilterOptions}
+                        placeholder={FILTER_TRIGGER_PLACEHOLDER}
+                        commandInputPlaceholder="검색…"
+                        emptyText="처리자 없음"
+                        disabled={transactions.length === 0}
+                        triggerClassName={comboTrigger}
+                      />
+                    </th>
                   </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  {loading ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-12 text-center text-sm font-medium text-muted-foreground">
+                        불러오는 중…
+                      </td>
+                    </tr>
+                  ) : pageRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="px-4 py-12 text-center text-sm font-medium text-muted-foreground">
+                        조건에 맞는 입출고 내역이 없습니다.
+                      </td>
+                    </tr>
+                  ) : (
+                    pageRows.map((tx) => {
+                      const dir = resolveDirection(tx)
+                      return (
+                        <tr key={tx.id} className="transition-colors hover:bg-muted/40">
+                          <td className="whitespace-nowrap px-2 py-3 text-xs font-medium text-muted-foreground md:px-3">
+                            {new Date(tx.trans_date).toLocaleString('ko-KR', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit',
+                            })}
+                          </td>
+                          <td className="px-2 py-3 text-center md:px-3">{getTypeLabel(tx)}</td>
+                          <td className="min-w-0 px-2 py-3 md:px-3">
+                            <div className="truncate font-semibold text-foreground" title={tx.items?.item_name ?? ''}>
+                              {tx.items?.item_name || '—'}
+                            </div>
+                            <div className="mt-0.5 truncate text-xs font-medium text-primary" title={tx.items?.item_code ?? ''}>
+                              {tx.items?.item_code ?? '—'}
+                            </div>
+                          </td>
+                          <td className="min-w-0 whitespace-normal break-words px-2 py-3 text-sm font-medium text-foreground md:px-3">
+                            {tx.warehouses?.name ?? <span className="text-muted-foreground">—</span>}
+                          </td>
+                          <td
+                            className={cn(
+                              'whitespace-nowrap px-2 py-3 text-right text-base font-semibold tabular-nums md:px-3 md:text-lg',
+                              dir === 'OUT' ? 'text-destructive' : 'text-primary'
+                            )}
+                          >
+                            {getSignedQty(tx)}
+                            <span className="ml-1 text-xs font-medium text-muted-foreground">{tx.items?.unit}</span>
+                          </td>
+                          <td className="hidden min-w-0 max-w-[18rem] px-2 py-3 lg:table-cell md:px-3">
+                            <div
+                              className="whitespace-normal break-words text-sm leading-snug text-muted-foreground"
+                              title={formatTransactionRemarksForDisplay(tx.remarks, tx.warehouses?.name)}
+                            >
+                              {formatTransactionRemarksForDisplay(tx.remarks, tx.warehouses?.name) || '—'}
+                            </div>
+                            {(tx.lot_no || tx.serial_no) && (
+                              <div className="mt-1 text-[10px] font-medium tracking-wide text-muted-foreground">
+                                {tx.lot_no ? `[LOT: ${tx.lot_no}]` : ''} {tx.serial_no ? `[SN: ${tx.serial_no}]` : ''}
+                              </div>
+                            )}
+                          </td>
+                          <td className="hidden whitespace-nowrap px-2 py-3 text-center text-sm font-medium text-foreground xl:table-cell md:px-3">
+                            {tx.processor_name ?? '—'}
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {!loading && filteredData.length > 0 ? (
+            <div className="flex shrink-0 flex-col gap-3 border-t border-border bg-muted/30 px-2 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground md:text-sm">
+                <span>페이지당</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value) as (typeof PAGE_SIZE_OPTIONS)[number])
+                    setCurrentPage(1)
+                  }}
+                  className="h-9 rounded-md border border-input bg-background px-2 py-1.5 text-sm font-medium text-foreground shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="페이지당 행 수"
+                >
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <option key={n} value={n}>
+                      {n}건
+                    </option>
+                  ))}
+                </select>
+                <span>
+                  · 총 <span className="font-semibold text-foreground">{filteredData.length}</span>건 ·{' '}
+                  <span className="font-semibold text-foreground">{currentPage}</span> / {totalPages} 페이지
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage(1)}
+                >
+                  처음
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={currentPage <= 1}
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                >
+                  이전
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  다음
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage(totalPages)}
+                >
+                  마지막
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
     </div>
-  );
+  )
 }
