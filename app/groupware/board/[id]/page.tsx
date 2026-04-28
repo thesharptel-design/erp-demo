@@ -1,6 +1,7 @@
 'use client'
 
 import BoardCommentsPanel from '@/components/groupware/BoardCommentsPanel'
+import BoardPostBodyWithLightbox from '@/components/groupware/BoardPostBodyWithLightbox'
 import {
   boardAnonymousDisplayName,
   getBoardCategoryLabel,
@@ -366,9 +367,9 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
           </div>
         </div>
 
-        <div
+        <BoardPostBodyWithLightbox
+          html={post.body_html || '<p class="text-gray-500">내용이 없습니다.</p>'}
           className="board-post-html mt-5 max-w-full min-h-[160px] overflow-x-auto text-sm leading-[1.6] text-gray-900 sm:text-base [&_p]:leading-[1.6] [&_li]:leading-[1.6] [&_h1]:leading-[1.6] [&_h2]:leading-[1.6] [&_a]:text-blue-600 [&_a]:underline [&_h1]:text-xl [&_h1]:font-bold [&_h2]:text-lg [&_h2]:font-bold [&_img]:max-h-96 [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded [&_img]:border [&_img]:border-gray-200 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:m-0 [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-gray-300 [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top [&_th]:border [&_th]:border-gray-300 [&_th]:bg-gray-100 [&_th]:px-2 [&_th]:py-1.5 [&_ul]:list-disc [&_ul]:pl-6"
-          dangerouslySetInnerHTML={{ __html: post.body_html || '<p class="text-gray-500">내용이 없습니다.</p>' }}
         />
 
         <div className="mt-8 flex flex-col items-center gap-2 border-y border-gray-100 py-6">

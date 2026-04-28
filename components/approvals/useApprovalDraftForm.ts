@@ -22,7 +22,12 @@ import {
   executionDateInputDisplay,
   isCompleteValidExecutionDate,
 } from '@/lib/execution-date-input'
-import { dismissDraftValidationToast, showDraftValidationError } from '@/lib/draft-form-feedback'
+import {
+  dismissDraftValidationToast,
+  showDraftServerSaveFailedWithLocalPersisted,
+  showDraftValidationError,
+} from '@/lib/draft-form-feedback'
+import { formatDraftServerSaveFailureReason } from '@/lib/draft-server-save-errors'
 import type { ApprovalProcessHistoryRow } from '@/components/approvals/ApprovalProcessHistoryPanel'
 
 type Department = {
@@ -441,8 +446,8 @@ export function useApprovalDraftForm({
       dismissDraftValidationToast()
       return { ok: true as const, localOnly: false as const }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '임시저장에 실패했습니다.'
-      showDraftValidationError(setErrorMessage, msg)
+      const detail = formatDraftServerSaveFailureReason(err)
+      showDraftServerSaveFailedWithLocalPersisted(setErrorMessage, detail)
       return { ok: false as const, localOnly: false as const }
     } finally {
       setIsDraftSaving(false)

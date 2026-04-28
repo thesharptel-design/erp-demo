@@ -18,7 +18,12 @@ import type { ApprovalRole } from '@/lib/approval-roles'
 import type { ApprovalDraftAppUser, ApprovalOrderItem } from '@/components/approvals/ApprovalDraftPaper'
 import { isHtmlContentEffectivelyEmpty } from '@/lib/html-content'
 import { executionDateForDb, isCompleteValidExecutionDate } from '@/lib/execution-date-input'
-import { dismissDraftValidationToast, showDraftValidationError } from '@/lib/draft-form-feedback'
+import {
+  dismissDraftValidationToast,
+  showDraftServerSaveFailedWithLocalPersisted,
+  showDraftValidationError,
+} from '@/lib/draft-form-feedback'
+import { formatDraftServerSaveFailureReason } from '@/lib/draft-server-save-errors'
 import { getAllowedWarehouseIds } from '@/lib/permissions'
 import type { ApprovalProcessHistoryRow } from '@/components/approvals/ApprovalProcessHistoryPanel'
 
@@ -616,8 +621,8 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       dismissDraftValidationToast()
       return { ok: true as const, localOnly: false as const }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '임시저장에 실패했습니다.'
-      showDraftValidationError(setErrorMessage, msg)
+      const detail = formatDraftServerSaveFailureReason(err)
+      showDraftServerSaveFailedWithLocalPersisted(setErrorMessage, detail)
       return { ok: false as const, localOnly: false as const }
     } finally {
       setIsDraftSaving(false)

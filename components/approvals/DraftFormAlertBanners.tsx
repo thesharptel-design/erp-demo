@@ -6,7 +6,7 @@ export function DraftFormErrorBanner({ message }: { message: string }) {
   return (
     <div
       role="alert"
-      className="rounded-xl border-2 border-red-400 bg-red-50 px-4 py-3 text-sm font-black text-red-800 shadow-[2px_2px_0_0_rgba(0,0,0,0.06)]"
+      className="whitespace-pre-line rounded-xl border-2 border-red-400 bg-red-50 px-4 py-3 text-sm font-black text-red-800 shadow-[2px_2px_0_0_rgba(0,0,0,0.06)]"
     >
       {message}
     </div>
