@@ -147,6 +147,17 @@ export default function InboundCompleteTrackingPage() {
     }
   }, [dateFrom, dateTo, itemKeyword, onlyMissing, selectedInventoryId, warehouseId])
 
+  const handleRefresh = useCallback(() => {
+    const today = todayText()
+    setDateFrom(today)
+    setDateTo(today)
+    setWarehouseId('all')
+    setItemKeyword('')
+    setOnlyMissing(true)
+    setSelectedInventoryId(null)
+    void loadRows()
+  }, [loadRows])
+
   useEffect(() => {
     void loadRows()
   }, [loadRows])
@@ -266,7 +277,7 @@ export default function InboundCompleteTrackingPage() {
             <input type="checkbox" checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} />
             미입력만
           </label>
-          <button type="button" onClick={() => void loadRows()} className="rounded bg-black px-3 py-2 text-sm font-black text-white">
+          <button type="button" onClick={handleRefresh} className="rounded bg-black px-3 py-2 text-sm font-black text-white">
             새로고침
           </button>
         </div>

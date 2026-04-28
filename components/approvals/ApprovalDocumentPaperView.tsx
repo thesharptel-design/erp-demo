@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import BoardPostBodyWithLightbox from '@/components/groupware/BoardPostBodyWithLightbox'
 
 export type ApprovalPaperApproverColumn = {
   id: string
@@ -95,6 +96,8 @@ export type ApprovalDocumentPaperViewProps = {
   afterBodySlot?: ReactNode
   /** 출고 등 본문·의견 아래 추가 블록 */
   postBodyGridSlot?: ReactNode
+  /** 본문 아래 첨부 문서/파일 */
+  attachmentsSlot?: ReactNode
 }
 
 export default function ApprovalDocumentPaperView({
@@ -123,6 +126,7 @@ export default function ApprovalDocumentPaperView({
   postApprovalCancelRow,
   afterBodySlot,
   postBodyGridSlot,
+  attachmentsSlot,
 }: ApprovalDocumentPaperViewProps) {
   const stampColCount = 1 + approverColumns.length
 
@@ -319,9 +323,9 @@ export default function ApprovalDocumentPaperView({
           <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">본문</div>
           <div className="border-b px-3 py-2">
             {contentHtml && contentIsHtml ? (
-              <div
+              <BoardPostBodyWithLightbox
+                html={contentHtml}
                 className="approval-doc-html min-h-[150px] text-sm leading-relaxed text-gray-800 [&_img]:max-h-96 [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded [&_img]:border [&_img]:border-gray-200 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:mb-2 [&_ul]:list-disc [&_ul]:pl-6"
-                dangerouslySetInnerHTML={{ __html: contentHtml }}
               />
             ) : (
               <p className="min-h-[150px] whitespace-pre-wrap text-sm font-medium leading-relaxed text-gray-700">
@@ -366,6 +370,12 @@ export default function ApprovalDocumentPaperView({
             <>
               <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">출고</div>
               <div className="border-b px-3 py-2">{postBodyGridSlot}</div>
+            </>
+          ) : null}
+          {attachmentsSlot ? (
+            <>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">첨부문서</div>
+              <div className="border-b px-3 py-2">{attachmentsSlot}</div>
             </>
           ) : null}
         </div>

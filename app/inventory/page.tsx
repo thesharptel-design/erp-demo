@@ -261,13 +261,21 @@ export default function InventoryPage() {
     return '조건에 맞는 재고 데이터가 없습니다.';
   }, [hasWarehouseAccess, warehouseFilter, selectedWarehouseLabel]);
 
+  const handleRefresh = useCallback(() => {
+    setItemCodeFilter('');
+    setItemNameFilter('');
+    setWarehouseFilter('all');
+    setCurrentPage(1);
+    void fetchInventory();
+  }, [fetchInventory]);
+
   return (
     <div className="mx-auto flex min-h-screen max-w-[1800px] flex-col gap-4 bg-background p-4 font-sans md:p-6">
       <PageHeader
         title="현재고 현황"
         description="전체창고 선택 시 창고별 재고를 합산해 표시합니다."
         actions={
-          <Button type="button" variant="outline" size="sm" onClick={() => void fetchInventory()}>
+          <Button type="button" variant="outline" size="sm" onClick={handleRefresh}>
             새로고침
           </Button>
         }

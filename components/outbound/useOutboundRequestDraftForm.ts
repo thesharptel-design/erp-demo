@@ -41,6 +41,8 @@ export type OutboundItemLine = { item_id: string; quantity: number }
 export type UseOutboundRequestDraftFormParams = {
   enabled?: boolean
   autosaveKey?: string
+  /** 임시저장 전 첨부를 묶는 세션 키 */
+  draftSessionKey?: string | null
   enableServerDraft?: boolean
   webDraftRemarksTag?: string
   /** `/outbound-requests/new?resubmit=` — 회수·반려 출고문서 재상신 */
@@ -81,6 +83,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
   const {
     enabled = true,
     autosaveKey,
+    draftSessionKey = null,
     enableServerDraft = false,
     webDraftRemarksTag = WEB_OUTBOUND_DRAFT_REMARKS,
     initialResubmitDocId = null,
@@ -542,15 +545,18 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       showDraftValidationError(setErrorMessage, '품목을 1개 이상, 수량 1 이상으로 지정하십시오.')
       return false
     }
-    if (!isCompleteValidExecutionDate(executionStartDate) || !isCompleteValidExecutionDate(executionEndDate)) {
-      showDraftValidationError(setErrorMessage, '시행 시작일·종료일을 모두 입력하십시오.')
-      return false
-    }
-    const startIso = executionDateForDb(executionStartDate)!
-    const endIso = executionDateForDb(executionEndDate)!
-    if (endIso < startIso) {
-      showDraftValidationError(setErrorMessage, '시행 종료일은 시작일 이후여야 합니다.')
-      return false
+    const hasAnyExecutionPeriodInput = Boolean(executionStartDate.trim() || executionEndDate.trim())
+    if (hasAnyExecutionPeriodInput) {
+      if (!isCompleteValidExecutionDate(executionStartDate) || !isCompleteValidExecutionDate(executionEndDate)) {
+        showDraftValidationError(setErrorMessage, '시행 시작일·종료일을 모두 입력하십시오.')
+        return false
+      }
+      const startIso = executionDateForDb(executionStartDate)!
+      const endIso = executionDateForDb(executionEndDate)!
+      if (endIso < startIso) {
+        showDraftValidationError(setErrorMessage, '시행 종료일은 시작일 이후여야 합니다.')
+        return false
+      }
     }
     return true
   }, [
@@ -600,6 +606,18 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         remarksTag: webDraftRemarksTag,
       })
       setServerDraftDocId(draftDocId)
+      if (draftSessionKey && writerId) {
+        await supabase.rpc('touch_temp_approval_attachments', {
+          p_draft_session_key: draftSessionKey,
+          p_actor_id: writerId,
+          p_ttl_hours: 72,
+        })
+        await supabase.rpc('link_temp_approval_attachments', {
+          p_draft_session_key: draftSessionKey,
+          p_approval_doc_id: draftDocId,
+          p_actor_id: writerId,
+        })
+      }
       setLastServerSaveAt(new Date().toISOString())
       if (autosaveKey && typeof window !== 'undefined') {
         const payload: OutboundDraftAutosavePayloadV3 = {
@@ -646,6 +664,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     warehouseId,
     webDraftRemarksTag,
     writerId,
+    draftSessionKey,
   ])
 
   const deleteDraftDocument = useCallback(async () => {
@@ -661,6 +680,14 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       if (resubmitDocId != null) {
         const { error } = await supabase.from('approval_docs').delete().eq('id', resubmitDocId).eq('writer_id', writerId)
         if (error) throw error
+        if (draftSessionKey) {
+          await supabase
+            .from('approval_doc_attachments')
+            .delete()
+            .eq('draft_session_key', draftSessionKey)
+            .eq('created_by', writerId)
+            .eq('status', 'temp')
+        }
         clearSavedDraft()
         resetForm({ clearAutosave: false })
         setResubmitDocId(null)
@@ -669,6 +696,14 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       }
       if (enableServerDraft && serverDraftDocId != null) {
         await deleteWebOutboundDraft(supabase as any, serverDraftDocId, writerId, webDraftRemarksTag)
+      }
+      if (draftSessionKey) {
+        await supabase
+          .from('approval_doc_attachments')
+          .delete()
+          .eq('draft_session_key', draftSessionKey)
+          .eq('created_by', writerId)
+          .eq('status', 'temp')
       }
       clearSavedDraft()
       resetForm({ clearAutosave: false })
@@ -680,7 +715,16 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     } finally {
       setIsDraftDeleting(false)
     }
-  }, [clearSavedDraft, enableServerDraft, resetForm, resubmitDocId, serverDraftDocId, webDraftRemarksTag, writerId])
+  }, [
+    clearSavedDraft,
+    draftSessionKey,
+    enableServerDraft,
+    resetForm,
+    resubmitDocId,
+    serverDraftDocId,
+    webDraftRemarksTag,
+    writerId,
+  ])
 
   const loadServerDraftById = useCallback(
     async (draftDocId: number) => {
@@ -758,7 +802,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         .map((r) => ({ item_id: Number(r.item_id), qty: Number(r.quantity) }))
         .filter((r) => Number.isFinite(r.item_id) && r.item_id > 0 && Number.isFinite(r.qty) && r.qty >= 1)
 
-      const { outboundRequestId, leftoverDraftIdToDelete } = await createOutboundRequestApproval({
+      const { docId, outboundRequestId, leftoverDraftIdToDelete } = await createOutboundRequestApproval({
         supabase,
         title,
         content,
@@ -776,6 +820,13 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         resubmitFromDocId: resubmitDocId ?? undefined,
         draftRemarksTag: webDraftRemarksTag,
       })
+      if (draftSessionKey && writerId) {
+        await supabase.rpc('link_temp_approval_attachments', {
+          p_draft_session_key: draftSessionKey,
+          p_approval_doc_id: docId,
+          p_actor_id: writerId,
+        })
+      }
       if (leftoverDraftIdToDelete != null && writerId) {
         const delResult = await deleteWebOutboundDraftWithRetry(
           supabase as any,
@@ -826,6 +877,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     warehouseId,
     webDraftRemarksTag,
     writerId,
+    draftSessionKey,
   ])
 
   return {

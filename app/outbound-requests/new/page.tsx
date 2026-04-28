@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense, useCallback, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 import ApprovalDraftPaper from '@/components/approvals/ApprovalDraftPaper'
+import ApprovalDetailAttachmentsPanel from '@/components/approvals/ApprovalDetailAttachmentsPanel'
 import ApprovalDraftLoadDialog from '@/components/approvals/ApprovalDraftLoadDialog'
 import ApprovalProcessHistoryPanel from '@/components/approvals/ApprovalProcessHistoryPanel'
 import { DraftFormErrorBanner, DraftFormWarningBanner } from '@/components/approvals/DraftFormAlertBanners'
@@ -53,6 +54,9 @@ function NewOutboundPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [loadDialogOpen, setLoadDialogOpen] = useState(false)
+  const [draftSessionKey] = useState(
+    () => `outbound-draft-session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  )
   const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
   const initialResubmitDocId = useMemo(() => {
     const raw = searchParams.get('resubmit')
@@ -106,17 +110,20 @@ function NewOutboundPageInner() {
     hasDraftContent,
     lastLocalSaveAt,
     lastServerSaveAt,
+    serverDraftDocId,
     allowLeavingWithoutBeforeUnloadPrompt,
     resubmitDocId,
     resubmitHistories,
     isResubmitHydrating,
   } = useOutboundRequestDraftForm({
     autosaveKey,
+    draftSessionKey,
     enableServerDraft: initialResubmitDocId == null,
     webDraftRemarksTag: WEB_OUTBOUND_DRAFT_REMARKS,
     initialResubmitDocId,
   })
   const isResubmitMode = initialResubmitDocId != null
+  const attachmentDocId = resubmitDocId ?? serverDraftDocId ?? null
 
   const handleListClick = useCallback(
     (e: React.MouseEvent) => {
@@ -276,6 +283,15 @@ function NewOutboundPageInner() {
               next.splice(targetIndex, 0, dragged)
               return next
             })
+          }
+          attachmentsSlot={
+            <ApprovalDetailAttachmentsPanel
+              docId={attachmentDocId}
+              draftSessionKey={draftSessionKey}
+              writerId={writerId}
+              currentUserId={writerId || null}
+              editable
+            />
           }
           postBodyGridSlot={
             <div className="space-y-5">

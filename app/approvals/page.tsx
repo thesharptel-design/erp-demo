@@ -1,10 +1,16 @@
-'use client';
+'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/lib/supabase';
-import SearchableCombobox from '@/components/SearchableCombobox';
-import { APPROVAL_DRAFT_DOC_TYPE_OPTIONS } from '@/lib/approval-draft';
-import { openApprovalDocFromInbox, openApprovalShellPopup } from '@/lib/approval-popup';
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { FilterX } from 'lucide-react'
+import { supabase } from '@/lib/supabase'
+import SearchableCombobox from '@/components/SearchableCombobox'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import PageHeader from '@/components/PageHeader'
+import InlineAlertMirror from '@/components/InlineAlertMirror'
+import { APPROVAL_DRAFT_DOC_TYPE_OPTIONS } from '@/lib/approval-draft'
+import { openApprovalDocFromInbox, openApprovalShellPopup } from '@/lib/approval-popup'
 import {
   APPROVAL_INBOX_STATUS_FILTER_OPTIONS,
   formatApprovalProgressChain,
@@ -13,13 +19,13 @@ import {
   getDocDetailOpenHref,
   getDocTypeLabel,
   getWriterName,
-} from '@/lib/approval-status';
-import type { ApprovalDocLike, ApprovalLineWithName } from '@/lib/approval-status';
-import { isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions';
+} from '@/lib/approval-status'
+import type { ApprovalDocLike, ApprovalLineWithName } from '@/lib/approval-status'
+import { isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
 import {
   type InboxRpcItem,
   parseApprovalInboxRpcPayload,
-} from '@/lib/approval-inbox-rpc';
+} from '@/lib/approval-inbox-rpc'
 
 type ApprovalsDocRow = ApprovalDocLike & {
   id: number;
@@ -376,6 +382,12 @@ export default function ApprovalsPage() {
     setPage(1);
   };
 
+  const handleRefresh = useCallback(() => {
+    clearFilters();
+    setPage(1);
+    void fetchInbox();
+  }, [fetchInbox]);
+
   const openDraftPopup = () => {
     openApprovalShellPopup('/approvals/new', 'approvalDraftPopup');
   };
@@ -420,101 +432,121 @@ export default function ApprovalsPage() {
   }, [docs]);
 
   return (
-    <div className="flex w-full min-h-[calc(100dvh-10.5rem)] flex-col space-y-6">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between mb-8">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-3xl font-black tracking-tighter text-gray-900">통합 결재문서함</h1>
+    <div className="mx-auto flex min-h-[calc(100dvh-10.5rem)] max-w-[1800px] flex-col gap-4 bg-background p-4 font-sans md:p-6">
+      <PageHeader
+        title={
+          <span className="inline-flex flex-wrap items-center gap-2">
+            통합 결재문서함
             {viewerIsAdmin ? (
-              <span
-                className="inline-flex items-center rounded-full border border-violet-300 bg-violet-100 px-3 py-1 text-[11px] font-black uppercase tracking-wide text-violet-800"
+              <Badge
+                variant="outline"
+                className="border-violet-300 bg-violet-50 text-[11px] font-semibold uppercase tracking-wide text-violet-800"
                 title="시스템 관리자 계정으로 조직 전체 문서를 조회 중입니다."
               >
                 관리자 · 전체 문서
-              </span>
+              </Badge>
             ) : null}
-          </div>
-          <p className="mt-1 text-sm font-bold text-gray-500">
-            {viewerIsAdmin
-              ? '관리자는 조직의 모든 결재 문서를 볼 수 있습니다. 일반 사용자는 기안·결재·참조·협조로 지정된 문서만 표시됩니다.'
-              : '기안했거나 결재·참조·협조 등 결재선에 포함된 문서만 표시됩니다.'}
-          </p>
-          <p className="mt-2 text-[11px] font-bold text-gray-400">
-            필터·페이지·건수는 서버에서 계산됩니다. 
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <button
-            type="button"
-            onClick={() => void fetchInbox()}
-            disabled={loading}
-            className="inline-flex h-12 items-center justify-center rounded-xl border-2 border-gray-300 bg-white px-5 text-sm font-black text-gray-800 hover:bg-gray-50 disabled:opacity-50"
-          >
-            새로고침
-          </button>
-          <button
-            type="button"
-            onClick={openDraftPopup}
-            className="inline-flex h-12 items-center justify-center rounded-xl bg-white border-2 border-black px-5 text-sm font-black text-black hover:bg-gray-50 transition-all shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none"
-          >
-            일반 기안 작성
-          </button>
-          <button
-            type="button"
-            onClick={openOutboundDraftPopup}
-            className="inline-flex h-12 items-center justify-center rounded-xl bg-blue-600 border-2 border-black px-5 text-sm font-black text-white hover:bg-blue-700 transition-all shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] active:translate-y-1 active:shadow-none"
-          >
-            출고 요청 작성
-          </button>
-        </div>
-      </div>
-
-      {fetchError && (
-        <div className="rounded-xl border-2 border-red-300 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
-          목록 조회 오류: {fetchError}
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center justify-end gap-2 text-xs font-bold text-gray-500">
-        {!loading && (
-          <span>
-            전체 {totalCount}건 · {rangeStart}-{rangeEnd}번째 표시 · {safePage}/{totalPages} 페이지
           </span>
-        )}
-        <button
-          type="button"
-          onClick={clearFilters}
-          className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-gray-700 hover:bg-gray-50"
-        >
-          필터 초기화
-        </button>
-      </div>
+        }
+        description={
+          <>
+            <span>
+              {viewerIsAdmin
+                ? '관리자는 조직의 모든 결재 문서를 볼 수 있습니다. 일반 사용자는 기안·결재·참조·협조로 지정된 문서만 표시됩니다.'
+                : '기안했거나 결재·참조·협조 등 결재선에 포함된 문서만 표시됩니다.'}
+            </span>
+            <span className="mt-2 block text-xs text-muted-foreground">
+              필터·페이지·건수는 서버에서 계산됩니다.
+            </span>
+          </>
+        }
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" size="sm" onClick={openDraftPopup}>
+              일반 기안 작성
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              size="sm"
+              className="bg-blue-600 text-white hover:bg-blue-700 focus-visible:ring-blue-500/40"
+              onClick={openOutboundDraftPopup}
+            >
+              출고 요청 작성
+            </Button>
+            <Button type="button" variant="outline" size="sm" disabled={loading} onClick={handleRefresh}>
+              새로고침
+            </Button>
+          </div>
+        }
+      />
 
-      <div className="flex flex-1 flex-col rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-        <div className="min-h-[min(68vh,calc(100dvh-15rem))] overflow-x-auto rounded-t-2xl bg-white">
-          <table className="min-w-[960px] w-full table-fixed text-sm">
-            <colgroup>
-              <col className="w-[11rem]" />
-              <col className="w-[6.75rem]" />
-              <col />
-              <col className="w-[14rem]" />
-              <col className="w-[18rem]" />
-              <col className="w-[7.5rem]" />
-              <col className="w-[6.5rem]" />
-            </colgroup>
-            <thead className="sticky top-0 z-20 bg-gray-50 border-b-2 border-black text-left text-xs font-black uppercase tracking-wider text-gray-400">
-              <tr>
-                <th className="px-4 py-4">문서번호</th>
-                <th className="whitespace-nowrap px-2 py-4 text-center">유형</th>
-                <th className="px-4 py-4">제목</th>
-                <th className="px-4 py-4">결재라인</th>
-                <th className="px-4 py-4">순번</th>
-                <th className="px-3 py-4 text-center">상태</th>
-                <th className="px-3 py-4">기안일</th>
-              </tr>
-              <tr className="border-b border-gray-200 bg-gray-100/80 text-[11px] font-bold normal-case tracking-normal text-gray-600">
-                <th className="relative z-30 px-2 py-2 align-middle font-semibold">
+      {fetchError ? <InlineAlertMirror message={fetchError} variant="error" /> : null}
+
+      <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-border shadow-sm">
+        <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-6">
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-medium text-muted-foreground md:text-sm">
+              {!loading ? (
+                <span>
+                  전체 <span className="font-semibold text-foreground">{totalCount}</span>건 · {rangeStart}-{rangeEnd}
+                  번째 표시 · {safePage}/{totalPages} 페이지
+                </span>
+              ) : (
+                <span>불러오는 중…</span>
+              )}
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+              title="필터 초기화"
+              aria-label="필터 초기화"
+              onClick={clearFilters}
+            >
+              <FilterX className="size-3.5" aria-hidden />
+            </Button>
+          </div>
+
+          <div className="flex min-h-[min(60vh,32rem)] min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-full min-w-[960px] table-fixed border-collapse text-left text-sm text-card-foreground">
+                <colgroup>
+                  <col className="w-[11rem]" />
+                  <col className="w-[6.75rem]" />
+                  <col />
+                  <col className="w-[14rem]" />
+                  <col className="w-[18rem]" />
+                  <col className="w-[7.5rem]" />
+                  <col className="w-[6.5rem]" />
+                </colgroup>
+                <thead className="sticky top-0 z-[1] border-b border-border bg-muted/50 backdrop-blur-sm">
+                  <tr>
+                    <th className="px-3 py-3 md:px-4">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">문서번호</span>
+                    </th>
+                    <th className="whitespace-nowrap px-2 py-3 text-center md:px-3">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">유형</span>
+                    </th>
+                    <th className="px-3 py-3 md:px-4">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">제목</span>
+                    </th>
+                    <th className="px-3 py-3 md:px-4">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">결재라인</span>
+                    </th>
+                    <th className="px-3 py-3 md:px-4">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">순번</span>
+                    </th>
+                    <th className="px-2 py-3 text-center md:px-3">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">상태</span>
+                    </th>
+                    <th className="px-2 py-3 md:px-3">
+                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">기안일</span>
+                    </th>
+                  </tr>
+                  <tr className="border-b border-border bg-muted/30 text-[11px] font-medium normal-case tracking-normal text-muted-foreground">
+                <th className="relative z-[2] px-2 py-2 align-top">
                   <SearchableCombobox
                     value={filterDocNo}
                     onChange={setFilterDocNoP}
@@ -526,7 +558,7 @@ export default function ApprovalsPage() {
                     dropdownPlacement="auto"
                   />
                 </th>
-                <th className="relative z-30 px-1 py-2 align-middle font-semibold">
+                <th className="relative z-[2] px-1 py-2 align-top">
                   <SearchableCombobox
                     value={filterDocType}
                     onChange={setFilterDocTypeP}
@@ -539,7 +571,7 @@ export default function ApprovalsPage() {
                     dropdownPlacement="auto"
                   />
                 </th>
-                <th className="relative z-30 px-2 py-2 align-middle font-semibold">
+                <th className="relative z-[2] px-2 py-2 align-top">
                   <SearchableCombobox
                     value={filterTitle}
                     onChange={setFilterTitleP}
@@ -551,7 +583,7 @@ export default function ApprovalsPage() {
                     dropdownPlacement="auto"
                   />
                 </th>
-                <th className="relative z-30 px-2 py-2 align-middle font-semibold">
+                <th className="relative z-[2] px-2 py-2 align-top">
                   <SearchableCombobox
                     value={filterApproverLine}
                     onChange={setFilterApproverLineP}
@@ -563,7 +595,7 @@ export default function ApprovalsPage() {
                     dropdownPlacement="auto"
                   />
                 </th>
-                <th className="relative z-30 px-2 py-2 align-middle font-semibold">
+                <th className="relative z-[2] px-2 py-2 align-top">
                   <SearchableCombobox
                     value={filterProgress}
                     onChange={setFilterProgressP}
@@ -575,7 +607,7 @@ export default function ApprovalsPage() {
                     dropdownPlacement="auto"
                   />
                 </th>
-                <th className="relative z-30 px-1 py-2 align-middle font-semibold">
+                <th className="relative z-[2] px-1 py-2 align-top">
                   <SearchableCombobox
                     value={filterStatus}
                     onChange={setFilterStatusP}
@@ -589,7 +621,7 @@ export default function ApprovalsPage() {
                     dropdownPlacement="auto"
                   />
                 </th>
-                <th className="relative z-30 px-2 py-2 align-middle font-semibold">
+                <th className="relative z-[2] px-2 py-2 align-top">
                   <SearchableCombobox
                     value={filterDraftDate}
                     onChange={setFilterDraftDateP}
@@ -603,21 +635,21 @@ export default function ApprovalsPage() {
                 </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100 bg-white">
+            <tbody className="divide-y divide-border">
               {loading ? (
                 <tr>
                   <td
                     colSpan={colCount}
-                    className="min-h-[48vh] align-middle p-12 text-center text-sm font-bold text-gray-400"
+                    className="min-h-[48vh] align-middle p-12 text-center text-sm font-medium text-muted-foreground"
                   >
-                    데이터 로딩 중...
+                    데이터 로딩 중…
                   </td>
                 </tr>
               ) : totalCount === 0 ? (
                 <tr>
                   <td
                     colSpan={colCount}
-                    className="min-h-[48vh] align-middle p-12 text-center text-sm font-bold text-gray-400"
+                    className="min-h-[48vh] align-middle p-12 text-center text-sm font-medium text-muted-foreground"
                   >
                     문서가 없습니다.
                   </td>
@@ -626,7 +658,7 @@ export default function ApprovalsPage() {
                 <tr>
                   <td
                     colSpan={colCount}
-                    className="min-h-[48vh] align-middle p-12 text-center text-sm font-bold text-gray-400"
+                    className="min-h-[48vh] align-middle p-12 text-center text-sm font-medium text-muted-foreground"
                   >
                     이 페이지에 표시할 행이 없습니다.
                   </td>
@@ -637,8 +669,8 @@ export default function ApprovalsPage() {
                   const typeLabel = getDocTypeLabel(doc.doc_type);
                   const draftDate = doc.drafted_at?.slice(0, 10) ?? '';
                   return (
-                    <tr key={doc.id} className="group transition-colors hover:bg-gray-50">
-                      <td className="px-4 py-4 font-black">
+                    <tr key={doc.id} className="transition-colors hover:bg-muted/40">
+                      <td className="px-3 py-3 font-semibold md:px-4 md:py-4">
                         <a
                           href={getDocDetailOpenHref(doc, inboxViewerId)}
                           onClick={(e) => {
@@ -647,21 +679,36 @@ export default function ApprovalsPage() {
                             e.preventDefault();
                             openApprovalDocFromInbox(doc, inboxViewerId);
                           }}
-                          className="block min-w-0 truncate text-blue-600 hover:underline"
+                          className="block min-w-0 truncate text-primary underline-offset-2 hover:underline"
                           title={inboxDisplayText(doc.doc_no)}
                         >
                           {inboxDisplayText(doc.doc_no)}
                         </a>
                       </td>
-                      <td className="px-2 py-4 text-center text-xs font-bold text-gray-600">
+                      <td className="px-2 py-3 text-center text-xs font-medium text-muted-foreground md:py-4">
                         <InboxTruncated text={typeLabel} className="mx-auto max-w-full" />
                       </td>
-                      <td className="px-4 py-4 font-black text-gray-800">
+                      <td className="px-3 py-3 font-semibold text-foreground md:px-4 md:py-4">
                         <div className="min-w-0 space-y-1">
-                          <InboxTruncated text={doc.title} className="font-black text-gray-800" />
+                          <a
+                            href={getDocDetailOpenHref(doc, inboxViewerId)}
+                            onClick={(e) => {
+                              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+                              if (e.button !== 0) return;
+                              e.preventDefault();
+                              openApprovalDocFromInbox(doc, inboxViewerId);
+                            }}
+                            className="block min-w-0"
+                            title={inboxDisplayText(doc.title)}
+                          >
+                            <InboxTruncated
+                              text={doc.title}
+                              className="cursor-pointer text-primary underline-offset-2 hover:underline"
+                            />
+                          </a>
                           {doc.recent_reject_comment && (
                             <p
-                              className="block min-w-0 truncate text-xs font-bold text-red-600"
+                              className="block min-w-0 truncate text-xs font-medium text-destructive"
                               title={`반려 코멘트: ${doc.recent_reject_comment}`}
                             >
                               반려 코멘트: {doc.recent_reject_comment}
@@ -669,10 +716,10 @@ export default function ApprovalsPage() {
                           )}
                         </div>
                       </td>
-                      <td className="px-4 py-4 font-bold text-gray-700">
+                      <td className="px-3 py-3 text-sm font-medium text-foreground md:px-4 md:py-4">
                         <InboxTruncated text={doc.approverLineNames} />
                       </td>
-                      <td className="px-4 py-4 text-xs font-bold leading-relaxed text-gray-800">
+                      <td className="px-3 py-3 text-xs font-medium leading-relaxed text-foreground md:px-4 md:py-4">
                         <div className="flex min-w-0 items-center gap-2">
                           <div className="min-w-0 flex-1">
                             <InboxTruncated text={doc.progressLabel} />
@@ -684,17 +731,17 @@ export default function ApprovalsPage() {
                                 ? '등록된 결재·협조 의견이 있습니다.'
                                 : '등록된 의견이 없습니다.'
                             }
-                            className={`shrink-0 select-none rounded-md border px-2 py-0.5 text-[10px] font-black ${
+                            className={`shrink-0 select-none rounded-md border px-2 py-0.5 text-[10px] font-semibold ${
                               doc.hasLineOpinion
-                                ? 'border-blue-500 bg-blue-50 text-blue-700 shadow-[0_0_0_2px_rgba(59,130,246,0.35)]'
-                                : 'border-gray-200 bg-gray-100 text-gray-400 opacity-80'
+                                ? 'border-primary/40 bg-primary/10 text-primary'
+                                : 'border-border bg-muted text-muted-foreground'
                             }`}
                           >
                             의견
                           </span>
                         </div>
                       </td>
-                      <td className="px-2 py-4 text-center">
+                      <td className="px-2 py-3 text-center md:py-4">
                         <div
                           className="flex flex-wrap items-center justify-center gap-1"
                           title={pres.badges.map((b) => b.label).join(' · ')}
@@ -709,7 +756,7 @@ export default function ApprovalsPage() {
                           ))}
                         </div>
                       </td>
-                      <td className="px-3 py-4 text-xs font-bold text-gray-400">
+                      <td className="px-2 py-3 text-xs font-medium text-muted-foreground md:px-3 md:py-4">
                         <InboxTruncated text={draftDate || null} />
                       </td>
                     </tr>
@@ -718,51 +765,59 @@ export default function ApprovalsPage() {
               )}
             </tbody>
           </table>
-        </div>
-        {!loading && totalCount > 0 ? (
-          <div className="flex flex-col gap-3 border-t-2 border-black bg-gray-50 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-2 text-xs font-bold text-gray-700">
-              <span className="text-gray-500">페이지당</span>
-              <select
-                value={pageSize}
-                onChange={(e) => {
-                  setPageSize(Number(e.target.value) as (typeof PAGE_SIZE_OPTIONS)[number]);
-                  setPage(1);
-                }}
-                className="rounded-lg border-2 border-gray-300 bg-white px-2 py-1.5 font-bold text-gray-900"
-                aria-label="페이지당 행 수"
-              >
-                {PAGE_SIZE_OPTIONS.map((n) => (
-                  <option key={n} value={n}>
-                    {n}건
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-2 text-xs font-black">
-              <button
-                type="button"
-                disabled={safePage <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="rounded-lg border-2 border-black bg-white px-3 py-1.5 text-gray-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-gray-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:shadow-none"
-              >
-                이전
-              </button>
-              <span className="min-w-[7rem] text-center font-bold text-gray-600">
-                {safePage} / {totalPages} 페이지
-              </span>
-              <button
-                type="button"
-                disabled={safePage >= totalPages}
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                className="rounded-lg border-2 border-black bg-white px-3 py-1.5 text-gray-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-gray-100 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:shadow-none"
-              >
-                다음
-              </button>
             </div>
           </div>
-        ) : null}
-      </div>
+
+          {!loading && totalCount > 0 ? (
+            <div className="flex shrink-0 flex-col gap-3 border-t border-border bg-muted/30 px-2 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between sm:px-3">
+              <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-muted-foreground md:text-sm">
+                <span>페이지당</span>
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value) as (typeof PAGE_SIZE_OPTIONS)[number]);
+                    setPage(1);
+                  }}
+                  className="h-9 rounded-md border border-input bg-background px-2 py-1.5 text-sm font-medium text-foreground shadow-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label="페이지당 행 수"
+                >
+                  {PAGE_SIZE_OPTIONS.map((n) => (
+                    <option key={n} value={n}>
+                      {n}건
+                    </option>
+                  ))}
+                </select>
+                <span>
+                  · 전체 <span className="font-semibold text-foreground">{totalCount}</span>건 ·{' '}
+                  <span className="font-semibold text-foreground">{safePage}</span> / {totalPages} 페이지
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  이전
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 min-w-[3.5rem] px-2 text-xs font-medium"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  다음
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
     </div>
   );
 }

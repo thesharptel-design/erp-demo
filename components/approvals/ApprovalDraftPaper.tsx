@@ -68,6 +68,8 @@ type ApprovalDraftPaperProps = {
    * 출고요청 작성 등에서 창고·품목 UI를 넣습니다.
    */
   postBodyGridSlot?: ReactNode
+  /** 본문 아래 첨부 파일/문서 섹션 */
+  attachmentsSlot?: ReactNode
   /** 본문·출고 사이: 재상신 시 이전 `approval_histories` 등 (읽기 전용) */
   processHistorySlot?: ReactNode
   /** true면 문서유형을 콤보 대신 고정 라벨로만 표시 */
@@ -117,12 +119,14 @@ export default function ApprovalDraftPaper({
   paperTitle = '업무기안서',
   paperSubtitle = '문서 작성 후 결재선을 지정해 바로 상신합니다.',
   postBodyGridSlot,
+  attachmentsSlot,
   processHistorySlot,
   docTypeSelectDisabled = false,
 }: ApprovalDraftPaperProps) {
   const approverSlots = approvalOrder.filter((l) => l.role === 'approver')
   const cooperatorSlots = approvalOrder.filter((l) => l.role === 'cooperator' && l.userId.trim())
   const approvalStampColCount = 1 + approverSlots.length
+  const requiresExecutionDate = docType === 'leave_request'
 
   return (
     <div className="overflow-x-auto">
@@ -280,7 +284,7 @@ export default function ApprovalDraftPaper({
             <ExecutionDateHybridInput
               value={executionStartDate}
               onChange={onExecutionStartDateChange}
-              required
+              required={requiresExecutionDate}
               placeholder="시작일 (YYYYMMDD)"
               calendarLabel="시작일 달력"
             />
@@ -288,7 +292,7 @@ export default function ApprovalDraftPaper({
             <ExecutionDateHybridInput
               value={executionEndDate}
               onChange={onExecutionEndDateChange}
-              required
+              required={requiresExecutionDate}
               placeholder="종료일 (YYYYMMDD)"
               calendarLabel="종료일 달력"
             />
@@ -369,6 +373,12 @@ export default function ApprovalDraftPaper({
             <>
               <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">출고</div>
               <div className="border-b px-3 py-2">{postBodyGridSlot}</div>
+            </>
+          ) : null}
+          {attachmentsSlot ? (
+            <>
+              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">첨부문서</div>
+              <div className="border-b px-3 py-2">{attachmentsSlot}</div>
             </>
           ) : null}
         </div>

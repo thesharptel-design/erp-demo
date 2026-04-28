@@ -249,9 +249,14 @@ export default function LoginPage() {
     <div className="flex min-h-screen w-full items-center justify-center bg-gray-100 px-6 py-12 text-black">
       <div className={`w-full ${isSignUp ? 'max-w-2xl' : 'max-w-md'} rounded-[2.5rem] border border-gray-200 bg-white p-10 shadow-2xl transition-all duration-300`}>
         <div className="mb-8 text-center">
-          <h1 className="text-4xl font-black tracking-tighter text-gray-900 italic">
+          {/* 전역 @layer base의 h1(!important)가 덮어쓰므로 h1 사용 안 함 — role=heading으로 동일 의미 */}
+          <div
+            role="heading"
+            aria-level={1}
+            className="text-3xl font-bold tracking-tighter text-gray-900 italic antialiased sm:text-4xl"
+          >
             ERP-<span className="text-blue-600">BIOGTP</span>
-          </h1>
+          </div>
           <p className="mt-3 text-[10px] font-black text-gray-400 uppercase tracking-widest">
             {isSignUp ? 'New Employee Registration' : 'Integrated Management System'}
           </p>

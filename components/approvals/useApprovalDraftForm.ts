@@ -39,6 +39,8 @@ export type UseApprovalDraftFormParams = {
   enabled?: boolean
   remarks: string
   autosaveKey?: string
+  /** 임시저장 전 첨부를 묶는 세션 키 */
+  draftSessionKey?: string | null
   /** Supabase에 status=draft 문서로 임시저장 */
   enableServerDraft?: boolean
   /** 임시 문서 remarks 구분 (모달·신규 페이지 분리) */
@@ -79,6 +81,7 @@ export function useApprovalDraftForm({
   enabled = true,
   remarks,
   autosaveKey,
+  draftSessionKey = null,
   enableServerDraft = false,
   webDraftRemarksTag = WEB_GENERAL_DRAFT_REMARKS,
   initialResubmitDocId = null,
@@ -427,6 +430,18 @@ export function useApprovalDraftForm({
         remarksTag: webDraftRemarksTag,
       })
       setServerDraftDocId(draftDocId)
+      if (draftSessionKey && writerId) {
+        await supabase.rpc('touch_temp_approval_attachments', {
+          p_draft_session_key: draftSessionKey,
+          p_actor_id: writerId,
+          p_ttl_hours: 72,
+        })
+        await supabase.rpc('link_temp_approval_attachments', {
+          p_draft_session_key: draftSessionKey,
+          p_approval_doc_id: draftDocId,
+          p_actor_id: writerId,
+        })
+      }
       setLastServerSaveAt(new Date().toISOString())
       if (autosaveKey && typeof window !== 'undefined') {
         const payload: ApprovalDraftAutosavePayloadV2 = {
@@ -469,6 +484,7 @@ export function useApprovalDraftForm({
     users,
     webDraftRemarksTag,
     writerId,
+    draftSessionKey,
   ])
 
   const deleteDraftDocument = useCallback(async () => {
@@ -484,6 +500,14 @@ export function useApprovalDraftForm({
       if (resubmitDocId != null) {
         const { error } = await supabase.from('approval_docs').delete().eq('id', resubmitDocId).eq('writer_id', writerId)
         if (error) throw error
+        if (draftSessionKey) {
+          await supabase
+            .from('approval_doc_attachments')
+            .delete()
+            .eq('draft_session_key', draftSessionKey)
+            .eq('created_by', writerId)
+            .eq('status', 'temp')
+        }
         clearSavedDraft()
         resetForm({ clearAutosave: false })
         setResubmitDocId(null)
@@ -492,6 +516,14 @@ export function useApprovalDraftForm({
       }
       if (enableServerDraft && serverDraftDocId != null) {
         await deleteWebGeneralDraft(supabase as any, serverDraftDocId, writerId, webDraftRemarksTag)
+      }
+      if (draftSessionKey) {
+        await supabase
+          .from('approval_doc_attachments')
+          .delete()
+          .eq('draft_session_key', draftSessionKey)
+          .eq('created_by', writerId)
+          .eq('status', 'temp')
       }
       clearSavedDraft()
       resetForm({ clearAutosave: false })
@@ -503,7 +535,16 @@ export function useApprovalDraftForm({
     } finally {
       setIsDraftDeleting(false)
     }
-  }, [clearSavedDraft, enableServerDraft, resetForm, resubmitDocId, serverDraftDocId, webDraftRemarksTag, writerId])
+  }, [
+    clearSavedDraft,
+    draftSessionKey,
+    enableServerDraft,
+    resetForm,
+    resubmitDocId,
+    serverDraftDocId,
+    webDraftRemarksTag,
+    writerId,
+  ])
 
   const loadServerDraftById = useCallback(
     async (draftDocId: number) => {
@@ -568,9 +609,13 @@ export function useApprovalDraftForm({
       showDraftValidationError(setErrorMessage, '제목과 내용을 모두 입력하십시오.')
       return false
     }
-    if (!isCompleteValidExecutionDate(executionStartDate) || !isCompleteValidExecutionDate(executionEndDate)) {
-      showDraftValidationError(setErrorMessage, '시행 시작일·종료일을 모두 입력하십시오.')
-      return false
+    const requiresExecutionPeriod = docType === 'leave_request'
+    const hasAnyExecutionPeriodInput = Boolean(executionStartDate.trim() || executionEndDate.trim())
+    if (requiresExecutionPeriod || hasAnyExecutionPeriodInput) {
+      if (!isCompleteValidExecutionDate(executionStartDate) || !isCompleteValidExecutionDate(executionEndDate)) {
+        showDraftValidationError(setErrorMessage, '시행 시작일·종료일을 모두 입력하십시오.')
+        return false
+      }
     }
     if (!writerId) {
       showDraftValidationError(setErrorMessage, '작성자 정보가 없습니다.')
@@ -595,7 +640,7 @@ export function useApprovalDraftForm({
 
     setIsSaving(true)
     try {
-      const { leftoverDraftIdToDelete, workApprovalNotificationSkipped } = await createApprovalDraft({
+      const { docId, leftoverDraftIdToDelete, workApprovalNotificationSkipped } = await createApprovalDraft({
         supabase,
         docType,
         title,
@@ -613,6 +658,13 @@ export function useApprovalDraftForm({
           resubmitDocId != null ? undefined : enableServerDraft ? serverDraftDocId : undefined,
         draftRemarksTag: webDraftRemarksTag,
       })
+      if (draftSessionKey && writerId) {
+        await supabase.rpc('link_temp_approval_attachments', {
+          p_draft_session_key: draftSessionKey,
+          p_approval_doc_id: docId,
+          p_actor_id: writerId,
+        })
+      }
       if (workApprovalNotificationSkipped) {
         toast.warning(
           '결재 대기 알림(🔔)을 받을 다른 사용자가 없습니다. 첫 결재 대기가 본인이거나 결재선만 비어 있으면 수신 알림이 만들어지지 않습니다.',

@@ -9,6 +9,7 @@ import {
   formatWriterDepartmentLabel,
 } from '@/lib/approval-draft'
 import ApprovalDraftPaper from '@/components/approvals/ApprovalDraftPaper'
+import ApprovalDetailAttachmentsPanel from '@/components/approvals/ApprovalDetailAttachmentsPanel'
 import ApprovalProcessHistoryPanel from '@/components/approvals/ApprovalProcessHistoryPanel'
 import ApprovalDraftLoadDialog from '@/components/approvals/ApprovalDraftLoadDialog'
 import { DraftFormErrorBanner, DraftFormWarningBanner } from '@/components/approvals/DraftFormAlertBanners'
@@ -53,6 +54,9 @@ function NewApprovalPageInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [loadDialogOpen, setLoadDialogOpen] = useState(false)
+  const [draftSessionKey] = useState(
+    () => `approval-draft-session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+  )
   const { isSubmitting: isMutating, run: runSingleSubmit } = useSingleSubmit()
 
   const initialResubmitDocId = useMemo(() => {
@@ -99,6 +103,7 @@ function NewApprovalPageInner() {
     hasDraftContent,
     lastLocalSaveAt,
     lastServerSaveAt,
+    serverDraftDocId,
     allowLeavingWithoutBeforeUnloadPrompt,
     resubmitDocId,
     resubmitHistories,
@@ -106,11 +111,13 @@ function NewApprovalPageInner() {
   } = useApprovalDraftForm({
     remarks: '웹 등록 문서',
     autosaveKey,
+    draftSessionKey,
     enableServerDraft: initialResubmitDocId == null,
     initialResubmitDocId,
   })
 
   const isResubmitMode = initialResubmitDocId != null
+  const attachmentDocId = resubmitDocId ?? serverDraftDocId ?? null
 
   const handleListClick = useCallback(
     (e: React.MouseEvent) => {
@@ -261,6 +268,15 @@ function NewApprovalPageInner() {
               next.splice(targetIndex, 0, dragged)
               return next
             })
+          }
+          attachmentsSlot={
+            <ApprovalDetailAttachmentsPanel
+              docId={attachmentDocId}
+              draftSessionKey={draftSessionKey}
+              writerId={writerId}
+              currentUserId={writerId || null}
+              editable
+            />
           }
           processHistorySlot={
             isResubmitMode && resubmitHistories.length > 0 ? (

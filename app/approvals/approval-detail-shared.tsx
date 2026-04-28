@@ -3,10 +3,12 @@ import { notFound, redirect } from 'next/navigation'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import ApprovalActionButtons from '@/components/ApprovalActionButtons'
 import ApprovalDocumentPaperView from '@/components/approvals/ApprovalDocumentPaperView'
+import ApprovalDetailAttachmentsPanel from '@/components/approvals/ApprovalDetailAttachmentsPanel'
 import ApprovalLineOpinionsBlock from '@/components/approvals/ApprovalLineOpinionsBlock'
 import ApprovalProcessHistoryPanel, {
   type ApprovalProcessHistoryRow,
 } from '@/components/approvals/ApprovalProcessHistoryPanel'
+import ApprovalCloseButton from '@/components/approvals/ApprovalCloseButton'
 import ApprovalShellListNav from '@/components/approvals/ApprovalShellListNav'
 import { selectApprovalOpinionRows } from '@/lib/approval-line-opinions'
 import {
@@ -139,10 +141,16 @@ export async function ApprovalDetailShared({
   supabase,
   id,
   shellMode,
+  attachmentFrom,
 }: {
   supabase: SupabaseClient
   id: string
   shellMode: ShellMode
+  attachmentFrom?: {
+    enabled: boolean
+    sourceDocNo: string | null
+    sourceTitle: string | null
+  }
 }) {
   const docId = Number(id)
   if (Number.isNaN(docId)) notFound()
@@ -152,7 +160,15 @@ export async function ApprovalDetailShared({
   if (head.doc_type === 'outbound_request') {
     const { data: req } = await supabase.from('outbound_requests').select('id').eq('approval_doc_id', docId).maybeSingle()
     if (req?.id != null) {
-      redirect(shellMode === 'bare' ? `/outbound-requests/view/${req.id}` : `/outbound-requests/${req.id}`)
+      const base = shellMode === 'bare' ? `/outbound-requests/view/${req.id}` : `/outbound-requests/${req.id}`
+      if (attachmentFrom?.enabled) {
+        const q = new URLSearchParams()
+        q.set('fromAttachment', '1')
+        if (attachmentFrom.sourceDocNo?.trim()) q.set('fromDocNo', attachmentFrom.sourceDocNo.trim())
+        if (attachmentFrom.sourceTitle?.trim()) q.set('fromDocTitle', attachmentFrom.sourceTitle.trim())
+        redirect(`${base}?${q.toString()}`)
+      }
+      redirect(base)
     }
   }
 
@@ -307,9 +323,21 @@ export async function ApprovalDetailShared({
   )
 
   const listBare = shellMode === 'bare'
+  const showAttachmentNotice = Boolean(
+    attachmentFrom?.enabled && (attachmentFrom.sourceDocNo?.trim() || attachmentFrom.sourceTitle?.trim())
+  )
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+      {showAttachmentNotice ? (
+        <div className="sticky top-0 z-30 mb-4 rounded-lg border-2 border-blue-300 bg-blue-50/95 px-4 py-3 text-base font-black text-blue-900 shadow-sm backdrop-blur">
+          <span className="block truncate leading-relaxed">
+            {attachmentFrom?.sourceDocNo?.trim() ? `[${attachmentFrom.sourceDocNo}] ` : ''}
+            {attachmentFrom?.sourceTitle?.trim() ? `${attachmentFrom.sourceTitle} ` : ''}
+            기안에서 첨부된 문서입니다.
+          </span>
+        </div>
+      ) : null}
       <ApprovalDocumentPaperView
         docStatusLabel={docStatusBand.label}
         docStatusClassName={docStatusBand.className}
@@ -333,24 +361,40 @@ export async function ApprovalDetailShared({
         drafterActedAt={doc.drafted_at}
         postApprovalCancelRow={postApprovalCancelRow}
         afterBodySlot={opinionRows.length > 0 ? <ApprovalLineOpinionsBlock rows={opinionRows} /> : undefined}
+        attachmentsSlot={
+          <ApprovalDetailAttachmentsPanel
+            docId={doc.id}
+            writerId={doc.writer_id}
+            currentUserId={currentUserId}
+            sourceDocNo={doc.doc_no}
+            sourceTitle={doc.title}
+            editable={false}
+          />
+        }
       />
 
       <div className="mt-6 space-y-4 border-t border-gray-200 pt-4">
         <ApprovalProcessHistoryPanel rows={historyRowsSorted} />
 
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {canWriterEditResubmit && (
-            <Link
-              href={`/approvals/new?resubmit=${doc.id}`}
-              className="rounded-lg border-2 border-blue-600 bg-blue-50 px-4 py-2 text-sm font-black text-blue-900 hover:bg-blue-100"
-            >
-              수정·재상신
-            </Link>
+          {showAttachmentNotice ? (
+            <ApprovalCloseButton />
+          ) : (
+            <>
+              {canWriterEditResubmit && (
+                <Link
+                  href={`/approvals/new?resubmit=${doc.id}`}
+                  className="rounded-lg border-2 border-blue-600 bg-blue-50 px-4 py-2 text-sm font-black text-blue-900 hover:bg-blue-100"
+                >
+                  수정·재상신
+                </Link>
+              )}
+              <ApprovalShellListNav href="/approvals" popupListBehavior={listBare}>
+                목록
+              </ApprovalShellListNav>
+              <ApprovalActionButtons doc={doc} lines={lines} participants={participants} />
+            </>
           )}
-          <ApprovalShellListNav href="/approvals" popupListBehavior={listBare}>
-            목록
-          </ApprovalShellListNav>
-          <ApprovalActionButtons doc={doc} lines={lines} participants={participants} />
         </div>
       </div>
     </div>

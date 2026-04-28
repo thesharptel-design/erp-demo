@@ -382,12 +382,19 @@ export default function InventoryTransactionsPage() {
     setProcessorFilter('')
   }, [])
 
+  const handleRefresh = useCallback(() => {
+    resetColumnFilters()
+    setCurrentPage(1)
+    setExpandedSummaryKeys([])
+    void fetchTransactions()
+  }, [fetchTransactions, resetColumnFilters])
+
   return (
     <div className="mx-auto flex min-h-screen max-w-[1800px] flex-col gap-4 bg-background p-4 font-sans md:p-6">
       <PageHeader
         title="입출고 현황 (수불부)"
         actions={
-          <Button type="button" variant="outline" size="sm" onClick={() => void fetchTransactions()}>
+          <Button type="button" variant="outline" size="sm" onClick={handleRefresh}>
             새로고침
           </Button>
         }

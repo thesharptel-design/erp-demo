@@ -3,10 +3,12 @@ import { notFound } from 'next/navigation'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import ApprovalActionButtons from '@/components/ApprovalActionButtons'
 import ApprovalDocumentPaperView from '@/components/approvals/ApprovalDocumentPaperView'
+import ApprovalDetailAttachmentsPanel from '@/components/approvals/ApprovalDetailAttachmentsPanel'
 import ApprovalLineOpinionsBlock from '@/components/approvals/ApprovalLineOpinionsBlock'
 import ApprovalProcessHistoryPanel, {
   type ApprovalProcessHistoryRow,
 } from '@/components/approvals/ApprovalProcessHistoryPanel'
+import ApprovalCloseButton from '@/components/approvals/ApprovalCloseButton'
 import ApprovalShellListNav from '@/components/approvals/ApprovalShellListNav'
 import { selectApprovalOpinionRows } from '@/lib/approval-line-opinions'
 import OutboundDetailCoaButtons, {
@@ -218,10 +220,16 @@ export async function OutboundDetailShared({
   supabase,
   id,
   shellMode,
+  attachmentFrom,
 }: {
   supabase: SupabaseClient
   id: string
   shellMode: ShellMode
+  attachmentFrom?: {
+    enabled: boolean
+    sourceDocNo: string | null
+    sourceTitle: string | null
+  }
 }) {
   const result = await getOutboundRequestDetail(supabase, id)
   if (!result) notFound()
@@ -433,12 +441,24 @@ export async function OutboundDetailShared({
   )
 
   const listBare = shellMode === 'bare'
+  const showAttachmentNotice = Boolean(
+    attachmentFrom?.enabled && (attachmentFrom.sourceDocNo?.trim() || attachmentFrom.sourceTitle?.trim())
+  )
   const canWriterEditResubmit =
     Boolean(currentUserId && doc && doc.writer_id === currentUserId) &&
     ['draft', 'rejected'].includes(String(doc?.status ?? ''))
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
+      {showAttachmentNotice ? (
+        <div className="sticky top-0 z-30 mb-4 rounded-lg border-2 border-blue-300 bg-blue-50/95 px-4 py-3 text-base font-black text-blue-900 shadow-sm backdrop-blur">
+          <span className="block truncate leading-relaxed">
+            {attachmentFrom?.sourceDocNo?.trim() ? `[${attachmentFrom.sourceDocNo}] ` : ''}
+            {attachmentFrom?.sourceTitle?.trim() ? `${attachmentFrom.sourceTitle} ` : ''}
+            기안에서 첨부된 문서입니다.
+          </span>
+        </div>
+      ) : null}
       <ApprovalDocumentPaperView
         paperTitle="출고요청서"
         docStatusLabel={docStatusBand.label}
@@ -464,29 +484,47 @@ export async function OutboundDetailShared({
         postApprovalCancelRow={postApprovalCancelRowOutbound}
         afterBodySlot={opinionRows.length > 0 ? <ApprovalLineOpinionsBlock rows={opinionRows} /> : undefined}
         postBodyGridSlot={postBodyGridSlot}
+        attachmentsSlot={
+          doc ? (
+            <ApprovalDetailAttachmentsPanel
+              docId={doc.id}
+              writerId={doc.writer_id}
+              currentUserId={currentUserId}
+              sourceDocNo={doc.doc_no}
+              sourceTitle={doc.title}
+              editable={false}
+            />
+          ) : undefined
+        }
       />
 
       <div className="mt-6 space-y-4 border-t border-gray-200 pt-4">
         <ApprovalProcessHistoryPanel rows={outboundHistoryRowsSorted} />
 
         <div className="flex flex-wrap items-center justify-end gap-2">
-          {canWriterEditResubmit && doc ? (
-            <Link
-              href={`/outbound-requests/new?resubmit=${doc.id}`}
-              className="rounded-lg border-2 border-blue-600 bg-blue-50 px-4 py-2 text-sm font-black text-blue-900 hover:bg-blue-100"
-            >
-              수정·재상신
-            </Link>
-          ) : null}
-          <ApprovalShellListNav href="/outbound-requests" popupListBehavior={listBare}>
-            목록
-          </ApprovalShellListNav>
-          {doc ? (
-            <ApprovalActionButtons doc={doc} lines={lines} participants={participants} />
+          {showAttachmentNotice ? (
+            <ApprovalCloseButton fallbackHref="/outbound-requests" />
           ) : (
-            <span className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 text-xs font-bold text-gray-500">
-              연결된 결재 문서가 없어 결재 처리를 할 수 없습니다.
-            </span>
+            <>
+              {canWriterEditResubmit && doc ? (
+                <Link
+                  href={`/outbound-requests/new?resubmit=${doc.id}`}
+                  className="rounded-lg border-2 border-blue-600 bg-blue-50 px-4 py-2 text-sm font-black text-blue-900 hover:bg-blue-100"
+                >
+                  수정·재상신
+                </Link>
+              ) : null}
+              <ApprovalShellListNav href="/outbound-requests" popupListBehavior={listBare}>
+                목록
+              </ApprovalShellListNav>
+              {doc ? (
+                <ApprovalActionButtons doc={doc} lines={lines} participants={participants} />
+              ) : (
+                <span className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-2 text-xs font-bold text-gray-500">
+                  연결된 결재 문서가 없어 결재 처리를 할 수 없습니다.
+                </span>
+              )}
+            </>
           )}
         </div>
       </div>
