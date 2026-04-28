@@ -18,6 +18,8 @@ export async function logApprovalHistory(
     /** null/undefined이면 `[-]`로 저장 */
     action_comment?: string | null
     action_at?: string
+    /** 재시도/중복 호출 방지용. 동일 문서에서 dedupe_key 중복이면 무시(성공 처리). */
+    dedupe_key?: string | null
   }
 ): Promise<void> {
   const action_at = row.action_at ?? new Date().toISOString()
@@ -32,8 +34,12 @@ export async function logApprovalHistory(
     action_type: row.action_type,
     action_comment,
     action_at,
+    dedupe_key: row.dedupe_key ?? null,
   })
   if (error) {
+    const code = (error as { code?: string } | null | undefined)?.code
+    // dedupe unique 충돌은 "이미 처리됨"으로 간주하여 무시
+    if (code === '23505' && row.dedupe_key) return
     const m = typeof error.message === 'string' ? error.message.trim() : ''
     if (m) throw new Error(m)
     throw new Error('처리 이력 저장에 실패했습니다.')

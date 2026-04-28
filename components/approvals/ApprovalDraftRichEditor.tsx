@@ -10,7 +10,6 @@ import { TableHeader } from '@tiptap/extension-table-header'
 import { TableRow } from '@tiptap/extension-table-row'
 import { TextAlign } from '@tiptap/extension-text-align'
 import { TextStyle } from '@tiptap/extension-text-style'
-import { Underline } from '@tiptap/extension-underline'
 import { Extension, type Editor } from '@tiptap/core'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { StarterKit } from '@tiptap/starter-kit'
@@ -307,7 +306,6 @@ export default function ApprovalDraftRichEditor({
       FontFamily,
       Color,
       Highlight.configure({ multicolor: true }),
-      Underline,
       TextAlign.configure({ types: ['heading', 'paragraph'] }),
       Placeholder.configure({ placeholder }),
       Image.configure({ allowBase64: false }),

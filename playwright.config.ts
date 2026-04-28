@@ -16,10 +16,25 @@ export default defineConfig({
   },
   projects: [
     {
+      name: 'setup-auth',
+      testMatch: /.*\.auth\.setup\.ts/,
+    },
+    {
       name: 'mobile-chromium',
+      testIgnore: /approvals-(advanced|attachments-and-permissions)\.spec\.ts/,
       use: {
         ...devices['iPhone 13'],
         browserName: 'chromium',
+      },
+    },
+    {
+      name: 'approvals-auth',
+      testMatch: /approvals-(advanced|attachments-and-permissions)\.spec\.ts/,
+      dependencies: ['setup-auth'],
+      use: {
+        ...devices['iPhone 13'],
+        browserName: 'chromium',
+        storageState: 'playwright/.auth/approval-user.json',
       },
     },
   ],

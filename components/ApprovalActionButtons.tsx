@@ -121,6 +121,8 @@ export default function ApprovalActionButtons({
   const docTitleForNotify =
     String((doc as { title?: string | null }).title ?? '문서').trim() || '문서';
   const approvalInboxUrl = approvalDocumentInboxPath(doc.id);
+  const buildHistoryDedupeKey = (actionType: string, suffix: string) =>
+    `doc:${doc.id}:action:${actionType}:actor:${actorIdForHistory}:${suffix}`;
 
   const sortedLines = [...(lines || [])].sort((a, b) => a.line_no - b.line_no);
   const sortedParticipants = [...participants].sort((a, b) => a.line_no - b.line_no);
@@ -227,6 +229,7 @@ export default function ApprovalActionButtons({
           actor_id: actorIdForHistory,
           action_type: 'recall',
           action_comment: '기안 회수',
+          dedupe_key: buildHistoryDedupeKey('recall', `line:${doc.current_line_no ?? 0}`),
         });
         fanoutWorkApprovalNotificationQuiet(supabase, {
           actorId: actorIdForHistory,
@@ -276,6 +279,10 @@ export default function ApprovalActionButtons({
           actor_id: actorIdForHistory,
           action_type: 'cancel_request',
           action_comment: trimmed,
+          dedupe_key: buildHistoryDedupeKey(
+            'cancel_request',
+            `line:${doc.current_line_no ?? 0}:reason:${trimmed}`
+          ),
         });
         fanoutWorkApprovalNotificationQuiet(supabase, {
           actorId: actorIdForHistory,
@@ -350,6 +357,7 @@ export default function ApprovalActionButtons({
           actor_id: actorIdForHistory,
           action_type: 'direct_cancel_final',
           action_comment: normalizeOptionalOpinionForHistory(opinionInput.trim()),
+          dedupe_key: buildHistoryDedupeKey('direct_cancel_final', 'final'),
         });
         fanoutWorkApprovalNotificationQuiet(supabase, {
           actorId: actorIdForHistory,
@@ -385,6 +393,7 @@ export default function ApprovalActionButtons({
             actor_id: actorIdForHistory,
             action_type: 'reject',
             action_comment: opinion.trim(),
+            dedupe_key: buildHistoryDedupeKey('reject', `line:${activeLine.line_no}`),
           });
           fanoutWorkApprovalNotificationQuiet(supabase, {
             actorId: actorIdForHistory,
@@ -416,6 +425,7 @@ export default function ApprovalActionButtons({
             actor_id: actorIdForHistory,
             action_type: 'cancel_relay',
             action_comment: `${roleName} 취소승인 · ${opinion.trim()}`,
+            dedupe_key: buildHistoryDedupeKey('cancel_relay', `line:${activeLine.line_no}:writer-handoff`),
           });
           fanoutWorkApprovalNotificationQuiet(supabase, {
             actorId: actorIdForHistory,
@@ -436,6 +446,7 @@ export default function ApprovalActionButtons({
             actor_id: actorIdForHistory,
             action_type: 'cancel_relay',
             action_comment: `${roleName} 취소완료(다음 차수로) · ${opinion.trim()}`,
+            dedupe_key: buildHistoryDedupeKey('cancel_relay', `line:${activeLine.line_no}:next`),
           });
           fanoutWorkApprovalNotificationQuiet(supabase, {
             actorId: actorIdForHistory,
@@ -473,6 +484,7 @@ export default function ApprovalActionButtons({
           actor_id: actorIdForHistory,
           action_type: 'outbound_cancel_done',
           action_comment: '취소 완료(재고환원)',
+          dedupe_key: buildHistoryDedupeKey('outbound_cancel_done', 'final'),
         });
         fanoutWorkApprovalNotificationQuiet(supabase, {
           actorId: actorIdForHistory,
@@ -531,6 +543,10 @@ export default function ApprovalActionButtons({
           action_type: type === 'approved' ? 'approve' : 'reject',
           action_comment:
             type === 'approved' ? normalizeOptionalOpinionForHistory(opinion) : opinion.trim(),
+          dedupe_key: buildHistoryDedupeKey(
+            type === 'approved' ? 'approve' : 'reject',
+            `line:${activeLine.line_no}`
+          ),
         });
 
         if (type === 'rejected') {
@@ -707,6 +723,7 @@ export default function ApprovalActionButtons({
           action_type: 'approve_revoke',
           action_comment: opinion.trim(),
           action_at: now,
+          dedupe_key: buildHistoryDedupeKey('approve_revoke', `line:${revokableApprovalLine.line_no}`),
         });
         fanoutWorkApprovalNotificationQuiet(supabase, {
           actorId: actorIdForHistory,

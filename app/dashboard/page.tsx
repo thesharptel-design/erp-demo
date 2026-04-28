@@ -52,6 +52,19 @@ type DashboardScheduleRow = {
   created_at?: string;
 };
 
+type OpsCleanupNotificationRow = {
+  id: string;
+  read_at: string | null;
+  created_at: string;
+  notification_events:
+    | {
+        type: string;
+        title: string | null;
+        created_at: string;
+      }
+    | null;
+};
+
 type ScheduleListGroup = {
   startDate: string;
   endDate: string;
@@ -103,6 +116,15 @@ export default function DashboardPage() {
     loginAudits: [] as LoginAuditRow[],
   });
   const [loading, setLoading] = useState(true);
+  const [opsCleanupAlert, setOpsCleanupAlert] = useState<{
+    unreadCount: number;
+    latestTitle: string | null;
+    latestCreatedAt: string | null;
+  }>({
+    unreadCount: 0,
+    latestTitle: null,
+    latestCreatedAt: null,
+  });
   const [dashboardUserId, setDashboardUserId] = useState<string | null>(null);
   const [canManageSchedules, setCanManageSchedules] = useState(false);
   const [schedules, setSchedules] = useState<DashboardScheduleRow[]>([]);
@@ -188,17 +210,17 @@ export default function DashboardPage() {
         setSelectedCalendarDate(today);
         setViewedMonthDate(initialCalendarBase);
 
+        let nextCanManageSchedules = false;
         if (user?.id) {
           const { data: profile } = await supabase
             .from('app_users')
             .select('role_name, can_manage_permissions, can_admin_manage')
             .eq('id', user.id)
             .single();
-          setCanManageSchedules(
-            isSystemAdminUser(
-              profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
-            )
+          nextCanManageSchedules = isSystemAdminUser(
+            profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
           );
+          setCanManageSchedules(nextCanManageSchedules);
         } else {
           setCanManageSchedules(false);
         }
@@ -241,6 +263,42 @@ export default function DashboardPage() {
           supabase.from('login_audit_logs').select('success, login_at').order('login_at', { ascending: false }).limit(100),
         ]);
         await loadSchedules();
+        if (user?.id && nextCanManageSchedules) {
+          const { data: rawOpsNotifications } = await supabase
+            .from('user_notifications')
+            .select(
+              `
+                id,
+                read_at,
+                created_at,
+                notification_events!inner (
+                  type,
+                  title,
+                  created_at
+                )
+              `
+            )
+            .eq('user_id', user.id)
+            .is('archived_at', null)
+            .eq('notification_events.type', 'system.attachment_cleanup_failed')
+            .order('created_at', { ascending: false })
+            .limit(10);
+
+          const normalizedOpsRows = ((rawOpsNotifications ?? []) as unknown[]).filter(Boolean) as OpsCleanupNotificationRow[];
+          const unreadCount = normalizedOpsRows.filter((row) => !row.read_at).length;
+          const latest = normalizedOpsRows[0] ?? null;
+          setOpsCleanupAlert({
+            unreadCount,
+            latestTitle: latest?.notification_events?.title ?? null,
+            latestCreatedAt: latest?.created_at ?? null,
+          });
+        } else {
+          setOpsCleanupAlert({
+            unreadCount: 0,
+            latestTitle: null,
+            latestCreatedAt: null,
+          });
+        }
 
         setData({
           inventory: (inventoryData as InventoryRow[]) || [],
@@ -555,6 +613,20 @@ export default function DashboardPage() {
         <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mt-1">
           Integrated Management System Overview
         </p>
+        {canManageSchedules ? (
+          <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-black text-rose-800">
+            <span className="shrink-0">⚠️ 자동정리 실패 알림</span>
+            <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] text-white">
+              미확인 {opsCleanupAlert.unreadCount}건
+            </span>
+            <span className="truncate text-rose-700">
+              {opsCleanupAlert.latestTitle ?? '현재 실패 알림 없음'}
+            </span>
+            <Link href="/dashboard?openInbox=notifications" className="shrink-0 underline underline-offset-2">
+              알림함(🔔) 확인
+            </Link>
+          </div>
+        ) : null}
       </header>
 
       {/* 임시 대시보드 위젯: 달력 + 오늘 브리핑 */}

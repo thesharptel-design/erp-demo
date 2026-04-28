@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { MessageAnchorPanel } from '@/components/inbox/MessageAnchorPanel'
 import { NotificationAnchorPanel } from '@/components/inbox/NotificationAnchorPanel'
@@ -96,6 +96,8 @@ function mapSentRpcRow(raw: Record<string, unknown>): SentMessageRow {
 
 export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Props) {
   const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
   const msgBtnRef = useRef<HTMLButtonElement>(null)
   const notifBtnRef = useRef<HTMLButtonElement>(null)
   const prevOpenRef = useRef<Panel>(null)
@@ -154,6 +156,18 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
     }
     prevOpenRef.current = open
   }, [open])
+
+  useEffect(() => {
+    const requestedPanel = searchParams.get('openInbox')
+    if (requestedPanel !== 'notifications') return
+    setOpen('notifications')
+
+    const nextParams = new URLSearchParams(searchParams.toString())
+    nextParams.delete('openInbox')
+    const nextQuery = nextParams.toString()
+    const nextHref = nextQuery ? `${pathname}?${nextQuery}` : pathname
+    router.replace(nextHref, { scroll: false })
+  }, [pathname, router, searchParams])
 
   const fetchNotifications = useCallback(async () => {
     const { data, error } = await supabase

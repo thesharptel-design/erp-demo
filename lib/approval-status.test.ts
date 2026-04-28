@@ -179,6 +179,19 @@ describe('canLastApproverDirectCancelFinalApproval', () => {
       })
     ).toBe(false)
   })
+
+  it('결재(approver)가 아닌 역할은 마지막 승인자 판정에서 제외한다', () => {
+    expect(
+      canLastApproverDirectCancelFinalApproval({
+        doc: { status: 'approved', remarks: null },
+        orderedFlow: [
+          { line_no: 1, approver_id: 'u1', approver_role: 'reviewer', status: 'approved' },
+          { line_no: 2, approver_id: 'u2', approver_role: 'approver', status: 'approved' },
+        ],
+        currentUserId: 'u1',
+      })
+    ).toBe(false)
+  })
 })
 
 describe('getApprovalDocDetailedStatusLabel', () => {
@@ -469,6 +482,19 @@ describe('getDocDetailOpenHref', () => {
       )
     ).toBe('/outbound-requests/view/33')
   })
+
+  it('대소문자 다른 writer_id/currentUserId도 동일 사용자로 판단한다', () => {
+    expect(
+      getDocDetailOpenHref(
+        {
+          ...base,
+          status: 'rejected',
+          writer_id: 'USER-ABC',
+        },
+        'user-abc'
+      )
+    ).toBe('/approvals/new?resubmit=10')
+  })
 })
 
 describe('getOutboundRequestRowPresentation', () => {
@@ -493,5 +519,28 @@ describe('getOutboundRequestRowPresentation', () => {
       reqStatus: 'approved',
     })
     expect(p.label).toBe('취소 릴레이 진행')
+  })
+
+  it('shows 취소 완료 for cancelled request without approval doc', () => {
+    const p = getOutboundRequestRowPresentation({
+      approvalDoc: null,
+      lines: [],
+      reqStatus: 'cancelled',
+    })
+    expect(p.label).toBe('취소 완료')
+  })
+
+  it('shows 기안자 재고환원 대기 when remarks include 취소승인', () => {
+    const p = getOutboundRequestRowPresentation({
+      approvalDoc: {
+        status: 'approved',
+        remarks: '검토자 취소승인',
+        current_line_no: 0,
+        doc_type: 'outbound_request',
+      },
+      lines: [],
+      reqStatus: 'approved',
+    })
+    expect(p.label).toBe('기안자 재고환원 대기')
   })
 })
