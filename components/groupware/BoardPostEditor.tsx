@@ -192,21 +192,21 @@ export default function BoardPostEditor({
   )
 
   return (
-    <div className="space-y-3 rounded-lg border border-gray-300 bg-white p-3 shadow-sm sm:p-4">
+    <div className="space-y-3 rounded-xl border border-border bg-card p-3 shadow-sm sm:p-4">
       {contentLocked ? (
-        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
           시스템 관리자 권한으로 <span className="font-black">게시판 분류(탭)만</span> 변경할 수 있습니다. 제목·본문은
           작성자만 수정할 수 있습니다.
         </div>
       ) : null}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-3">
         <div className="flex w-full flex-col gap-1 sm:w-44 sm:flex-shrink-0">
-          <label htmlFor={categoryId} className="text-xs font-bold text-gray-600">
+          <label htmlFor={categoryId} className="text-xs font-medium text-muted-foreground">
             {categoryLabel}
           </label>
           <select
             id={categoryId}
-            className="h-10 w-full rounded border border-gray-300 bg-gray-50 px-2 text-sm font-semibold text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-60"
+            className="h-10 w-full rounded-md border border-input bg-background px-2 text-sm font-medium text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
             value={category}
             disabled={disabled}
             onChange={(e) => onCategoryChange(e.target.value)}
@@ -219,7 +219,7 @@ export default function BoardPostEditor({
           </select>
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1">
-          <label htmlFor={titleId} className="text-xs font-bold text-gray-600">
+          <label htmlFor={titleId} className="text-xs font-medium text-muted-foreground">
             제목
           </label>
           <input
@@ -230,7 +230,7 @@ export default function BoardPostEditor({
             readOnly={contentLocked}
             placeholder={titlePlaceholder}
             onChange={(e) => onTitleChange(e.target.value)}
-            className={`h-10 w-full min-w-0 rounded border border-gray-300 px-3 text-sm font-semibold text-gray-900 placeholder:text-gray-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-60 ${contentLocked ? 'cursor-not-allowed bg-gray-100' : ''}`}
+            className={`h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 text-sm font-medium text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60 ${contentLocked ? 'cursor-not-allowed bg-muted' : ''}`}
           />
         </div>
       </div>
@@ -249,27 +249,27 @@ export default function BoardPostEditor({
       />
 
       {!contentLocked ? (
-      <div className="rounded-md border border-dashed border-gray-300 bg-gray-50 px-3 py-2.5">
+      <div className="rounded-lg border border-dashed border-border bg-muted/40 px-3 py-2.5">
         <div className="flex items-start gap-2">
-          <Paperclip className="mt-0.5 h-4 w-4 flex-shrink-0 text-gray-500" aria-hidden />
-          <div className="min-w-0 space-y-1 text-xs leading-snug text-gray-600">
-            <p className="font-bold text-gray-700">첨부·이미지 안내</p>
+          <Paperclip className="mt-0.5 h-4 w-4 flex-shrink-0 text-muted-foreground" aria-hidden />
+          <div className="min-w-0 space-y-1 text-xs leading-snug text-muted-foreground">
+            <p className="font-semibold text-foreground">첨부·이미지 안내</p>
             <p>
-              본문 안에 넣는 그림은 자동으로 <code className="rounded bg-gray-200 px-1">board_attachments</code>{' '}
+              본문 안에 넣는 그림은 자동으로 <code className="rounded bg-muted px-1">board_attachments</code>{' '}
               저장소에 올라갑니다. 파일당 최대 10MB, 이미지 형식만 가능합니다.
             </p>
             <p>
               링크가 걸린 텍스트를 붙여넣으면 링크도 함께 유지될 수 있습니다. 다만 PDF/이미지처럼 원본에서 링크
               정보를 주지 않으면 텍스트만 붙여넣어집니다.
             </p>
-            <p className="text-gray-500">
+            <p className="text-muted-foreground">
               Enter는 한 줄만 내려가고, 빈 줄을 크게 두려면 Shift+Enter로 새 단띉을 쓰면 됩니다.
             </p>
-            <p className="text-gray-500">별도 파일 첨부 UI는 다음 단계에서 확장할 수 있습니다.</p>
+            <p className="text-muted-foreground">별도 파일 첨부 UI는 다음 단계에서 확장할 수 있습니다.</p>
             {showPdfTools ? (
               <div className="pt-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <label className="inline-flex cursor-pointer items-center justify-center rounded border border-gray-300 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-100">
+                  <label className="inline-flex cursor-pointer items-center justify-center rounded-md border border-input bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:bg-muted">
                     {isUploadingPdf ? 'PDF 업로드 중…' : 'PDF 업로드'}
                     <input
                       type="file"
@@ -283,7 +283,7 @@ export default function BoardPostEditor({
                       }}
                     />
                   </label>
-                  <label className="inline-flex cursor-pointer items-center justify-center rounded border border-gray-300 bg-white px-2.5 py-1.5 text-[11px] font-bold text-gray-700 hover:bg-gray-100">
+                  <label className="inline-flex cursor-pointer items-center justify-center rounded-md border border-input bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground hover:bg-muted">
                     {isExtractingPdfLinks ? 'PDF 링크 추출 중…' : 'PDF 업로드 후 링크 추출'}
                     <input
                       type="file"
@@ -298,7 +298,7 @@ export default function BoardPostEditor({
                     />
                   </label>
                 </div>
-                <p className="mt-1 text-[11px] text-gray-500">시스템 관리자만 사용할 수 있습니다. PDF 최대 10MB.</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">시스템 관리자만 사용할 수 있습니다. PDF 최대 10MB.</p>
               </div>
             ) : null}
             {pdfExtractMessage ? (
@@ -314,12 +314,12 @@ export default function BoardPostEditor({
       ) : null}
 
       {(canWriteNotice && onIsNoticeChange) || footer ? (
-        <div className="flex flex-col gap-3 border-t border-gray-200 pt-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-3 border-t border-border pt-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           {canWriteNotice && onIsNoticeChange ? (
-            <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-semibold text-gray-800">
+            <label className="inline-flex cursor-pointer items-center gap-2 text-sm font-medium text-foreground">
               <input
                 type="checkbox"
-                className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 disabled:opacity-50"
+                className="h-4 w-4 rounded border-input text-primary focus:ring-ring disabled:opacity-50"
                 checked={Boolean(isNotice)}
                 disabled={disabled}
                 onChange={(e) => onIsNoticeChange(e.target.checked)}

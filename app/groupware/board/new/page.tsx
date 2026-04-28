@@ -13,6 +13,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { useSingleSubmit } from '@/hooks/useSingleSubmit'
+import PageHeader from '@/components/PageHeader'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 
 export default function NewBoardPostPage() {
   const router = useRouter()
@@ -105,43 +108,38 @@ export default function NewBoardPostPage() {
   }, [bodyHtml, canWriteNotice, category, isNotice, saving, title, router, runSingleSubmit])
 
   if (!ready) {
-    return <div className="mx-auto max-w-4xl p-4 text-sm text-gray-600">불러오는 중…</div>
+    return <div className="mx-auto w-full max-w-[1800px] p-4 text-sm text-muted-foreground md:p-6">불러오는 중…</div>
   }
 
   if (!hasUser) {
     return (
-      <div className="mx-auto max-w-4xl space-y-3 p-4">
-        <h1 className="text-lg font-black text-gray-900">새 글</h1>
-        <p className="text-sm text-gray-600">글을 작성하려면 로그인하세요.</p>
-        <Link
-          href="/login"
-          className="inline-flex rounded bg-blue-600 px-3 py-2 text-sm font-bold text-white hover:bg-blue-700"
-        >
-          로그인
-        </Link>
+      <div className="mx-auto flex w-full max-w-[1800px] flex-col gap-3 p-4 md:p-6">
+        <PageHeader title="새 글" description="글을 작성하려면 로그인하세요." />
+        <Button asChild size="sm" className="w-fit">
+          <Link href="/login">로그인</Link>
+        </Button>
       </div>
     )
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 p-3 sm:p-4">
-      <div className="flex flex-col gap-2 border-b border-gray-200 pb-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-lg font-black text-gray-900 sm:text-xl">새 글</h1>
-          <p className="text-xs text-gray-500 sm:text-sm">제목·본문을 입력한 뒤 등록합니다.</p>
-        </div>
-        <Link
-          href="/groupware/board"
-          className="text-sm font-bold text-gray-600 hover:text-gray-900 hover:underline"
-        >
-          ← 목록
-        </Link>
-      </div>
+    <div className="mx-auto flex w-full max-w-[1800px] min-w-0 flex-col gap-4 bg-background p-4 md:p-6">
+      <PageHeader
+        title="새 글"
+        description="제목·본문을 입력한 뒤 등록합니다."
+        actions={
+          <Button asChild variant="outline" size="sm">
+            <Link href="/groupware/board">← 목록</Link>
+          </Button>
+        }
+      />
 
       {errorMessage ? (
-        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{errorMessage}</div>
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{errorMessage}</div>
       ) : null}
 
+      <Card className="border-border shadow-sm">
+        <CardContent className="p-4 sm:p-6">
       <BoardPostEditor
         categories={BOARD_CATEGORY_OPTIONS}
         category={category}
@@ -158,23 +156,21 @@ export default function NewBoardPostPage() {
         onIsNoticeChange={setIsNotice}
         footer={
           <>
-            <Link
-              href="/groupware/board"
-              className="inline-flex items-center justify-center rounded border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-700 hover:bg-gray-50"
-            >
-              취소
-            </Link>
-            <button
+            <Button asChild variant="outline">
+              <Link href="/groupware/board">취소</Link>
+            </Button>
+            <Button
               type="button"
               onClick={() => void handleSubmit()}
               disabled={saving || isMutating}
-              className="inline-flex items-center justify-center rounded bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
             >
               {saving ? '등록 중…' : '글 작성 완료'}
-            </button>
+            </Button>
           </>
         }
       />
+      </CardContent>
+      </Card>
     </div>
   )
 }

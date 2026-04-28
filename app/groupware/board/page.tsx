@@ -3,6 +3,9 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Image, Trash2 } from 'lucide-react'
+import PageHeader from '@/components/PageHeader'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 import { supabase } from '@/lib/supabase'
 import { isErpRoleAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
 import {
@@ -189,63 +192,55 @@ export default function GroupwareBoardListPage() {
   )
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4 p-3 sm:p-4">
-      <div className="flex flex-col gap-3 border-b border-gray-200 pb-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-lg font-black text-gray-900 sm:text-xl">게시판</h1>
-          <p className="text-xs text-gray-500 sm:text-sm">사내 공지·소식을 확인합니다.</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+    <div className="mx-auto flex w-full max-w-[1800px] min-w-0 flex-col gap-4 bg-background p-4 md:p-6">
+      <PageHeader
+        title="게시판"
+        description="사내 공지·소식을 확인합니다."
+        actions={
+          <div className="flex flex-wrap gap-2">
           {hasSession ? (
-            <Link
-              href="/groupware/board/new"
-              className="inline-flex items-center justify-center rounded bg-blue-600 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 sm:text-sm"
-            >
-              글쓰기
-            </Link>
+            <Button asChild size="sm">
+              <Link href="/groupware/board/new">글쓰기</Link>
+            </Button>
           ) : (
-            <Link
-              href="/login"
-              className="inline-flex items-center justify-center rounded border border-gray-300 bg-white px-3 py-2 text-xs font-bold text-gray-700 hover:bg-gray-50 sm:text-sm"
-            >
-              로그인
-            </Link>
+            <Button asChild variant="outline" size="sm">
+              <Link href="/login">로그인</Link>
+            </Button>
           )}
-        </div>
-      </div>
+          </div>
+        }
+      />
 
-      <div className="flex flex-wrap gap-1 border-b border-gray-200 pb-2">
+      <div className="flex min-w-0 flex-wrap gap-2">
         {BOARD_LIST_TABS.map((t) => {
           const active = tab === t.value
           return (
-            <button
+            <Button
               key={t.value === '' ? 'all' : t.value}
               type="button"
               onClick={() => setTab(t.value)}
-              className={`rounded-full px-3 py-1.5 text-xs font-bold transition-colors sm:text-sm ${
-                active
-                  ? 'bg-blue-600 text-white shadow-sm'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
+              size="sm"
+              variant={active ? 'default' : 'outline'}
+              className="h-8"
             >
               {t.label}
-            </button>
+            </Button>
           )
         })}
       </div>
 
-      {errorMessage ? (
-        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{errorMessage}</div>
-      ) : null}
+      {errorMessage ? <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{errorMessage}</div> : null}
 
       {!loading && hasSession === false ? (
-        <p className="text-sm text-gray-600">목록을 보려면 로그인하세요.</p>
+        <p className="text-sm text-muted-foreground">목록을 보려면 로그인하세요.</p>
       ) : null}
 
-      <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white shadow-sm">
-        <table className="min-w-[760px] w-full border-collapse text-left text-xs sm:text-sm">
-          <thead>
-            <tr className="border-b border-gray-200 bg-gray-50 text-gray-600">
+      <Card className="min-w-0 border-border shadow-sm">
+        <CardContent className="min-w-0 p-0">
+      <div className="min-w-0 overflow-x-auto">
+        <table className="w-full min-w-[760px] border-collapse text-left text-xs text-card-foreground sm:text-sm">
+          <thead className="sticky top-0 z-[1] bg-muted/50">
+            <tr className="border-b border-border text-muted-foreground">
               <th scope="col" className="whitespace-nowrap px-2 py-2 text-right font-bold sm:px-3">
                 번호
               </th>
@@ -264,7 +259,7 @@ export default function GroupwareBoardListPage() {
                 aria-sort="descending"
                 title="작성일 기준 내림차순(최신순) 정렬"
               >
-                날짜 <span className="font-normal text-gray-400">▼</span>
+                날짜 <span className="font-normal text-muted-foreground">▼</span>
               </th>
               <th scope="col" className="whitespace-nowrap px-2 py-2 text-right font-bold sm:px-3">
                 조회
@@ -279,16 +274,16 @@ export default function GroupwareBoardListPage() {
               ) : null}
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-200 text-gray-800">
+          <tbody className="divide-y divide-border text-card-foreground">
             {loading ? (
               <tr>
-                <td colSpan={tableColSpan} className="px-3 py-8 text-center text-gray-500">
+                <td colSpan={tableColSpan} className="px-3 py-8 text-center text-muted-foreground">
                   불러오는 중…
                 </td>
               </tr>
             ) : displayRows.length === 0 ? (
               <tr>
-                <td colSpan={tableColSpan} className="px-3 py-8 text-center text-gray-500">
+                <td colSpan={tableColSpan} className="px-3 py-8 text-center text-muted-foreground">
                   게시글이 없습니다.
                 </td>
               </tr>
@@ -302,53 +297,47 @@ export default function GroupwareBoardListPage() {
                   ? boardAnonymousDisplayName(row.author_id, row.id)
                   : `${authorMeta.icon} ${authorMeta.name}`
                 return (
-                  <tr key={row.id} className="hover:bg-gray-50/80">
-                    <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-gray-600 sm:px-3">
+                  <tr key={row.id} className="hover:bg-muted/40">
+                    <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-muted-foreground sm:px-3">
                       {postNo ?? '-'}
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 sm:px-3">
-                      <span
-                        className={
-                          notice
-                            ? 'font-bold text-red-600'
-                            : 'font-semibold text-gray-700'
-                        }
-                      >
+                      <span className={notice ? 'font-semibold text-red-600' : 'font-medium text-foreground'}>
                         {notice ? '공지' : catLabel}
                       </span>
                     </td>
                     <td className="max-w-[1px] px-2 py-2 sm:px-3">
                       <Link
                         href={`/groupware/board/${row.id}`}
-                        className={`group inline-flex min-w-0 max-w-full items-center gap-1.5 font-semibold hover:underline ${
-                          notice ? 'text-red-700' : 'text-gray-900'
+                        className={`group inline-flex min-w-0 max-w-full items-center gap-1.5 font-medium hover:underline ${
+                          notice ? 'text-red-700' : 'text-foreground'
                         }`}
                       >
                         <span className="truncate">{row.title}</span>
                         {row.comment_count > 0 ? (
-                          <span className="flex-shrink-0 font-bold text-blue-600">({row.comment_count})</span>
+                          <span className="flex-shrink-0 font-bold text-primary">({row.comment_count})</span>
                         ) : null}
                         {row.has_images ? (
                           <Image
-                            className="h-3.5 w-3.5 flex-shrink-0 text-gray-500 sm:h-4 sm:w-4"
+                            className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground sm:h-4 sm:w-4"
                             aria-label="이미지 포함"
                           />
                         ) : null}
                       </Link>
                     </td>
-                    <td className="whitespace-nowrap px-2 py-2 text-gray-600 sm:px-3">{author}</td>
-                    <td className="whitespace-nowrap px-2 py-2 text-right text-gray-600 sm:px-3">
+                    <td className="whitespace-nowrap px-2 py-2 text-muted-foreground sm:px-3">{author}</td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right text-muted-foreground sm:px-3">
                       {formatListDate(row.created_at)}
                     </td>
-                    <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-gray-600 sm:px-3">
+                    <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-muted-foreground sm:px-3">
                       {row.view_count}
                     </td>
-                    <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-gray-600 sm:px-3">
+                    <td className="whitespace-nowrap px-2 py-2 text-right tabular-nums text-muted-foreground sm:px-3">
                       {row.like_count}
                     </td>
                     {isRoleAdmin ? (
                       <td className="whitespace-nowrap px-1 py-2 text-center sm:px-2">
-                        <button
+                        <Button
                           type="button"
                           title="글 삭제 (관리자 role: admin)"
                           aria-label="글 삭제"
@@ -357,10 +346,12 @@ export default function GroupwareBoardListPage() {
                             e.stopPropagation()
                             void deletePostFromList(row.id, row.title)
                           }}
-                          className="inline-flex items-center justify-center rounded border border-red-200 bg-red-50 p-1.5 text-red-700 hover:bg-red-100"
+                          variant="outline"
+                          size="icon"
+                          className="h-8 w-8 border-red-200 bg-red-50 text-red-700 hover:bg-red-100 hover:text-red-700"
                         >
                           <Trash2 className="h-3.5 w-3.5 sm:h-4 sm:w-4" aria-hidden />
-                        </button>
+                        </Button>
                       </td>
                     ) : null}
                   </tr>
@@ -370,6 +361,8 @@ export default function GroupwareBoardListPage() {
           </tbody>
         </table>
       </div>
+      </CardContent>
+      </Card>
     </div>
   )
 }

@@ -14,6 +14,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 
 const VIEW_SESSION_KEY = 'gw_board_viewed:'
 
@@ -301,7 +303,7 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
 
   if (loading) {
     return (
-      <div className="mx-auto max-w-3xl p-4 text-sm text-gray-600">
+      <div className="mx-auto w-full max-w-[1800px] p-4 text-sm text-muted-foreground md:p-6">
         <p>불러오는 중…</p>
       </div>
     )
@@ -309,11 +311,11 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
 
   if (errorMessage || !post) {
     return (
-      <div className="mx-auto max-w-3xl space-y-4 p-4">
-        <p className="text-sm text-red-800">{errorMessage || '게시글을 찾을 수 없습니다.'}</p>
-        <Link href="/groupware/board" className="text-sm font-bold text-blue-600 hover:underline">
-          목록으로
-        </Link>
+      <div className="mx-auto flex w-full max-w-[1800px] flex-col gap-4 p-4 md:p-6">
+        <p className="text-sm text-destructive">{errorMessage || '게시글을 찾을 수 없습니다.'}</p>
+        <Button asChild variant="outline" size="sm" className="w-fit">
+          <Link href="/groupware/board">목록으로</Link>
+        </Button>
       </div>
     )
   }
@@ -324,43 +326,44 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
   const isAuthor = currentUserId != null && currentUserId === post.author_id
 
   return (
-    <div className="mx-auto max-w-3xl bg-white text-gray-900 shadow-sm sm:rounded-lg sm:border sm:border-gray-200">
-      <article className="border-b border-gray-200 px-3 py-4 sm:px-6 sm:py-5">
-        <nav className="mb-4 flex flex-wrap items-center gap-1 text-xs font-bold text-gray-500 sm:text-sm">
-          <Link href="/groupware/board" className="text-gray-700 hover:text-blue-600 hover:underline">
+    <div className="mx-auto flex w-full max-w-[1800px] min-w-0 flex-col gap-4 bg-background p-4 md:p-6">
+      <Card className="min-w-0 border-border shadow-sm">
+      <article className="min-w-0 border-b border-border px-3 py-4 sm:px-6 sm:py-5">
+        <nav className="mb-4 flex flex-wrap items-center gap-1 text-xs font-bold text-muted-foreground sm:text-sm">
+          <Link href="/groupware/board" className="text-muted-foreground hover:text-primary hover:underline">
             게시판
           </Link>
-          <span className="text-gray-300">|</span>
-          <span className={notice ? 'text-red-600' : 'text-gray-800'}>{bracketLabel}</span>
+          <span className="text-border">|</span>
+          <span className={notice ? 'text-red-600' : 'text-foreground'}>{bracketLabel}</span>
         </nav>
 
-        <div className="flex flex-col gap-2 border-b border-gray-100 pb-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex flex-col gap-2 border-b border-border pb-3 sm:flex-row sm:items-start sm:justify-between">
           <h1
-            className={`text-xl font-black leading-snug sm:text-2xl ${
-              notice ? 'text-red-800' : 'text-gray-900'
+            className={`text-xl font-semibold leading-snug sm:text-2xl ${
+              notice ? 'text-red-800' : 'text-foreground'
             }`}
           >
             {post.title}
           </h1>
           <time
-            className="shrink-0 text-right text-xs text-gray-400 sm:text-sm"
+            className="shrink-0 text-right text-xs text-muted-foreground sm:text-sm"
             dateTime={post.created_at}
           >
             {formatDetailDate(post.created_at)}
           </time>
         </div>
 
-        <div className="mt-3 flex flex-col gap-2 border-b border-gray-100 pb-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="mt-3 flex flex-col gap-2 border-b border-border pb-4 text-sm sm:flex-row sm:items-center sm:justify-between">
           <div
             className={
               isAnonymousBoardCategory(post.category)
-                ? 'font-bold text-slate-700'
-                : 'font-bold text-gray-800'
+                ? 'font-bold text-foreground'
+                : 'font-bold text-foreground'
             }
           >
             {authorName}
           </div>
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500 sm:text-sm">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground sm:text-sm">
             <span>조회수 {post.view_count}</span>
             <span>추천수 {post.like_count}</span>
             <span>댓글 {post.comment_count}</span>
@@ -368,16 +371,17 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
         </div>
 
         <BoardPostBodyWithLightbox
-          html={post.body_html || '<p class="text-gray-500">내용이 없습니다.</p>'}
-          className="board-post-html mt-5 max-w-full min-h-[160px] overflow-x-auto text-sm leading-[1.6] text-gray-900 sm:text-base [&_p]:leading-[1.6] [&_li]:leading-[1.6] [&_h1]:leading-[1.6] [&_h2]:leading-[1.6] [&_a]:text-blue-600 [&_a]:underline [&_h1]:text-xl [&_h1]:font-bold [&_h2]:text-lg [&_h2]:font-bold [&_img]:max-h-96 [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded [&_img]:border [&_img]:border-gray-200 [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:m-0 [&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-gray-300 [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top [&_th]:border [&_th]:border-gray-300 [&_th]:bg-gray-100 [&_th]:px-2 [&_th]:py-1.5 [&_ul]:list-disc [&_ul]:pl-6"
+          html={post.body_html || '<p class="text-muted-foreground">내용이 없습니다.</p>'}
+          className="board-post-html mt-5 min-h-[160px] max-w-full overflow-x-auto text-sm leading-[1.6] text-foreground sm:text-base [&_p]:leading-[1.6] [&_li]:leading-[1.6] [&_h1]:leading-[1.6] [&_h2]:leading-[1.6] [&_a]:text-blue-600 [&_a]:underline [&_h1]:text-xl [&_h1]:font-bold [&_h2]:text-lg [&_h2]:font-bold [&_img]:max-h-96 [&_img]:h-auto [&_img]:w-auto [&_img]:max-w-full [&_img]:rounded [&_img]:border [&_img]:border-border [&_ol]:list-decimal [&_ol]:pl-6 [&_p]:m-0 [&_table]:my-3 [&_table]:w-full [&_table]:min-w-[720px] [&_table]:border-collapse [&_table]:overflow-x-auto [&_td]:border [&_td]:border-border [&_td]:px-2 [&_td]:py-1.5 [&_td]:align-top [&_th]:border [&_th]:border-border [&_th]:bg-muted [&_th]:px-2 [&_th]:py-1.5 [&_ul]:list-disc [&_ul]:pl-6"
         />
 
-        <div className="mt-8 flex flex-col items-center gap-2 border-y border-gray-100 py-6">
-          <button
+        <div className="mt-8 flex flex-col items-center gap-2 border-y border-border py-6">
+          <Button
             type="button"
             onClick={() => void togglePostLike()}
             disabled={!currentUserId}
-            className={`inline-flex items-center gap-2 rounded-lg border-2 px-6 py-2.5 text-sm font-black transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+            variant="outline"
+            className={`inline-flex items-center gap-2 px-6 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${
               likedPost
                 ? 'border-blue-600 bg-blue-50 text-blue-800'
                 : 'border-blue-400 bg-white text-blue-700 hover:bg-blue-50/60'
@@ -385,26 +389,26 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
           >
             <ThumbsUp className="h-5 w-5" aria-hidden />
             추천 {post.like_count}
-          </button>
+          </Button>
           {!currentUserId ? (
-            <p className="text-xs text-gray-400">로그인 후 추천할 수 있습니다.</p>
+            <p className="text-xs text-muted-foreground">로그인 후 추천할 수 있습니다.</p>
           ) : null}
           {isAuthor || canMoveBoardTab ? (
             postLikersLoading ? (
-              <p className="text-xs text-gray-400">추천자 목록 불러오는 중…</p>
+              <p className="text-xs text-muted-foreground">추천자 목록 불러오는 중…</p>
             ) : postLikers.length > 0 ? (
-              <div className="w-full max-w-md rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-left">
-                <p className="text-[10px] font-black uppercase tracking-wide text-gray-500">
-                  추천한 사람 <span className="font-bold normal-case text-gray-400">(작성자·시스템 관리자만 표시)</span>
+              <div className="w-full max-w-md rounded-xl border border-border bg-muted/40 px-4 py-3 text-left">
+                <p className="text-[10px] font-black uppercase tracking-wide text-muted-foreground">
+                  추천한 사람 <span className="font-bold normal-case text-muted-foreground">(작성자·시스템 관리자만 표시)</span>
                 </p>
-                <ul className="mt-2 max-h-40 space-y-1.5 overflow-y-auto text-xs font-bold text-gray-800">
+                <ul className="mt-2 max-h-40 space-y-1.5 overflow-y-auto text-xs font-bold text-foreground">
                   {postLikers.map((liker) => (
                     <li
                       key={`${liker.user_id}-${liker.created_at}`}
-                      className="flex justify-between gap-2 border-b border-gray-100 pb-1 last:border-0"
+                      className="flex justify-between gap-2 border-b border-border pb-1 last:border-0"
                     >
                       <span className="min-w-0 truncate">{liker.display_name}</span>
-                      <time className="shrink-0 text-[10px] font-bold text-gray-400" dateTime={liker.created_at}>
+                      <time className="shrink-0 text-[10px] font-bold text-muted-foreground" dateTime={liker.created_at}>
                         {formatDetailDate(liker.created_at)}
                       </time>
                     </li>
@@ -412,51 +416,39 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
                 </ul>
               </div>
             ) : post.like_count === 0 ? (
-              <p className="text-xs text-gray-400">아직 추천한 사람이 없습니다.</p>
+              <p className="text-xs text-muted-foreground">아직 추천한 사람이 없습니다.</p>
             ) : null
           ) : null}
         </div>
 
         {isAuthor || isRoleAdmin || canMoveBoardTab ? (
-          <div className="mt-4 flex justify-end gap-3 border-b border-gray-100 pb-4 text-sm">
+          <div className="mt-4 flex justify-end gap-2 border-b border-border pb-4 text-sm">
             {isAuthor ? (
-              <Link
-                href={`/groupware/board/${post.id}/edit`}
-                className="font-bold text-gray-600 hover:text-blue-600 hover:underline"
-              >
-                수정
-              </Link>
+              <Button asChild variant="outline" size="sm">
+                <Link href={`/groupware/board/${post.id}/edit`}>수정</Link>
+              </Button>
             ) : null}
             {canMoveBoardTab && !isAuthor ? (
-              <Link
-                href={`/groupware/board/${post.id}/edit`}
-                className="font-bold text-gray-600 hover:text-blue-600 hover:underline"
-              >
-                탭 이동
-              </Link>
+              <Button asChild variant="outline" size="sm">
+                <Link href={`/groupware/board/${post.id}/edit`}>탭 이동</Link>
+              </Button>
             ) : null}
             {isAuthor || isRoleAdmin ? (
-              <button
-                type="button"
-                onClick={() => void deletePost()}
-                className="font-bold text-gray-600 hover:text-red-600"
-              >
+              <Button type="button" variant="outline" size="sm" onClick={() => void deletePost()} className="text-red-600 hover:text-red-700">
                 삭제
-              </button>
+              </Button>
             ) : null}
           </div>
         ) : null}
 
         <div className="mt-5">
-          <Link
-            href="/groupware/board"
-            className="flex w-full items-center justify-center rounded border border-gray-300 bg-gray-50 py-3 text-sm font-black text-gray-800 hover:bg-gray-100"
-          >
-            목록으로
-          </Link>
+          <Button asChild variant="outline" className="w-full">
+            <Link href="/groupware/board">목록으로</Link>
+          </Button>
         </div>
       </article>
 
+      <CardContent className="pt-0">
       <BoardCommentsPanel
         postId={post.id}
         currentUserId={currentUserId}
@@ -464,6 +456,8 @@ export default function GroupwareBoardPostPage({ params }: { params: Promise<{ i
         anonymousBoard={isAnonymousBoardCategory(post.category)}
         onMetaChange={() => void refreshPostMeta(post.id)}
       />
+      </CardContent>
+      </Card>
     </div>
   )
 }

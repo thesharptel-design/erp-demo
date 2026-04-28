@@ -11,6 +11,9 @@ import {
   mapInboxRpcItemToDashboardApprovalRow,
   parseApprovalInboxRpcPayload,
 } from '@/lib/approval-inbox-rpc';
+import PageHeader from '@/components/PageHeader';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
 // --- 타입 정의 ---
 type InventoryRow = { item_id: number; current_qty: number; available_qty?: number | null; quarantine_qty?: number | null; };
@@ -447,7 +450,7 @@ export default function DashboardPage() {
     }
   };
 
-  if (loading) return <div className="flex min-h-screen items-center justify-center bg-gray-50"><div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div></div>;
+  if (loading) return <div className="flex min-h-screen items-center justify-center bg-muted/30"><div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent"></div></div>;
 
   // 한국 시간(KST) 기준으로 오늘 날짜 구하기
   const today = getKstToday();
@@ -603,18 +606,16 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="p-6 max-w-[1600px] mx-auto font-sans bg-gray-50 min-h-screen space-y-6">
+    <div className="mx-auto flex min-h-screen max-w-[1800px] flex-col gap-6 bg-background p-4 font-sans md:p-6">
       
       {/* 🌟 헤더 영역 */}
-      <header className="mb-8">
-        <h1 className="text-4xl font-black uppercase tracking-tighter text-gray-900 italic">
-          <span className="text-blue-600">DASHBOARD</span> 
-        </h1>
-        <p className="text-gray-400 text-xs font-bold uppercase tracking-widest mt-1">
-          Integrated Management System Overview
-        </p>
+      <header>
+        <PageHeader
+          title="DASHBOARD"
+          description=""
+        />
         {canManageSchedules ? (
-          <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-black text-rose-800">
+          <div className="mt-3 inline-flex max-w-full items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-medium text-rose-800">
             <span className="shrink-0">⚠️ 자동정리 실패 알림</span>
             <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] text-white">
               미확인 {opsCleanupAlert.unreadCount}건
@@ -630,15 +631,17 @@ export default function DashboardPage() {
       </header>
 
       {/* 임시 대시보드 위젯: 달력 + 오늘 브리핑 */}
-      <section className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div ref={calendarPanelRef} className="relative xl:col-span-2 bg-white border-2 border-black rounded-2xl p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+      <section className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <div ref={calendarPanelRef} className="relative xl:col-span-2">
+        <Card className="border-border shadow-sm">
+          <CardContent className="p-6">
           <div className="flex items-end justify-between mb-4">
-            <h2 className="text-base font-black">📅 {currentYear}년 {monthKorean} 캘린더</h2>
+            <h2 className="text-base font-semibold text-foreground">📅 {currentYear}년 {monthKorean} 캘린더</h2>
             <div className="flex items-center gap-2">
               <select
                 value={currentYear}
                 onChange={(e) => void moveCalendarToYearMonth(Number(e.target.value), currentMonth)}
-                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-[11px] font-black text-gray-700"
+                className="rounded-lg border border-input bg-background px-2 py-1 text-[11px] font-semibold text-foreground"
               >
                 {selectableYears.map((year) => (
                   <option key={year} value={year}>
@@ -649,7 +652,7 @@ export default function DashboardPage() {
               <select
                 value={currentMonth}
                 onChange={(e) => void moveCalendarToYearMonth(currentYear, Number(e.target.value))}
-                className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-[11px] font-black text-gray-700"
+                className="rounded-lg border border-input bg-background px-2 py-1 text-[11px] font-semibold text-foreground"
               >
                 {Array.from({ length: 12 }, (_, idx) => idx + 1).map((month) => (
                   <option key={month} value={month}>
@@ -657,37 +660,43 @@ export default function DashboardPage() {
                   </option>
                 ))}
               </select>
-              <button
+              <Button
                 type="button"
                 onClick={() => void moveCalendarMonth(-1)}
-                className="rounded-lg border border-gray-300 px-2 py-1 text-[11px] font-black text-gray-600 hover:bg-gray-100"
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-[11px]"
               >
                 이전달
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={() => void moveCalendarToToday()}
-                className="rounded-lg border border-blue-300 bg-blue-50 px-2 py-1 text-[11px] font-black text-blue-700 hover:bg-blue-100"
+                variant="outline"
+                size="sm"
+                className="h-8 border-blue-300 bg-blue-50 px-2 text-[11px] text-blue-700 hover:bg-blue-100 hover:text-blue-700"
               >
                 오늘
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={() => void moveCalendarMonth(1)}
-                className="rounded-lg border border-gray-300 px-2 py-1 text-[11px] font-black text-gray-600 hover:bg-gray-100"
+                variant="outline"
+                size="sm"
+                className="h-8 px-2 text-[11px]"
               >
                 다음달
-              </button>
+              </Button>
             </div>
           </div>
           <div className="grid grid-cols-7 gap-2 text-center mb-2">
             {weekdayLabels.map((label) => (
-              <div key={label} className={`text-[11px] font-black ${label === '일' ? 'text-rose-500' : label === '토' ? 'text-blue-500' : 'text-gray-500'}`}>
+              <div key={label} className={`text-[11px] font-black ${label === '일' ? 'text-rose-500' : label === '토' ? 'text-blue-500' : 'text-muted-foreground'}`}>
                 {label}
               </div>
             ))}
           </div>
-          <div className="mb-3 flex items-center gap-2 text-[10px] font-bold text-gray-500">
+          <div className="mb-3 flex items-center gap-2 text-[10px] font-bold text-muted-foreground">
             <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-blue-500"></span>일정 있음</span>
             <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-black"></span>선택 날짜</span>
             <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-rose-500"></span>높은 우선순위</span>
@@ -705,10 +714,10 @@ export default function DashboardPage() {
                     : ''
                 } ${
                   cell.isToday
-                    ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
+                      ? 'bg-blue-600 border-blue-600 text-white shadow-sm'
                     : cell.isCurrentMonth
-                      ? 'bg-gray-50 border-gray-200 text-gray-800 hover:bg-blue-50'
-                      : 'bg-white border-gray-100 text-gray-300'
+                      ? 'bg-muted/50 border-border text-foreground hover:bg-blue-50'
+                      : 'bg-background border-border/70 text-muted-foreground'
                 }`}
               >
                 <div className="flex flex-col items-center justify-center leading-tight">
@@ -720,7 +729,7 @@ export default function DashboardPage() {
                           ? 'bg-rose-600 text-white'
                           : schedulesByDay[cell.day]?.maxPriority === 'normal'
                             ? cell.isToday ? 'bg-white text-blue-700' : 'bg-blue-600 text-white'
-                            : 'bg-gray-500 text-white'
+                            : 'bg-muted-foreground text-white'
                       }`}
                     >
                       {schedulesByDay[cell.day]?.count ?? 0}건
@@ -736,26 +745,26 @@ export default function DashboardPage() {
           {canManageSchedules ? (
             <div
               ref={calendarFormRef}
-              className={`absolute z-20 w-[340px] -translate-x-1/2 -translate-y-full rounded-xl border border-gray-300 bg-white p-3 shadow-xl transition-all duration-300 ease-out ${showScheduleForm ? 'pointer-events-auto opacity-100 scale-100' : 'pointer-events-none opacity-0 scale-95'}`}
+              className={`absolute z-20 w-[340px] -translate-x-1/2 -translate-y-full rounded-xl border border-border bg-card p-3 shadow-xl transition-all duration-300 ease-out ${showScheduleForm ? 'pointer-events-auto opacity-100 scale-100' : 'pointer-events-none opacity-0 scale-95'}`}
               style={{ top: scheduleFormPosition.top, left: scheduleFormPosition.left }}
               tabIndex={-1}
             >
               <div className="mb-1 flex items-center justify-between">
-                <p className="text-[11px] font-black text-gray-800">
+                <p className="text-[11px] font-black text-foreground">
                   {editingScheduleId ? '일정 수정' : '일정 등록'}
                 </p>
                 <button
                   type="button"
                   onClick={() => setShowScheduleForm(false)}
-                  className="rounded-md px-2 py-1 text-[10px] font-black text-gray-500 hover:bg-gray-100"
+                  className="rounded-md px-2 py-1 text-[10px] font-black text-muted-foreground hover:bg-muted"
                 >
                   닫기
                 </button>
               </div>
-              <p className="text-[11px] font-black text-gray-800">
+              <p className="text-[11px] font-black text-foreground">
                 선택 날짜: {scheduleDate || '-'}
               </p>
-              <p className="mt-1 text-[10px] font-bold text-gray-500">
+              <p className="mt-1 text-[10px] font-bold text-muted-foreground">
                 {editingScheduleId ? '수정은 단일 날짜 일정만 변경됩니다.' : '범위 등록: 시작일~종료일까지 동일 일정이 생성됩니다.'}
               </p>
               <div className="mt-2 space-y-2">
@@ -763,21 +772,21 @@ export default function DashboardPage() {
                   value={scheduleTitle}
                   onChange={(e) => setScheduleTitle(e.target.value)}
                   placeholder="일정 제목"
-                  className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 placeholder:text-gray-400 focus:border-blue-300 focus:outline-none"
+                  className="w-full rounded-lg border border-input bg-background px-2.5 py-2 text-xs font-bold text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <input
                     type="date"
                     value={scheduleDate}
                     onChange={(e) => setScheduleDate(e.target.value)}
-                    className="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 focus:border-blue-300 focus:outline-none"
+                    className="rounded-lg border border-input bg-background px-2.5 py-2 text-xs font-bold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />
                   <input
                     type="date"
                     value={scheduleEndDate}
                     onChange={(e) => setScheduleEndDate(e.target.value)}
                     disabled={editingScheduleId !== null}
-                    className="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 focus:border-blue-300 focus:outline-none disabled:bg-gray-100 disabled:text-gray-400"
+                    className="rounded-lg border border-input bg-background px-2.5 py-2 text-xs font-bold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:bg-muted disabled:text-muted-foreground"
                   />
                 </div>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -785,20 +794,20 @@ export default function DashboardPage() {
                     type="time"
                     value={scheduleStartTime}
                     onChange={(e) => setScheduleStartTime(e.target.value)}
-                    className="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 focus:border-blue-300 focus:outline-none"
+                    className="rounded-lg border border-input bg-background px-2.5 py-2 text-xs font-bold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />
                   <input
                     type="time"
                     value={scheduleEndTime}
                     onChange={(e) => setScheduleEndTime(e.target.value)}
-                    className="rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 focus:border-blue-300 focus:outline-none"
+                    className="rounded-lg border border-input bg-background px-2.5 py-2 text-xs font-bold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   />
                 </div>
                 <input
                   value={scheduleLocation}
                   onChange={(e) => setScheduleLocation(e.target.value)}
                   placeholder="장소 (선택)"
-                  className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 placeholder:text-gray-400 focus:border-blue-300 focus:outline-none"
+                  className="w-full rounded-lg border border-input bg-background px-2.5 py-2 text-xs font-bold text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
                 <div className="grid grid-cols-3 gap-2">
                   {[
@@ -813,11 +822,11 @@ export default function DashboardPage() {
                       className={`rounded-lg px-2.5 py-2 text-[11px] font-black ${
                         schedulePriority === priority.key
                           ? priority.key === 'high'
-                            ? 'bg-rose-500 text-white'
+                          ? 'bg-rose-500 text-white'
                             : priority.key === 'normal'
                               ? 'bg-blue-500 text-white'
                               : 'bg-gray-700 text-white'
-                          : 'border border-gray-300 bg-white text-gray-600'
+                          : 'border border-input bg-background text-muted-foreground'
                       }`}
                     >
                       {priority.label}
@@ -829,7 +838,7 @@ export default function DashboardPage() {
                   onChange={(e) => setScheduleDescription(e.target.value)}
                   placeholder="메모 (선택)"
                   rows={2}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-2.5 py-2 text-xs font-bold text-gray-800 placeholder:text-gray-400 focus:border-blue-300 focus:outline-none"
+                  className="w-full rounded-lg border border-input bg-background px-2.5 py-2 text-xs font-bold text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
                 <div className="flex items-center gap-2">
                   <button
@@ -844,7 +853,7 @@ export default function DashboardPage() {
                     <button
                       type="button"
                       onClick={resetScheduleForm}
-                      className="inline-flex items-center rounded-lg bg-gray-100 px-3 py-2 text-[11px] font-black text-gray-700 hover:bg-gray-200"
+                      className="inline-flex items-center rounded-lg border border-input bg-background px-3 py-2 text-[11px] font-black text-foreground hover:bg-muted"
                     >
                       취소
                     </button>
@@ -853,30 +862,35 @@ export default function DashboardPage() {
               </div>
             </div>
           ) : null}
+          </CardContent>
+        </Card>
         </div>
 
-        <div className="rounded-2xl border-2 border-black bg-white p-6 text-gray-900 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
-          <h2 className="text-base font-black">✨ 일정</h2>
-          <p className="mt-1 text-[11px] font-bold text-gray-400">등록된 일정 목록 (현재 선택 월)</p>
-          <div className="mt-4 rounded-xl border border-gray-200 bg-gray-50 px-3 py-3">
+        <Card className="border-border shadow-sm">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-semibold">✨ 일정</CardTitle>
+            <p className="text-[11px] font-medium text-muted-foreground">등록된 일정 목록 (현재 선택 월)</p>
+          </CardHeader>
+          <CardContent className="pt-0">
+          <div className="mt-4 rounded-xl border border-border bg-muted/40 px-3 py-3">
             <div className="mb-2 flex items-center justify-between">
-              <span className="text-xs font-black text-gray-800">등록 일정 (전체)</span>
-              <span className="text-[10px] font-bold text-gray-500">{groupedSchedules.length}건</span>
+              <span className="text-xs font-black text-foreground">등록 일정 (전체)</span>
+              <span className="text-[10px] font-bold text-muted-foreground">{groupedSchedules.length}건</span>
             </div>
             <div className="space-y-2">
               {visibleScheduleItems.length === 0 ? (
-                <p className="text-[11px] font-bold text-gray-500">등록된 일정이 없습니다.</p>
+                <p className="text-[11px] font-bold text-muted-foreground">등록된 일정이 없습니다.</p>
               ) : (
                 visibleScheduleItems.map((group) => {
                   const schedule = group.rows[0];
                   const dateLabel =
                     group.startDate === group.endDate ? group.startDate : `${group.startDate} ~ ${group.endDate}`;
                   return (
-                  <div key={`${schedule.id}-${group.startDate}-${group.endDate}`} className="rounded-lg border border-gray-200 bg-white px-2.5 py-2">
+                  <div key={`${schedule.id}-${group.startDate}-${group.endDate}`} className="rounded-lg border border-border bg-background px-2.5 py-2">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <p className="truncate text-xs font-black text-gray-900">{schedule.title}</p>
-                        <p className="mt-0.5 text-[10px] font-bold text-gray-500">
+                        <p className="truncate text-xs font-black text-foreground">{schedule.title}</p>
+                        <p className="mt-0.5 text-[10px] font-bold text-muted-foreground">
                           {dateLabel}
                           {' · '}
                           {schedule.start_time ? schedule.start_time.slice(0, 5) : '종일'}
@@ -889,7 +903,7 @@ export default function DashboardPage() {
                               ? 'bg-rose-100 text-rose-700'
                               : schedule.priority === 'normal'
                                 ? 'bg-blue-100 text-blue-700'
-                                : 'bg-gray-200 text-gray-700'
+                                : 'bg-muted text-foreground'
                           }`}
                         >
                           {schedule.priority === 'high' ? '높음' : schedule.priority === 'normal' ? '보통' : '낮음'}
@@ -900,7 +914,7 @@ export default function DashboardPage() {
                           <button
                             type="button"
                             onClick={() => handleScheduleEdit(schedule)}
-                            className="rounded-md bg-gray-100 px-2 py-1 text-[10px] font-black text-gray-700 hover:bg-gray-200"
+                            className="rounded-md border border-input bg-background px-2 py-1 text-[10px] font-black text-foreground hover:bg-muted"
                           >
                             수정
                           </button>
@@ -916,7 +930,7 @@ export default function DashboardPage() {
                       ) : null}
                     </div>
                     {schedule.description ? (
-                      <p className="mt-1 text-[10px] font-bold text-gray-500">{schedule.description}</p>
+                      <p className="mt-1 text-[10px] font-bold text-muted-foreground">{schedule.description}</p>
                     ) : null}
                   </div>
                 )})
@@ -926,7 +940,7 @@ export default function DashboardPage() {
               <button
                 type="button"
                 onClick={() => setScheduleListVisibleCount((prev) => prev + 4)}
-                className="mt-2 inline-flex items-center rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-black text-gray-600 border border-gray-300 hover:bg-gray-100"
+                className="mt-2 inline-flex items-center rounded-lg bg-background px-2.5 py-1.5 text-[10px] font-black text-muted-foreground border border-input hover:bg-muted"
               >
                 ... 더보기
               </button>
@@ -935,31 +949,32 @@ export default function DashboardPage() {
               <button
                 type="button"
                 onClick={() => setScheduleListVisibleCount(4)}
-                className="mt-2 ml-2 inline-flex items-center rounded-lg bg-white px-2.5 py-1.5 text-[10px] font-black text-gray-600 border border-gray-300 hover:bg-gray-100"
+                className="mt-2 ml-2 inline-flex items-center rounded-lg bg-background px-2.5 py-1.5 text-[10px] font-black text-muted-foreground border border-input hover:bg-muted"
               >
                 접기
               </button>
             ) : null}
           </div>
-        </div>
+          </CardContent>
+        </Card>
       </section>
 
       {/* 🌟 최근 현황 리스트 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
+      <div className="mt-2 grid grid-cols-1 gap-6 lg:grid-cols-3">
         
         {/* 최근 발주 */}
-        <div className="bg-white border-2 border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col">
-          <div className="flex justify-between items-end mb-4 border-b-2 border-gray-100 pb-3">
-            <h2 className="text-sm font-black flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-blue-500"></span>최근 발주 현황</h2>
-            <Link href="/purchase-orders" className="text-[10px] font-bold text-gray-400 hover:text-blue-600 underline">전체보기 →</Link>
+        <div className="flex flex-col rounded-xl border border-border bg-card p-5 shadow-sm">
+          <div className="mb-4 flex items-end justify-between border-b border-border pb-3">
+            <h2 className="flex items-center gap-2 text-sm font-semibold"><span className="h-2 w-2 rounded-full bg-blue-500"></span>최근 발주 현황</h2>
+            <Link href="/purchase-orders" className="text-[10px] font-medium text-muted-foreground hover:text-primary underline">전체보기 →</Link>
           </div>
           <div className="space-y-2 flex-1">
-            {data.purchaseOrders.length === 0 ? <p className="text-xs text-gray-400 font-bold py-4 text-center">데이터가 없습니다.</p> : 
+            {data.purchaseOrders.length === 0 ? <p className="py-4 text-center text-xs font-bold text-muted-foreground">데이터가 없습니다.</p> : 
               data.purchaseOrders.map((po) => (
-                <Link key={po.id} href={`/purchase-orders/${po.id}`} className="flex justify-between items-center p-3 rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all">
+                <Link key={po.id} href={`/purchase-orders/${po.id}`} className="flex justify-between items-center rounded-xl border border-transparent p-3 transition-all hover:border-border hover:bg-muted/50">
                   <div className="min-w-0 flex-1 pr-2">
-                    <p className="text-xs font-black text-gray-900 truncate">{po.po_no}</p>
-                    <p className="text-[10px] font-bold text-gray-400 mt-0.5 truncate">{po.customers?.customer_name ?? '알 수 없음'} | {po.po_date}</p>
+                    <p className="truncate text-xs font-black text-foreground">{po.po_no}</p>
+                    <p className="mt-0.5 truncate text-[10px] font-bold text-muted-foreground">{po.customers?.customer_name ?? '알 수 없음'} | {po.po_date}</p>
                   </div>
                   <div>{getPurchaseBadge(po.status)}</div>
                 </Link>
@@ -969,18 +984,18 @@ export default function DashboardPage() {
         </div>
 
         {/* 최근 생산지시 */}
-        <div className="bg-white border-2 border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col">
-          <div className="flex justify-between items-end mb-4 border-b-2 border-gray-100 pb-3">
-            <h2 className="text-sm font-black flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-green-500"></span>최근 생산 지시</h2>
-            <Link href="/production-orders" className="text-[10px] font-bold text-gray-400 hover:text-blue-600 underline">전체보기 →</Link>
+        <div className="flex flex-col rounded-xl border border-border bg-card p-5 shadow-sm">
+          <div className="mb-4 flex items-end justify-between border-b border-border pb-3">
+            <h2 className="flex items-center gap-2 text-sm font-semibold"><span className="h-2 w-2 rounded-full bg-green-500"></span>최근 생산 지시</h2>
+            <Link href="/production-orders" className="text-[10px] font-medium text-muted-foreground hover:text-primary underline">전체보기 →</Link>
           </div>
           <div className="space-y-2 flex-1">
-            {data.productionOrders.length === 0 ? <p className="text-xs text-gray-400 font-bold py-4 text-center">데이터가 없습니다.</p> : 
+            {data.productionOrders.length === 0 ? <p className="py-4 text-center text-xs font-bold text-muted-foreground">데이터가 없습니다.</p> : 
               data.productionOrders.map((order) => (
-                <Link key={order.id} href={`/production-orders/${order.id}`} className="flex justify-between items-center p-3 rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all">
+                <Link key={order.id} href={`/production-orders/${order.id}`} className="flex justify-between items-center rounded-xl border border-transparent p-3 transition-all hover:border-border hover:bg-muted/50">
                   <div className="min-w-0 flex-1 pr-2">
-                    <p className="text-xs font-black text-gray-900 truncate">{order.prod_no}</p>
-                    <p className="text-[10px] font-bold text-gray-400 mt-0.5 truncate">{order.items?.item_name ?? '-'} | {order.prod_date}</p>
+                    <p className="truncate text-xs font-black text-foreground">{order.prod_no}</p>
+                    <p className="mt-0.5 truncate text-[10px] font-bold text-muted-foreground">{order.items?.item_name ?? '-'} | {order.prod_date}</p>
                   </div>
                   <div>{getProductionBadge(order.status)}</div>
                 </Link>
@@ -990,13 +1005,13 @@ export default function DashboardPage() {
         </div>
 
         {/* 최근 결재문서 */}
-        <div className="bg-white border-2 border-gray-200 rounded-2xl p-5 shadow-sm flex flex-col">
-          <div className="flex justify-between items-end mb-4 border-b-2 border-gray-100 pb-3">
-            <h2 className="text-sm font-black flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-orange-500"></span>최근 결재 문서</h2>
-            <Link href="/approvals" className="text-[10px] font-bold text-gray-400 hover:text-blue-600 underline">전체보기 →</Link>
+        <div className="flex flex-col rounded-xl border border-border bg-card p-5 shadow-sm">
+          <div className="mb-4 flex items-end justify-between border-b border-border pb-3">
+            <h2 className="flex items-center gap-2 text-sm font-semibold"><span className="h-2 w-2 rounded-full bg-orange-500"></span>최근 결재 문서</h2>
+            <Link href="/approvals" className="text-[10px] font-medium text-muted-foreground hover:text-primary underline">전체보기 →</Link>
           </div>
           <div className="space-y-2 flex-1">
-            {data.approvals.length === 0 ? <p className="text-xs text-gray-400 font-bold py-4 text-center">데이터가 없습니다.</p> : 
+            {data.approvals.length === 0 ? <p className="py-4 text-center text-xs font-bold text-muted-foreground">데이터가 없습니다.</p> : 
               data.approvals.map((doc) => {
                 const statusPresentation = getApprovalDocDetailedStatusPresentation(
                   doc as unknown as ApprovalDocLike,
@@ -1018,11 +1033,11 @@ export default function DashboardPage() {
                         dashboardUserId
                       );
                     }}
-                    className="flex justify-between items-center p-3 rounded-xl hover:bg-gray-50 border border-transparent hover:border-gray-200 transition-all"
+                    className="flex justify-between items-center rounded-xl border border-transparent p-3 transition-all hover:border-border hover:bg-muted/50"
                   >
                     <div className="min-w-0 flex-1 pr-2">
-                      <p className="text-[10px] font-bold text-gray-400 truncate">{doc.doc_no}</p>
-                      <p className="text-xs font-black text-gray-900 mt-0.5 truncate">{doc.title}</p>
+                      <p className="truncate text-[10px] font-bold text-muted-foreground">{doc.doc_no}</p>
+                      <p className="mt-0.5 truncate text-xs font-black text-foreground">{doc.title}</p>
                     </div>
                     <div className="flex flex-shrink-0 flex-wrap justify-end gap-1">
                       {statusPresentation.badges.map((b, i) => (

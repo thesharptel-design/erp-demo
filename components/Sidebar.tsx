@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type MouseEvent } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 import { LayoutDashboard } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
@@ -28,6 +28,13 @@ type MenuGroup = {
 export default function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
+
+  const handleMenuLinkClick = (e: MouseEvent<HTMLAnchorElement>, href: string) => {
+    if (pathname !== href) return
+    e.preventDefault()
+    // 같은 메뉴 재클릭 시에도 "재진입(새로고침 체감)"이 나도록 강제 이동
+    window.location.assign(href)
+  }
   
   const [userData, setUserData] = useState<SidebarUser | null>(null);
   const [companyLogoUrl, setCompanyLogoUrl] = useState<string>('');
@@ -181,45 +188,46 @@ export default function Sidebar() {
   ];
 
   return (
-    <aside className="w-64 bg-white border-r border-gray-200 h-screen sticky top-0 flex flex-col text-black shadow-sm font-sans z-50">
-      <div className="p-6 border-b border-gray-50 bg-gray-50/20 shrink-0">
+    <aside className="sticky top-0 z-50 flex h-screen w-64 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground shadow-sm font-sans">
+      <div className="shrink-0 border-b border-sidebar-border bg-sidebar-accent/30 px-4 py-[19px]">
         <Link href="/dashboard" className="group block">
           {companyLogoUrl ? (
-            <div className="flex h-24 w-full items-center justify-center">
+            <div className="flex h-[66px] w-full items-center justify-center">
               <img
                 src={companyLogoUrl}
                 alt="기업 로고"
-                className="max-h-20 max-w-full object-contain object-center"
+                className="max-h-14 max-w-full object-contain object-center"
               />
             </div>
           ) : (
-            <h1 className="text-center text-2xl font-black tracking-tighter text-gray-900 group-hover:text-blue-600 transition-colors uppercase">
+            <h1 className="text-center text-[28px] font-black tracking-tight text-foreground group-hover:text-primary transition-colors uppercase leading-none py-2">
               ERP-<span className="text-blue-600">BIOGTP</span>
             </h1>
           )}
         </Link>
         {userData && (
-          <div className="mt-2 text-[11px] font-bold text-gray-400 uppercase tracking-tight">
+          <div className="mt-1 text-[11px] font-medium text-muted-foreground uppercase tracking-tight truncate">
             {userData.user_name} / {isSystemAdminUser(userData) ? 'ADMIN' : 'STAFF'} / {userData.employee_no ?? '-'}
           </div>
         )}
       </div>
 
-      <nav className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+      <nav className="flex-1 overflow-y-auto px-3 pb-3 pt-2.5 space-y-3 custom-scrollbar">
         
         {/* 대시보드 (HOME) — 동일 높이·패딩 유지, 살짝만 다듬음 */}
-        <div className="mb-2 space-y-1">
+        <div className="mb-1 space-y-1">
           <Link
             href="/dashboard"
-            className={`group flex w-full items-center gap-2 rounded-lg border border-transparent px-2 py-2 text-[14px] font-black uppercase tracking-tight transition-all ${
+            onClick={(e) => handleMenuLinkClick(e, '/dashboard')}
+            className={`group flex h-10 w-full items-center gap-2 rounded-lg border px-2.5 text-[14px] font-semibold uppercase tracking-tight transition-colors ${
               pathname === '/dashboard'
-                ? 'border-blue-200/80 bg-blue-50/70 text-blue-800 shadow-[2px_2px_0_0_rgba(0,0,0,0.06)]'
-                : 'text-gray-900 hover:border-gray-200 hover:bg-gray-50/80 hover:text-blue-700'
+                ? 'border-primary/30 bg-primary/10 text-primary'
+                : 'border-transparent text-foreground hover:border-sidebar-border hover:bg-sidebar-accent/60 hover:text-primary'
             }`}
           >
             <LayoutDashboard
               className={`h-4 w-4 shrink-0 transition-colors ${
-                pathname === '/dashboard' ? 'text-blue-600' : 'text-gray-400 group-hover:text-blue-600'
+                pathname === '/dashboard' ? 'text-primary' : 'text-muted-foreground group-hover:text-primary'
               }`}
               strokeWidth={2.25}
               aria-hidden
@@ -227,7 +235,7 @@ export default function Sidebar() {
             <span className="min-w-0 flex-1 leading-none">Dashboard</span>
             <span
               className={`shrink-0 text-[9px] font-extrabold tracking-widest ${
-                pathname === '/dashboard' ? 'text-blue-500/90' : 'text-gray-400 group-hover:text-blue-500'
+                pathname === '/dashboard' ? 'text-primary/90' : 'text-muted-foreground group-hover:text-primary'
               }`}
             >
               HOME
@@ -246,16 +254,16 @@ export default function Sidebar() {
             <div key={group.title} className="space-y-1">
               <button 
                 onClick={() => toggleGroup(group.title)}
-                className={`w-full flex items-center justify-between px-2 py-2 text-[14px] font-black transition-colors uppercase tracking-tight ${
-                  group.title === '시스템 관리' ? 'text-blue-600' : 'text-gray-900'
+                className={`w-full flex items-center justify-between px-2 py-2 text-[14px] font-semibold transition-colors uppercase tracking-tight ${
+                  group.title === '시스템 관리' ? 'text-primary' : 'text-foreground'
                 }`}
               >
                 {group.title}
-                <span className="text-xl font-light">{isOpen ? '−' : '+'}</span>
+                <span className="text-xl font-light text-muted-foreground">{isOpen ? '−' : '+'}</span>
               </button>
 
               {isOpen && (
-                <div className="space-y-0.5 ml-1 border-l-2 border-gray-100">
+                <div className="space-y-0.5 ml-1 border-l border-sidebar-border">
                   {group.items.map((item) => {
                     const enabled = hasPermission(item.perm)
                     const isCurrent =
@@ -268,10 +276,11 @@ export default function Sidebar() {
                         {enabled ? (
                           <Link
                             href={item.href}
+                            onClick={(e) => handleMenuLinkClick(e, item.href)}
                             className={`block px-4 py-2 text-[13px] transition-all ${
                               isCurrent 
-                                ? 'text-blue-600 font-bold border-l-2 border-blue-600 ml-[-2px] bg-blue-50/50' 
-                                : 'text-gray-500 hover:text-black hover:bg-gray-50/50'
+                                ? 'text-primary font-semibold border-l-2 border-primary ml-[-1px] bg-primary/10' 
+                                : 'text-muted-foreground hover:text-foreground hover:bg-sidebar-accent/60'
                             }`}
                           >
                             <span className="inline-flex items-center gap-1.5">
@@ -284,9 +293,9 @@ export default function Sidebar() {
                             </span>
                           </Link>
                         ) : (
-                          <div className="flex justify-between items-center px-4 py-2 text-[13px] text-gray-300 italic select-none">
+                          <div className="flex justify-between items-center px-4 py-2 text-[13px] text-muted-foreground/60 italic select-none">
                             <span>{item.name}</span>
-                            <span className="text-[8px] border border-gray-100 px-1 rounded">LOCKED</span>
+                            <span className="text-[8px] border border-sidebar-border px-1 rounded">LOCKED</span>
                           </div>
                         )}
                       </div>
@@ -298,10 +307,10 @@ export default function Sidebar() {
           );
         })}
       </nav>
-      <div className="p-4 border-t border-gray-50 shrink-0">
+      <div className="p-4 border-t border-sidebar-border shrink-0">
         <button 
           onClick={() => supabase.auth.signOut().then(() => router.push('/login'))}
-          className="w-full flex items-center gap-2 px-2 py-2 text-[11px] font-bold text-gray-400 hover:text-red-600 transition-colors uppercase"
+          className="w-full flex items-center gap-2 px-2 py-2 text-[11px] font-semibold text-muted-foreground hover:text-red-600 transition-colors uppercase"
         >
           Sign Out →
         </button>

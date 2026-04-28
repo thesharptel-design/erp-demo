@@ -5,6 +5,7 @@ import { boardAnonymousDisplayName } from '@/lib/groupware-board'
 import { notificationReadSummary } from '@/lib/notification-read-stats'
 import { supabase } from '@/lib/supabase'
 import { useCallback, useEffect, useId, useState } from 'react'
+import { Button } from '@/components/ui/button'
 
 export type NotificationReadStatRow = {
   user_id: string
@@ -119,42 +120,44 @@ export function BoardCommentNotificationReadModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="max-h-[85vh] w-full max-w-md overflow-hidden rounded-2xl border-2 border-black bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
+        className="max-h-[85vh] w-full max-w-md overflow-hidden rounded-xl border border-border bg-card shadow-sm"
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-start justify-between gap-2 border-b-2 border-black px-4 py-3">
+        <div className="flex items-start justify-between gap-2 border-b border-border px-4 py-3">
           <div>
-            <h2 id={titleId} className="text-sm font-black text-gray-900">
+            <h2 id={titleId} className="text-sm font-semibold text-foreground">
               알림 읽음 확인
             </h2>
-            <p className="mt-0.5 text-[11px] font-bold text-gray-500">이 댓글로 발송된 알림 수신자 기준입니다.</p>
+            <p className="mt-0.5 text-[11px] font-medium text-muted-foreground">이 댓글로 발송된 알림 수신자 기준입니다.</p>
           </div>
-          <button
+          <Button
             type="button"
             onClick={onClose}
-            className="shrink-0 rounded-lg border-2 border-black bg-white px-2 py-1 text-xs font-black text-gray-800 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:bg-gray-50 active:translate-y-0.5 active:shadow-none"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
           >
             닫기
-          </button>
+          </Button>
         </div>
 
         <div className="max-h-[min(60vh,420px)] overflow-y-auto overscroll-contain px-4 py-3">
           {loading ? (
-            <p className="py-6 text-center text-xs font-bold text-gray-400">불러오는 중…</p>
+            <p className="py-6 text-center text-xs font-medium text-muted-foreground">불러오는 중…</p>
           ) : error ? (
-            <p className="py-4 text-center text-xs font-bold text-red-700">{error}</p>
+            <p className="py-4 text-center text-xs font-medium text-red-700">{error}</p>
           ) : rows.length === 0 ? (
-            <p className="py-6 text-center text-xs font-bold text-gray-400">수신자 정보가 없습니다.</p>
+            <p className="py-6 text-center text-xs font-medium text-muted-foreground">수신자 정보가 없습니다.</p>
           ) : (
             <>
-              <p className="mb-3 text-xs font-black text-gray-700">
+              <p className="mb-3 text-xs font-semibold text-foreground">
                 읽음 {readCount} / {total}
               </p>
-              <ul className="divide-y-2 divide-gray-100 rounded-xl border-2 border-gray-200">
+              <ul className="divide-y divide-border rounded-xl border border-border bg-background">
                 {rows.map((row) => (
                   <li key={row.user_id} className="flex flex-col gap-0.5 px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between">
-                    <span className="text-sm font-black text-gray-900">{displayName(row)}</span>
-                    <span className={`text-[11px] font-bold ${row.read_at ? 'text-sky-800' : 'text-amber-700'}`}>
+                    <span className="text-sm font-semibold text-foreground">{displayName(row)}</span>
+                    <span className={`text-[11px] font-medium ${row.read_at ? 'text-sky-800' : 'text-amber-700'}`}>
                       {row.read_at ? `읽음 ${formatWhen(row.read_at)}` : '미확인'}
                     </span>
                   </li>

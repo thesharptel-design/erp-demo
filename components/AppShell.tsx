@@ -276,9 +276,9 @@ export default function AppShell({ children }: Props) {
             </>
           )}
 
-          <div className="flex min-w-0 flex-1 flex-col">
-            <main className="flex-1">
-              <div className="w-full px-2 py-3 sm:px-4 sm:py-5 lg:px-5 xl:px-6">
+          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+            <main className="flex-1 overflow-x-auto overflow-y-auto">
+              <div className="min-w-0 w-full px-2 py-3 sm:px-4 sm:py-5 lg:px-5 xl:px-6">
                 <AppTopChrome onMenuClick={() => setMobileMenuOpen(true)} />
                 {children}
               </div>

@@ -511,11 +511,11 @@ export default function ApprovalsPage() {
 
           <div className="flex min-h-[min(60vh,32rem)] min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
             <div className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full min-w-[960px] table-fixed border-collapse text-left text-sm text-card-foreground">
+              <table className="w-full min-w-[1120px] table-fixed border-collapse text-left text-sm text-card-foreground">
                 <colgroup>
                   <col className="w-[11rem]" />
                   <col className="w-[6.75rem]" />
-                  <col />
+                  <col className="w-[14rem]" />
                   <col className="w-[14rem]" />
                   <col className="w-[18rem]" />
                   <col className="w-[7.5rem]" />
@@ -524,25 +524,25 @@ export default function ApprovalsPage() {
                 <thead className="sticky top-0 z-[1] border-b border-border bg-muted/50 backdrop-blur-sm">
                   <tr>
                     <th className="px-3 py-3 md:px-4">
-                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">문서번호</span>
+                      <span className="mb-1.5 block whitespace-nowrap text-xs font-medium text-muted-foreground">문서번호</span>
                     </th>
                     <th className="whitespace-nowrap px-2 py-3 text-center md:px-3">
-                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">유형</span>
+                      <span className="mb-1.5 block whitespace-nowrap text-xs font-medium text-muted-foreground">유형</span>
                     </th>
                     <th className="px-3 py-3 md:px-4">
-                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">제목</span>
+                      <span className="mb-1.5 block whitespace-nowrap text-xs font-medium text-muted-foreground">제목</span>
                     </th>
                     <th className="px-3 py-3 md:px-4">
-                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">결재라인</span>
+                      <span className="mb-1.5 block whitespace-nowrap text-xs font-medium text-muted-foreground">결재라인</span>
                     </th>
                     <th className="px-3 py-3 md:px-4">
-                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">순번</span>
+                      <span className="mb-1.5 block whitespace-nowrap text-xs font-medium text-muted-foreground">순번</span>
                     </th>
                     <th className="px-2 py-3 text-center md:px-3">
-                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">상태</span>
+                      <span className="mb-1.5 block whitespace-nowrap text-xs font-medium text-muted-foreground">상태</span>
                     </th>
                     <th className="px-2 py-3 md:px-3">
-                      <span className="mb-1.5 block text-xs font-medium text-muted-foreground">기안일</span>
+                      <span className="mb-1.5 block whitespace-nowrap text-xs font-medium text-muted-foreground">기안일</span>
                     </th>
                   </tr>
                   <tr className="border-b border-border bg-muted/30 text-[11px] font-medium normal-case tracking-normal text-muted-foreground">
@@ -555,6 +555,7 @@ export default function ApprovalsPage() {
                     creatable
                     showClearOption={false}
                     listMaxHeightClass="max-h-56 overflow-y-auto"
+                    buttonClassName="min-w-[9rem] whitespace-nowrap text-[11px] font-semibold"
                     dropdownPlacement="auto"
                   />
                 </th>
@@ -580,6 +581,7 @@ export default function ApprovalsPage() {
                     creatable
                     showClearOption={false}
                     listMaxHeightClass="max-h-56 overflow-y-auto"
+                    buttonClassName="min-w-[10rem] whitespace-nowrap text-[11px] font-semibold"
                     dropdownPlacement="auto"
                   />
                 </th>
@@ -592,6 +594,7 @@ export default function ApprovalsPage() {
                     creatable
                     showClearOption={false}
                     listMaxHeightClass="max-h-56 overflow-y-auto"
+                    buttonClassName="min-w-[10rem] whitespace-nowrap text-[11px] font-semibold"
                     dropdownPlacement="auto"
                   />
                 </th>
@@ -604,6 +607,7 @@ export default function ApprovalsPage() {
                     creatable
                     showClearOption={false}
                     listMaxHeightClass="max-h-56 overflow-y-auto"
+                    buttonClassName="min-w-[10rem] whitespace-nowrap text-[11px] font-semibold"
                     dropdownPlacement="auto"
                   />
                 </th>
@@ -630,6 +634,7 @@ export default function ApprovalsPage() {
                     creatable
                     showClearOption={false}
                     listMaxHeightClass="max-h-56 overflow-y-auto"
+                    buttonClassName="min-w-[8rem] whitespace-nowrap text-[11px] font-semibold"
                     dropdownPlacement="auto"
                   />
                 </th>

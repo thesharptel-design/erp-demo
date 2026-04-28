@@ -344,7 +344,7 @@ export default function BoardCommentsPanel({
   }
 
   return (
-    <section className="border-t border-gray-200 bg-white">
+    <section className="border-t border-border bg-card">
       {currentUserId != null && notifReadCommentId != null ? (
         <BoardCommentNotificationReadModal
           open
@@ -356,14 +356,14 @@ export default function BoardCommentsPanel({
         />
       ) : null}
 
-      <div className="border-b border-gray-100 px-3 py-2 sm:px-4">
-        <h2 className="text-sm font-black text-gray-800">댓글 {visibleCommentCount}개</h2>
+      <div className="border-b border-border px-3 py-2 sm:px-4">
+        <h2 className="text-sm font-semibold text-foreground">댓글 {visibleCommentCount}개</h2>
       </div>
 
       {loading ? (
-        <p className="px-4 py-6 text-sm text-gray-500">댓글 불러오는 중…</p>
+        <p className="px-4 py-6 text-sm text-muted-foreground">댓글 불러오는 중…</p>
       ) : (
-        <ul className="divide-y divide-gray-100">
+        <ul className="divide-y divide-border">
           {ordered.map((c) => {
             const isMine = currentUserId != null && c.author_id === currentUserId
             const liked = myCommentLikes.has(c.id)
@@ -373,11 +373,11 @@ export default function BoardCommentsPanel({
               return (
                 <li id={`board-comment-${c.id}`} key={c.id} className="px-2 py-3 sm:px-3" style={{ paddingLeft: 12 + pad }}>
                   {c.depth > 0 ? (
-                    <div className="mb-1 flex items-center gap-1 text-xs text-gray-400">
+                    <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
                       <CornerDownRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
                     </div>
                   ) : null}
-                  <p className="text-sm text-gray-400">[삭제된 댓글입니다]</p>
+                  <p className="text-sm text-muted-foreground">[삭제된 댓글입니다]</p>
                 </li>
               )
             }
@@ -385,39 +385,39 @@ export default function BoardCommentsPanel({
             return (
               <li id={`board-comment-${c.id}`} key={c.id} className="px-2 py-3 sm:px-3" style={{ paddingLeft: 12 + pad }}>
                 {c.depth > 0 ? (
-                  <div className="mb-1 flex items-center gap-1 text-xs text-gray-400">
+                  <div className="mb-1 flex items-center gap-1 text-xs text-muted-foreground">
                     <CornerDownRight className="h-3.5 w-3.5 shrink-0" aria-hidden />
                   </div>
                 ) : null}
 
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-200 text-[10px] font-bold text-gray-600">
+                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground">
                       {(authorMetaById[c.author_id]?.name || '?').replace(/^익명_/, '').slice(0, 1) || '?'}
                     </div>
                     <div className="min-w-0">
                       <span
                         className={
                           anonymousBoard
-                            ? 'text-sm font-bold text-slate-700'
-                            : 'text-sm font-bold text-gray-900'
+                            ? 'text-sm font-bold text-foreground'
+                            : 'text-sm font-bold text-foreground'
                         }
                       >
                         {anonymousBoard
                           ? (authorMetaById[c.author_id]?.name || '—')
                           : `${authorMetaById[c.author_id]?.icon ?? '👤'} ${authorMetaById[c.author_id]?.name || '—'}`}
                       </span>
-                      <span className="ml-2 text-xs text-gray-400">{formatCommentTime(c.created_at)}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">{formatCommentTime(c.created_at)}</span>
                     </div>
                   </div>
 
-                  <div className="flex flex-wrap items-center gap-3 text-xs text-gray-500">
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                     <button
                       type="button"
                       onClick={() => void toggleCommentLike(c.id)}
                       disabled={!currentUserId}
-                      className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 font-bold transition-colors disabled:opacity-40 ${
-                        liked ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-gray-200 bg-white hover:bg-gray-50'
+                      className={`inline-flex items-center gap-0.5 rounded-md border px-1.5 py-0.5 font-medium transition-colors disabled:opacity-40 ${
+                        liked ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-input bg-background hover:bg-muted'
                       }`}
                     >
                       <ThumbsUp className="h-3.5 w-3.5" aria-hidden />
@@ -430,7 +430,7 @@ export default function BoardCommentsPanel({
                           setReplyingTo((prev) => (prev === c.id ? null : c.id))
                           setReplyBody('')
                         }}
-                        className="inline-flex items-center gap-0.5 font-bold text-gray-600 hover:text-gray-900"
+                        className="inline-flex items-center gap-0.5 font-medium text-muted-foreground hover:text-foreground"
                       >
                         <MessageSquare className="h-3.5 w-3.5" aria-hidden />
                         댓글
@@ -444,7 +444,7 @@ export default function BoardCommentsPanel({
                           setEditBody(c.body)
                           setReplyingTo(null)
                         }}
-                        className="inline-flex items-center gap-0.5 font-bold text-gray-600 hover:text-blue-700"
+                        className="inline-flex items-center gap-0.5 font-medium text-muted-foreground hover:text-primary"
                       >
                         <Pencil className="h-3.5 w-3.5" aria-hidden />
                         수정
@@ -454,7 +454,7 @@ export default function BoardCommentsPanel({
                       <button
                         type="button"
                         onClick={() => setNotifReadCommentId(c.id)}
-                        className="inline-flex items-center gap-0.5 font-bold text-sky-700 hover:text-sky-900"
+                        className="inline-flex items-center gap-0.5 font-medium text-sky-700 hover:text-sky-900"
                         title="이 댓글 알림 수신자의 읽음 여부"
                       >
                         <Eye className="h-3.5 w-3.5" aria-hidden />
@@ -465,7 +465,7 @@ export default function BoardCommentsPanel({
                       <button
                         type="button"
                         onClick={() => void removeComment(c.id)}
-                        className="inline-flex items-center gap-0.5 font-bold text-gray-600 hover:text-red-600"
+                        className="inline-flex items-center gap-0.5 font-medium text-muted-foreground hover:text-destructive"
                       >
                         <Trash2 className="h-3.5 w-3.5" aria-hidden />
                         삭제
@@ -480,31 +480,31 @@ export default function BoardCommentsPanel({
                       value={editBody}
                       onChange={(e) => setEditBody(e.target.value)}
                       rows={3}
-                      className="w-full resize-y rounded border border-gray-300 p-2 text-sm outline-none focus:border-blue-500"
+                      className="w-full resize-y rounded-md border border-input bg-background p-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     />
                     <div className="flex gap-2">
                       <button
                         type="button"
                         disabled={savingEdit}
                         onClick={() => void saveEdit(c.id)}
-                        className="rounded bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+                        className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
                       >
                         저장
                       </button>
                       <button
                         type="button"
                         onClick={() => setEditingId(null)}
-                        className="rounded border border-gray-300 bg-white px-3 py-1.5 text-xs font-bold text-gray-700 hover:bg-gray-50"
+                        className="rounded-md border border-input bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
                       >
                         취소
                       </button>
                     </div>
                   </div>
                 ) : (
-                  <div className="mt-2 text-sm leading-relaxed text-gray-900">
+                  <div className="mt-2 text-sm leading-relaxed text-foreground">
                     {c.modified_after_reply ? (
                       <>
-                        <p className="mb-1 text-xs font-bold text-gray-500">[수정된 댓글입니다]</p>
+                        <p className="mb-1 text-xs font-semibold text-muted-foreground">[수정된 댓글입니다]</p>
                         <p className="whitespace-pre-wrap">{c.body}</p>
                       </>
                     ) : (
@@ -514,12 +514,12 @@ export default function BoardCommentsPanel({
                 )}
 
                 {replyingTo === c.id && currentUserId ? (
-                  <div className="mt-3 rounded border border-gray-200 bg-gray-50/80 p-3">
+                  <div className="mt-3 rounded-lg border border-border bg-muted/40 p-3">
                     <div className="mb-2 flex items-center justify-between">
-                      <div className="flex items-center gap-1 text-xs font-bold text-gray-700">
-                        <CornerDownRight className="h-4 w-4 text-gray-400" aria-hidden />
+                      <div className="flex items-center gap-1 text-xs font-semibold text-foreground">
+                        <CornerDownRight className="h-4 w-4 text-muted-foreground" aria-hidden />
                         <span>댓글 쓰기</span>
-                        <span className="font-normal text-gray-400">(대댓글)</span>
+                        <span className="font-normal text-muted-foreground">(대댓글)</span>
                       </div>
                       <button
                         type="button"
@@ -527,7 +527,7 @@ export default function BoardCommentsPanel({
                           setReplyingTo(null)
                           setReplyBody('')
                         }}
-                        className="inline-flex items-center gap-0.5 text-xs font-bold text-gray-500 hover:text-gray-800"
+                        className="inline-flex items-center gap-0.5 text-xs font-medium text-muted-foreground hover:text-foreground"
                       >
                         <X className="h-3.5 w-3.5" aria-hidden />
                         닫기
@@ -539,13 +539,13 @@ export default function BoardCommentsPanel({
                         onChange={(e) => setReplyBody(e.target.value)}
                         rows={4}
                         placeholder="내용을 입력하세요"
-                        className="min-h-[88px] flex-1 resize-y rounded border border-gray-300 bg-white p-2 text-sm outline-none focus:border-blue-500"
+                        className="min-h-[88px] flex-1 resize-y rounded-md border border-input bg-background p-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                       />
                       <button
                         type="button"
                         disabled={submittingReply}
                         onClick={() => void submitReply(c.id)}
-                        className="self-stretch rounded border border-gray-300 bg-gray-100 px-3 text-sm font-black text-gray-800 hover:bg-gray-200 disabled:opacity-50"
+                        className="self-stretch rounded-md border border-input bg-background px-3 text-sm font-semibold text-foreground hover:bg-muted disabled:opacity-50"
                       >
                         등록
                       </button>
@@ -559,28 +559,28 @@ export default function BoardCommentsPanel({
       )}
 
       {currentUserId ? (
-        <div className="border-t border-gray-200 p-3 sm:p-4">
-          <div className="mb-2 text-xs font-black uppercase tracking-wide text-gray-500">댓글 쓰기</div>
+        <div className="border-t border-border p-3 sm:p-4">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">댓글 쓰기</div>
           <div className="flex gap-2">
             <textarea
               value={topBody}
               onChange={(e) => setTopBody(e.target.value)}
               rows={4}
               placeholder="댓글을 입력하세요."
-              className="min-h-[100px] flex-1 resize-y rounded border border-gray-300 p-3 text-sm outline-none focus:border-blue-500"
+              className="min-h-[100px] flex-1 resize-y rounded-md border border-input bg-background p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <button
               type="button"
               disabled={submittingTop}
               onClick={() => void submitTop()}
-              className="self-stretch rounded border border-gray-300 bg-gray-100 px-4 text-sm font-black text-gray-800 hover:bg-gray-200 disabled:opacity-50"
+              className="self-stretch rounded-md border border-input bg-background px-4 text-sm font-semibold text-foreground hover:bg-muted disabled:opacity-50"
             >
               등록
             </button>
           </div>
         </div>
       ) : (
-        <p className="border-t border-gray-200 p-4 text-xs text-gray-500">댓글을 작성하려면 로그인하세요.</p>
+        <p className="border-t border-border p-4 text-xs text-muted-foreground">댓글을 작성하려면 로그인하세요.</p>
       )}
     </section>
   )

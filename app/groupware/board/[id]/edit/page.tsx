@@ -12,6 +12,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { useSingleSubmit } from '@/hooks/useSingleSubmit'
+import PageHeader from '@/components/PageHeader'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
 
 type PostRow = {
   id: string
@@ -160,44 +163,38 @@ export default function EditBoardPostPage({ params }: { params: Promise<{ id: st
   }, [bodyHtml, canWriteNotice, category, isNotice, postId, saving, tabMoveOnly, title, router, runSingleSubmit])
 
   if (!ready) {
-    return <div className="mx-auto max-w-4xl p-4 text-sm text-gray-600">불러오는 중…</div>
+    return <div className="mx-auto w-full max-w-[1800px] p-4 text-sm text-muted-foreground md:p-6">불러오는 중…</div>
   }
 
   if (!allowed) {
     return (
-      <div className="mx-auto max-w-4xl space-y-3 p-4">
-        <h1 className="text-lg font-black text-gray-900">글 수정</h1>
-        <p className="text-sm text-gray-600">이 글을 수정할 권한이 없거나 존재하지 않습니다.</p>
-        <Link href="/groupware/board" className="text-sm font-bold text-blue-600 hover:underline">
-          목록으로
-        </Link>
+      <div className="mx-auto flex w-full max-w-[1800px] flex-col gap-3 p-4 md:p-6">
+        <PageHeader title="글 수정" description="이 글을 수정할 권한이 없거나 존재하지 않습니다." />
+        <Button asChild variant="outline" size="sm" className="w-fit">
+          <Link href="/groupware/board">목록으로</Link>
+        </Button>
       </div>
     )
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 p-3 sm:p-4">
-      <div className="flex flex-col gap-2 border-b border-gray-200 pb-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-lg font-black text-gray-900 sm:text-xl">
-            {tabMoveOnly ? '분류(탭) 변경' : '글 수정'}
-          </h1>
-          <p className="text-xs text-gray-500 sm:text-sm">
-            {tabMoveOnly ? '목록에 표시되는 게시판 탭(분류)만 바꿉니다.' : '내용을 수정한 뒤 저장합니다.'}
-          </p>
-        </div>
-        <Link
-          href={postId ? `/groupware/board/${postId}` : '/groupware/board'}
-          className="text-sm font-bold text-gray-600 hover:text-gray-900 hover:underline"
-        >
-          ← 보기
-        </Link>
-      </div>
+    <div className="mx-auto flex w-full max-w-[1800px] min-w-0 flex-col gap-4 bg-background p-4 md:p-6">
+      <PageHeader
+        title={tabMoveOnly ? '분류(탭) 변경' : '글 수정'}
+        description={tabMoveOnly ? '목록에 표시되는 게시판 탭(분류)만 바꿉니다.' : '내용을 수정한 뒤 저장합니다.'}
+        actions={
+          <Button asChild variant="outline" size="sm">
+            <Link href={postId ? `/groupware/board/${postId}` : '/groupware/board'}>← 보기</Link>
+          </Button>
+        }
+      />
 
       {errorMessage ? (
-        <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{errorMessage}</div>
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{errorMessage}</div>
       ) : null}
 
+      <Card className="border-border shadow-sm">
+        <CardContent className="p-4 sm:p-6">
       <BoardPostEditor
         categories={BOARD_CATEGORY_OPTIONS}
         category={category}
@@ -214,23 +211,21 @@ export default function EditBoardPostPage({ params }: { params: Promise<{ id: st
         onIsNoticeChange={setIsNotice}
         footer={
           <>
-            <Link
-              href={postId ? `/groupware/board/${postId}` : '/groupware/board'}
-              className="inline-flex items-center justify-center rounded border border-gray-300 bg-white px-3 py-2 text-sm font-bold text-gray-700 hover:bg-gray-50"
-            >
-              취소
-            </Link>
-            <button
+            <Button asChild variant="outline">
+              <Link href={postId ? `/groupware/board/${postId}` : '/groupware/board'}>취소</Link>
+            </Button>
+            <Button
               type="button"
               onClick={() => void handleSubmit()}
               disabled={saving || isMutating}
-              className="inline-flex items-center justify-center rounded bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
             >
               {saving ? '저장 중…' : '저장'}
-            </button>
+            </Button>
           </>
         }
       />
+      </CardContent>
+      </Card>
     </div>
   )
 }

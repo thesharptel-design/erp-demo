@@ -13,6 +13,7 @@ import {
   type CurrentUserPermissions,
 } from '@/lib/permissions'
 import { TopInboxStrip } from '@/components/inbox/TopInboxStrip'
+import { Button } from '@/components/ui/button'
 
 type Props = {
   onMenuClick?: () => void
@@ -117,8 +118,8 @@ export default function AppTopChrome({ onMenuClick }: Props) {
   return (
     <section
       ref={topChromeAlignRef}
-      className={`mb-3 rounded-2xl border-2 bg-white p-2 shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] sm:mb-4 sm:p-2.5 ${
-        isWarning ? 'border-amber-500' : 'border-black'
+      className={`mb-3 rounded-xl border bg-card p-3 shadow-sm sm:mb-4 sm:p-3 ${
+        isWarning ? 'border-amber-300' : 'border-border'
       }`}
       aria-live="polite"
     >
@@ -129,40 +130,40 @@ export default function AppTopChrome({ onMenuClick }: Props) {
             <button
               type="button"
               onClick={onMenuClick}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-black bg-white text-base font-black text-gray-800 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] lg:hidden"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-input bg-background text-base font-semibold text-foreground lg:hidden"
               aria-label="메뉴 열기"
             >
               ☰
             </button>
             <div className="flex min-w-0 flex-1 flex-col gap-3">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <span className="truncate text-base font-black tracking-tight text-gray-900 sm:text-lg">
+                <span className="truncate text-base font-semibold tracking-tight text-foreground sm:text-lg">
                   {userIcon} {user?.user_name ?? '사용자'}
                 </span>
-                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-bold text-emerald-700">
+                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                   {userKindLabel}
                 </span>
                 {userMetaLabels.map((label) => (
-                  <span key={label} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700">
+                  <span key={label} className="rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
                     {label}
                   </span>
                 ))}
-                <span className="max-w-full break-all rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-600">
+                <span className="max-w-full break-all rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
                   {user?.email ?? '이메일 없음'}
                 </span>
-                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700">
+                <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
                   사번 {user?.employee_no ?? '-'}
                 </span>
               </div>
               {user ? (
                 <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="text-[10px] font-black uppercase tracking-wide text-gray-400">활성 권한</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">활성 권한</span>
                   <div className="flex flex-wrap gap-1.5">
                     {permissionLabels.length === 0 ? (
-                      <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-bold text-gray-500">권한 없음</span>
+                      <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">권한 없음</span>
                     ) : (
                       permissionLabels.map((label) => (
-                        <span key={label} className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-700">
+                        <span key={label} className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
                           {label}
                         </span>
                       ))
@@ -176,35 +177,36 @@ export default function AppTopChrome({ onMenuClick }: Props) {
           {/* 우측: 1줄 홈·로그아웃·타이머 → 점선 아래 쪽지·알림 */}
           <div className="flex w-full shrink-0 flex-col items-stretch gap-0 lg:w-auto lg:items-end">
             <div className="flex flex-nowrap items-center justify-end gap-1.5 overflow-x-auto pb-0.5">
-              <Link
-                href="/dashboard"
-                className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg border-2 border-gray-300 bg-white px-3.5 text-xs font-black text-gray-700 hover:bg-gray-50 sm:px-4 sm:text-sm"
-              >
-                홈
-              </Link>
-              <button
+              <Button asChild variant="outline" size="sm" className="h-9 shrink-0 px-3.5 text-xs sm:px-4 sm:text-sm">
+                <Link href="/dashboard">홈</Link>
+              </Button>
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 onClick={handleLogout}
-                className="inline-flex h-9 shrink-0 items-center justify-center rounded-lg border-2 border-gray-300 bg-white px-3.5 text-xs font-black text-gray-700 hover:bg-gray-50 sm:px-4 sm:text-sm"
+                className="h-9 shrink-0 px-3.5 text-xs sm:px-4 sm:text-sm"
               >
                 로그아웃
-              </button>
-              <div className="inline-flex h-9 min-w-[140px] shrink-0 items-center justify-between gap-1.5 rounded-lg border-2 border-gray-300 bg-gray-50 px-2.5">
+              </Button>
+              <div className="inline-flex h-9 min-w-[140px] shrink-0 items-center justify-between gap-1.5 rounded-md border border-input bg-muted/50 px-2.5">
                 <div className="leading-none">
-                  <p className="text-[8px] font-black uppercase tracking-wide text-gray-500">AUTO LOGOUT</p>
-                  <p className={`text-xs font-black tracking-tight sm:text-sm ${isWarning ? 'text-amber-700' : 'text-gray-900'}`}>
+                  <p className="text-[8px] font-semibold uppercase tracking-wide text-muted-foreground">AUTO LOGOUT</p>
+                  <p className={`text-xs font-semibold tracking-tight sm:text-sm ${isWarning ? 'text-amber-700' : 'text-foreground'}`}>
                     {formatRemainingMs(remainingMs)}
                   </p>
                 </div>
-                <button
+                <Button
                   type="button"
                   onClick={extendSession}
-                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md border-2 border-black bg-white text-[10px] font-black text-gray-900 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all hover:bg-gray-50 active:translate-y-0.5 active:shadow-none"
+                  variant="outline"
+                  size="icon"
+                  className="h-6 w-6 shrink-0 text-[10px] font-semibold"
                   aria-label="세션 연장"
                   title="세션 연장"
                 >
                   ↻
-                </button>
+                </Button>
               </div>
             </div>
             {user?.id ? (
@@ -218,7 +220,7 @@ export default function AppTopChrome({ onMenuClick }: Props) {
         </div>
 
         {isWarning ? (
-          <p className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-bold text-amber-700">
+          <p className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-700">
             곧 유휴 로그아웃됩니다. 마우스/키보드 입력 또는 세션 연장 버튼으로 시간을 갱신하세요.
           </p>
         ) : null}
