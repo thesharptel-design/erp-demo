@@ -1,5 +1,6 @@
 import { generateNextAppDocNo } from '@/lib/approval-doc-no'
 import { APPROVAL_ROLES, normalizeApprovalRole, type ApprovalRole } from '@/lib/approval-roles'
+import { getApprovalDocTypeRule } from '@/lib/approval-doc-type-rules'
 
 /** `lib/approval-status` `APPROVAL_RECALL_REMARK_MARKER` 와 동일 — 순환 import 방지 */
 const APPROVAL_RECALL_REMARK_MARKER = '기안 회수됨'
@@ -99,9 +100,12 @@ export async function deleteWebGeneralDraftWithRetry(
 }
 
 export const APPROVAL_DRAFT_DOC_TYPE_OPTIONS = [
-  { value: 'draft_doc', label: '일반기안' },
-  { value: 'purchase_request', label: '구매품의' },
-  { value: 'leave_request', label: '휴가신청' },
+  { value: 'draft_doc', label: getApprovalDocTypeRule('draft_doc')?.label ?? '일반기안' },
+  {
+    value: 'purchase_request',
+    label: getApprovalDocTypeRule('purchase_request')?.label ?? '구매품의',
+  },
+  { value: 'leave_request', label: getApprovalDocTypeRule('leave_request')?.label ?? '휴가신청' },
 ]
 
 export function makeEmptyRoleAssignees(): Record<ApprovalRole, string[]> {

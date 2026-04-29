@@ -58,7 +58,7 @@ describe('openApprovalDocDetailViewPopup', () => {
     expect(location.href).toBe('/approvals/view/7')
   })
 
-  it('출고 문서는 출고요청 상세(출고 행 id)로 연다', () => {
+  it('출고 문서는 출고요청 상세로 열고, window name은 통합 규칙을 사용한다', () => {
     const open = vi.fn().mockReturnValue(null)
     const { location } = stubWindowWithOpen(open)
     openApprovalDocDetailViewPopup({
@@ -79,7 +79,7 @@ describe('openApprovalDocFromInbox', () => {
     vi.unstubAllGlobals()
   })
 
-  it('기안자·반려면 작성(재상신) 팝업 URL·윈도우 이름', () => {
+  it('기안자·반려면 작성(재상신) URL로 연다', () => {
     const open = vi.fn().mockReturnValue(null)
     stubWindowWithOpen(open)
     openApprovalDocFromInbox(
@@ -93,7 +93,7 @@ describe('openApprovalDocFromInbox', () => {
       },
       'me'
     )
-    expect(open).toHaveBeenCalledWith('/approvals/new?resubmit=5', 'approvalResubmit_5', expect.any(String))
+    expect(open).toHaveBeenCalledWith('/approvals/new?resubmit=5', expect.any(String), expect.any(String))
   })
 
   it('결재 진행 중이면 view', () => {

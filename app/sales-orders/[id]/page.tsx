@@ -4,6 +4,12 @@ import { useCallback, useEffect, useState, use } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { getApprovalComposePopupWindowName, getApprovalDocTypeRule } from '@/lib/approval-doc-type-rules';
+import { openApprovalShellPopup } from '@/lib/approval-popup';
+
+const OUTBOUND_DRAFT_COMPOSE_HREF =
+  getApprovalDocTypeRule('outbound_request')?.composeHref ?? '/outbound-requests/new';
+const OUTBOUND_DRAFT_COMPOSE_WINDOW_NAME = getApprovalComposePopupWindowName('outbound_request');
 
 export default function SalesOrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -67,14 +73,8 @@ export default function SalesOrderDetailPage({ params }: { params: Promise<{ id:
           <button
             type="button"
             onClick={() => {
-              const url = `/outbound-requests/new?so_id=${encodeURIComponent(id)}`;
-              const popup = window.open(
-                url,
-                'outboundRequestDraftPopup',
-                'popup=yes,width=1280,height=920,scrollbars=yes,resizable=yes'
-              );
-              if (!popup) window.location.href = url;
-              else popup.focus();
+              const url = `${OUTBOUND_DRAFT_COMPOSE_HREF}?so_id=${encodeURIComponent(id)}`;
+              openApprovalShellPopup(url, OUTBOUND_DRAFT_COMPOSE_WINDOW_NAME);
             }}
             className="px-10 py-4 bg-gray-900 text-white rounded-[1.5rem] font-black shadow-xl hover:bg-black transition-all active:scale-95"
           >

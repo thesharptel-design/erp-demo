@@ -9,7 +9,12 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import PageHeader from '@/components/PageHeader'
 import InlineAlertMirror from '@/components/InlineAlertMirror'
-import { APPROVAL_DRAFT_DOC_TYPE_OPTIONS } from '@/lib/approval-draft'
+import {
+  getApprovalDocTypeRule,
+  getApprovalDocTypeLabel,
+  getApprovalInboxDocTypeFilterOptions,
+  getApprovalComposePopupWindowName,
+} from '@/lib/approval-doc-type-rules'
 import { openApprovalDocFromInbox, openApprovalShellPopup } from '@/lib/approval-popup'
 import {
   APPROVAL_INBOX_STATUS_FILTER_OPTIONS,
@@ -17,7 +22,6 @@ import {
   formatInboxApproverLineDisplay,
   getApprovalDocDetailedStatusPresentation,
   getDocDetailOpenHref,
-  getDocTypeLabel,
   getWriterName,
 } from '@/lib/approval-status'
 import type { ApprovalDocLike, ApprovalLineWithName } from '@/lib/approval-status'
@@ -46,11 +50,12 @@ type ApprovalsDocRow = ApprovalDocLike & {
   approverLineNames: string;
 };
 
-const DOC_TYPE_FILTER_OPTIONS = [
-  { value: '', label: '전체' },
-  ...APPROVAL_DRAFT_DOC_TYPE_OPTIONS.map((o) => ({ value: o.value, label: o.label })),
-  { value: 'outbound_request', label: '출고요청' },
-];
+const DOC_TYPE_FILTER_OPTIONS = getApprovalInboxDocTypeFilterOptions();
+const GENERAL_DRAFT_COMPOSE_HREF = getApprovalDocTypeRule('draft_doc')?.composeHref ?? '/approvals/new';
+const GENERAL_DRAFT_COMPOSE_WINDOW_NAME = getApprovalComposePopupWindowName('draft_doc');
+const OUTBOUND_DRAFT_COMPOSE_HREF =
+  getApprovalDocTypeRule('outbound_request')?.composeHref ?? '/outbound-requests/new';
+const OUTBOUND_DRAFT_COMPOSE_WINDOW_NAME = getApprovalComposePopupWindowName('outbound_request');
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
@@ -85,6 +90,15 @@ function mapRpcRowToDoc(
   ApprovalsDocRow,
   'progressLabel' | 'approverLineNames' | 'recent_reject_comment' | 'hasLineOpinion' | 'linesForStatusPresentation'
 > {
+  const rule = getApprovalDocTypeRule(row.doc_type);
+  /**
+   * RPC에서 `outbound_request_id`를 못 받은 경우:
+   * - 출고요청 문서라도 상세 URL 계산은 Rule에서 결재문서 view 폴백을 사용한다.
+   * - 값이 있으면 기존처럼 `/outbound-requests/view/{id}`로 연결된다.
+   */
+  const outboundRef =
+    row.outbound_request_id != null ? { id: Number(row.outbound_request_id) } : null;
+
   return {
     id: row.id,
     doc_no: row.doc_no,
@@ -99,7 +113,7 @@ function mapRpcRowToDoc(
     current_line_no: row.current_line_no,
     content: null,
     outbound_requests:
-      row.outbound_request_id != null ? { id: Number(row.outbound_request_id) } : null,
+      rule?.docType === 'outbound_request' && outboundRef == null ? null : outboundRef,
     app_users: row.writer_user_name ? { user_name: row.writer_user_name } : null,
     departments: row.dept_name ? { dept_name: row.dept_name } : null,
   };
@@ -390,11 +404,11 @@ export default function ApprovalsPage() {
   }, [fetchInbox]);
 
   const openDraftPopup = () => {
-    openApprovalShellPopup('/approvals/new', 'approvalDraftPopup');
+    openApprovalShellPopup(GENERAL_DRAFT_COMPOSE_HREF, GENERAL_DRAFT_COMPOSE_WINDOW_NAME);
   };
 
   const openOutboundDraftPopup = () => {
-    openApprovalShellPopup('/outbound-requests/new', 'outboundRequestDraftPopup');
+    openApprovalShellPopup(OUTBOUND_DRAFT_COMPOSE_HREF, OUTBOUND_DRAFT_COMPOSE_WINDOW_NAME);
   };
 
   const colCount = 7;
@@ -737,7 +751,7 @@ export default function ApprovalsPage() {
               ) : (
                 docs.map((doc) => {
                   const pres = getApprovalDocDetailedStatusPresentation(doc, doc.linesForStatusPresentation);
-                  const typeLabel = getDocTypeLabel(doc.doc_type);
+                  const typeLabel = getApprovalDocTypeLabel(doc.doc_type);
                   const draftDate = doc.drafted_at?.slice(0, 10) ?? '';
                   const pendingNames = getPendingActorNames(doc.progressLabel);
                   const collapsedLine = getCollapsedApproverLineText(doc.approverLineNames);

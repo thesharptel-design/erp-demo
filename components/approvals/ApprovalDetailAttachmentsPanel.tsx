@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Download, ExternalLink, Eye, FileImage, FileText, Link2, Loader2, Plus, Trash2, Upload } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { openApprovalShellPopup } from '@/lib/approval-popup'
+import { getApprovalPopupWindowName } from '@/lib/approval-doc-type-rules'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 
@@ -387,7 +388,15 @@ export default function ApprovalDetailAttachmentsPanel({
                             onClick={() =>
                               openApprovalShellPopup(
                                 `/approvals/view/${related.id}?${sourceInfoQuery}`,
-                                `approvalDocView_${related.id}`
+                                getApprovalPopupWindowName({
+                                  docType: related.doc_type,
+                                  mode: 'view',
+                                  approvalDocId: related.id,
+                                  outboundRequestId: null,
+                                  writerId: related.writer_id,
+                                  currentUserId,
+                                  status: related.status,
+                                })
                               )
                             }
                             className="inline-flex max-w-full items-center gap-1 truncate text-left text-xs font-black text-blue-700 hover:underline"
@@ -425,7 +434,15 @@ export default function ApprovalDetailAttachmentsPanel({
                             onClick={() =>
                               openApprovalShellPopup(
                                 `/approvals/view/${related.id}?${sourceInfoQuery}`,
-                                `approvalDocView_${related.id}`
+                                getApprovalPopupWindowName({
+                                  docType: related.doc_type,
+                                  mode: 'view',
+                                  approvalDocId: related.id,
+                                  outboundRequestId: null,
+                                  writerId: related.writer_id,
+                                  currentUserId,
+                                  status: related.status,
+                                })
                               )
                             }
                             className="inline-flex h-7 items-center justify-center gap-1 rounded border border-gray-300 bg-white px-2 text-[11px] font-bold text-gray-700 hover:bg-gray-50"

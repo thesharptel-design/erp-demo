@@ -1,4 +1,5 @@
 /** `approval_inbox_query` RPC 응답 파싱·행 매핑 (통합결재문서함·대시보드 공통) */
+import { getApprovalDocTypeRule } from '@/lib/approval-doc-type-rules'
 
 export type InboxRpcItem = {
   id: number
@@ -45,6 +46,8 @@ export function mapInboxRpcItemToDashboardApprovalRow(row: InboxRpcItem): {
   writer_id: string | null
   outbound_requests: { id: number }[] | { id: number } | null
 } {
+  const rule = getApprovalDocTypeRule(row.doc_type)
+  const outboundRef = row.outbound_request_id != null ? { id: Number(row.outbound_request_id) } : null
   return {
     id: row.id,
     doc_no: row.doc_no ?? '',
@@ -55,7 +58,11 @@ export function mapInboxRpcItemToDashboardApprovalRow(row: InboxRpcItem): {
     drafted_at: row.drafted_at ?? '',
     doc_type: row.doc_type,
     writer_id: row.writer_id,
+    /**
+     * `outbound_request`인데 연결 id가 누락된 경우엔 null로 두고,
+     * 상세 오픈 시 Rule 기반 URL 계산에서 결재문서 view로 안전 폴백한다.
+     */
     outbound_requests:
-      row.outbound_request_id != null ? { id: Number(row.outbound_request_id) } : null,
+      rule?.docType === 'outbound_request' && outboundRef == null ? null : outboundRef,
   }
 }

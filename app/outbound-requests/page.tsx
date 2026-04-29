@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createClient } from '@supabase/supabase-js'
 import type { Database } from '@/lib/database.types'
+import { getApprovalComposePopupWindowName, getApprovalDocTypeRule } from '@/lib/approval-doc-type-rules'
 import { getOutboundRequestRowPresentation } from '@/lib/approval-status'
 import type { ApprovalDocLike, ApprovalLineLike } from '@/lib/approval-status'
 import { openApprovalShellPopup, openOutboundRequestDetailViewPopup } from '@/lib/approval-popup'
@@ -27,6 +28,10 @@ type CustomerRow = {
   id: number
   customer_name: string
 }
+
+const OUTBOUND_DRAFT_COMPOSE_HREF =
+  getApprovalDocTypeRule('outbound_request')?.composeHref ?? '/outbound-requests/new'
+const OUTBOUND_DRAFT_COMPOSE_WINDOW_NAME = getApprovalComposePopupWindowName('outbound_request')
 
 export default function OutboundRequestsPage() {
   const supabase = useMemo(() => {
@@ -185,7 +190,7 @@ export default function OutboundRequestsPage() {
   }, [customers])
 
   const openOutboundDraftPopup = useCallback(() => {
-    openApprovalShellPopup('/outbound-requests/new', 'outboundRequestDraftPopup')
+    openApprovalShellPopup(OUTBOUND_DRAFT_COMPOSE_HREF, OUTBOUND_DRAFT_COMPOSE_WINDOW_NAME)
   }, [])
 
   return (

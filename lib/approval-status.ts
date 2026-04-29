@@ -5,6 +5,7 @@ import {
   isFinalApprovalRole,
   normalizeApprovalRole,
 } from '@/lib/approval-roles'
+import { getApprovalDocTypeLabel, getApprovalDocTypeRule } from '@/lib/approval-doc-type-rules'
 
 export type ApprovalDocLike = Pick<
   Database['public']['Tables']['approval_docs']['Row'],
@@ -120,18 +121,7 @@ export function canWriterDeleteApprovalDoc(doc: Pick<ApprovalDocLike, 'status' |
 }
 
 export function getDocTypeLabel(docType: string | null | undefined) {
-  switch (docType ?? '') {
-    case 'draft_doc':
-      return '일반기안'
-    case 'purchase_request':
-      return '구매품의'
-    case 'outbound_request':
-      return '출고요청'
-    case 'leave_request':
-      return '휴가신청'
-    default:
-      return docType ?? ''
-  }
+  return getApprovalDocTypeLabel(docType)
 }
 
 /**
@@ -139,26 +129,50 @@ export function getDocTypeLabel(docType: string | null | undefined) {
  * (통합함에 `outbound_requests` id가 없으면 기존처럼 결재 문서 view로 폴백)
  */
 export function getOutboundRequestViewHrefFromApprovalDoc(doc: ApprovalDocLike & { id: number }): string | null {
-  if (String(doc.doc_type ?? '') !== 'outbound_request') return null
+  const rule = getApprovalDocTypeRule(doc.doc_type)
+  if (rule?.docType !== 'outbound_request') return null
   const raw = doc.outbound_requests
   if (!raw) return null
   const rid = Array.isArray(raw) ? raw[0]?.id : raw.id
   if (rid == null || !Number.isFinite(Number(rid))) return null
-  return `/outbound-requests/view/${Number(rid)}`
+  const href = rule.detailViewHrefResolver({
+    approvalDocId: doc.id,
+    outboundRequestId: Number(rid),
+    writerId: null,
+    currentUserId: null,
+    status: doc.status,
+  })
+  return href.includes('/outbound-requests/view/') ? href : `/outbound-requests/view/${Number(rid)}`
 }
 
 /** 통합 결재함 / 대시보드: 행 링크 목적지 */
 export function getDocDetailHref(doc: ApprovalDocLike & { id: number }) {
-  const outboundHref = getOutboundRequestViewHrefFromApprovalDoc(doc)
-  if (outboundHref) return outboundHref
-  return `/approvals/${doc.id}`
+  const raw = doc.outbound_requests
+  const rid = raw ? (Array.isArray(raw) ? raw[0]?.id : raw.id) : null
+  const rule = getApprovalDocTypeRule(doc.doc_type)
+  if (!rule) return `/approvals/${doc.id}`
+  return rule.detailHrefResolver({
+    approvalDocId: doc.id,
+    outboundRequestId: rid != null && Number.isFinite(Number(rid)) ? Number(rid) : null,
+    writerId: null,
+    currentUserId: null,
+    status: doc.status,
+  })
 }
 
 /** 팝업(베어 셸) 상세: 사이드바 없이 동일 크기 창으로 연다. */
 export function getDocDetailViewHref(doc: ApprovalDocLike & { id: number }) {
-  const outboundHref = getOutboundRequestViewHrefFromApprovalDoc(doc)
-  if (outboundHref) return outboundHref
-  return `/approvals/view/${doc.id}`
+  const raw = doc.outbound_requests
+  const rid = raw ? (Array.isArray(raw) ? raw[0]?.id : raw.id) : null
+  const rule = getApprovalDocTypeRule(doc.doc_type)
+  if (!rule) return `/approvals/view/${doc.id}`
+  return rule.detailViewHrefResolver({
+    approvalDocId: doc.id,
+    outboundRequestId: rid != null && Number.isFinite(Number(rid)) ? Number(rid) : null,
+    writerId: null,
+    currentUserId: null,
+    status: doc.status,
+  })
 }
 
 type DocInboxOpen = ApprovalDocLike & { id: number; writer_id?: string | null }
@@ -168,14 +182,18 @@ type DocInboxOpen = ApprovalDocLike & { id: number; writer_id?: string | null }
  * 팝업에서 바로 편집 화면으로 연다. 그 외는 읽기 전용 view URL.
  */
 export function getDocDetailOpenHref(doc: DocInboxOpen, currentUserId: string | null | undefined): string {
-  const uid =
-    currentUserId != null && String(currentUserId).trim() !== ''
-      ? String(currentUserId).toLowerCase()
-      : ''
-  const wid = doc.writer_id != null ? String(doc.writer_id).toLowerCase() : ''
-  if (uid && wid === uid && (doc.status === 'draft' || doc.status === 'rejected')) {
-    if (doc.doc_type === 'outbound_request') return `/outbound-requests/new?resubmit=${doc.id}`
-    return `/approvals/new?resubmit=${doc.id}`
+  const raw = doc.outbound_requests
+  const rid = raw ? (Array.isArray(raw) ? raw[0]?.id : raw.id) : null
+  const rule = getApprovalDocTypeRule(doc.doc_type)
+  if (rule) {
+    const resubmitHref = rule.resubmitHrefResolver({
+      approvalDocId: doc.id,
+      outboundRequestId: rid != null && Number.isFinite(Number(rid)) ? Number(rid) : null,
+      writerId: doc.writer_id ?? null,
+      currentUserId,
+      status: doc.status,
+    })
+    if (resubmitHref) return resubmitHref
   }
   return getDocDetailViewHref(doc)
 }
