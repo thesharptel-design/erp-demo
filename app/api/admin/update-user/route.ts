@@ -13,12 +13,24 @@ const PERMISSION_KEYS = [
   'can_qc_manage',
   'can_admin_manage',
   'can_manage_permissions',
+  'can_outbound_view',
+  'can_outbound_execute_self',
+  'can_outbound_assign_handler',
+  'can_outbound_reassign_recall',
+  'can_outbound_execute_any',
   'can_quote_create',
   'can_po_create',
   'can_receive_stock',
   'can_prod_complete',
   'can_approve',
 ] as const;
+const OUTBOUND_ROLE_KEY = 'outbound_role' as const;
+
+function normalizeOutboundRole(raw: unknown): 'none' | 'viewer' | 'worker' | 'master' | null {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (value === 'none' || value === 'viewer' || value === 'worker' || value === 'master') return value;
+  return null;
+}
 
 function normalizePermissionPayload(raw: Record<string, unknown>) {
   const asBool = (value: unknown) => value === true;
@@ -30,6 +42,23 @@ function normalizePermissionPayload(raw: Record<string, unknown>) {
   const canAdminManage = false;
   const canManageMaster = asBool(raw.can_manage_master);
   const canManagePermissions = asBool(raw.can_manage_permissions);
+  const explicitOutboundRole = normalizeOutboundRole(raw[OUTBOUND_ROLE_KEY]);
+  const inferredOutboundRole: 'none' | 'viewer' | 'worker' | 'master' =
+    explicitOutboundRole ??
+    (asBool(raw.can_outbound_execute_any) ||
+    asBool(raw.can_outbound_assign_handler) ||
+    asBool(raw.can_outbound_reassign_recall)
+      ? 'master'
+      : asBool(raw.can_outbound_execute_self)
+        ? 'worker'
+        : asBool(raw.can_outbound_view)
+          ? 'viewer'
+          : 'none');
+  const canOutboundView = inferredOutboundRole !== 'none';
+  const canOutboundExecuteSelf = inferredOutboundRole === 'worker' || inferredOutboundRole === 'master';
+  const canOutboundAssignHandler = inferredOutboundRole === 'master';
+  const canOutboundReassignRecall = inferredOutboundRole === 'master';
+  const canOutboundExecuteAny = inferredOutboundRole === 'master';
 
   return {
     can_manage_master: canManageMaster,
@@ -39,6 +68,12 @@ function normalizePermissionPayload(raw: Record<string, unknown>) {
     can_qc_manage: canQcManage,
     can_admin_manage: canAdminManage,
     can_manage_permissions: canManagePermissions,
+    outbound_role: inferredOutboundRole,
+    can_outbound_view: canOutboundView,
+    can_outbound_execute_self: canOutboundExecuteSelf,
+    can_outbound_assign_handler: canOutboundAssignHandler,
+    can_outbound_reassign_recall: canOutboundReassignRecall,
+    can_outbound_execute_any: canOutboundExecuteAny,
     can_quote_create: canSalesManage,
     can_po_create: canSalesManage,
     can_receive_stock: canMaterialManage,
@@ -65,6 +100,52 @@ function parseWarehouseIds(raw: unknown): number[] {
 
 function hasOwnKey(payload: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(payload, key);
+}
+
+const OUTBOUND_PERMISSION_DB_KEYS = [
+  'outbound_role',
+  'can_outbound_view',
+  'can_outbound_execute_self',
+  'can_outbound_assign_handler',
+  'can_outbound_reassign_recall',
+  'can_outbound_execute_any',
+] as const
+
+const OUTBOUND_PERMISSION_KEY_SET = new Set<string>(OUTBOUND_PERMISSION_DB_KEYS)
+
+/** DB 마이그레이션 전·스키마 차이로 `can_outbound_*` 컬럼이 없을 때 대비 */
+async function fetchAppUserPermissionRowForMerge(
+  supabaseAdmin: any,
+  targetUserId: string
+): Promise<Record<string, unknown> | null> {
+  const fullSelect = PERMISSION_KEYS.join(', ')
+  const r1 = await supabaseAdmin.from('app_users').select(fullSelect).eq('id', targetUserId).maybeSingle()
+
+  if (!r1.error && r1.data) {
+    return r1.data as Record<string, unknown>
+  }
+
+  if (!r1.error && !r1.data) {
+    return null
+  }
+
+  const msg = String(r1.error?.message ?? '')
+  const outboundColumnMissing = /outbound_role|can_outbound_(view|execute_self|assign_handler|reassign_recall|execute_any)/i.test(msg)
+
+  if (outboundColumnMissing) {
+    const withoutOutbound = PERMISSION_KEYS.filter((k) => !OUTBOUND_PERMISSION_KEY_SET.has(k)).join(', ')
+    const r2 = await supabaseAdmin.from('app_users').select(withoutOutbound).eq('id', targetUserId).maybeSingle()
+    if (r2.error || !r2.data) {
+      return null
+    }
+    const row = { ...(r2.data as Record<string, unknown>) }
+    for (const k of OUTBOUND_PERMISSION_DB_KEYS) {
+      if (!(k in row)) row[k] = false
+    }
+    return row
+  }
+
+  return null
 }
 
 function normalizeNullableText(value: unknown): string | null {
@@ -143,12 +224,28 @@ export async function POST(request: NextRequest) {
 
     // 2. app_users 테이블(ERP 정보) 업데이트
     const appUserUpdates: Record<string, unknown> = {};
-    const hasPermissionUpdate = PERMISSION_KEYS.some((key) => hasOwnKey(payload, key));
+    const hasPermissionUpdate = PERMISSION_KEYS.some((key) => hasOwnKey(payload, key)) || hasOwnKey(payload, OUTBOUND_ROLE_KEY);
     if (hasPermissionUpdate) {
       const permissionOnlyPayload = Object.fromEntries(
-        PERMISSION_KEYS.filter((key) => hasOwnKey(payload, key)).map((key) => [key, payload[key]])
+        [...PERMISSION_KEYS, OUTBOUND_ROLE_KEY].filter((key) => hasOwnKey(payload, key)).map((key) => [key, payload[key]])
       );
-      Object.assign(appUserUpdates, normalizePermissionPayload(permissionOnlyPayload));
+      const hasAllPermissionKeys = PERMISSION_KEYS.every((key) => hasOwnKey(permissionOnlyPayload, key));
+
+      let mergedPermissionPayload = permissionOnlyPayload;
+      if (!hasAllPermissionKeys) {
+        const currentPermissionRow = await fetchAppUserPermissionRowForMerge(supabaseAdmin, targetUserId);
+
+        if (!currentPermissionRow) {
+          return NextResponse.json({ success: false, error: '기존 권한 정보를 불러오지 못했습니다.' }, { status: 400 });
+        }
+
+        mergedPermissionPayload = {
+          ...currentPermissionRow,
+          ...permissionOnlyPayload,
+        };
+      }
+
+      Object.assign(appUserUpdates, normalizePermissionPayload(mergedPermissionPayload));
     }
     if (hasOwnKey(payload, 'email')) appUserUpdates.email = email;
     if (hasOwnKey(payload, 'user_name')) appUserUpdates.user_name = user_name;

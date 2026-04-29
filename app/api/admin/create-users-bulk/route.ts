@@ -35,6 +35,12 @@ type BulkCreateRow = {
   can_qc_manage: string
   can_admin_manage: string
   can_manage_permissions: string
+  outbound_role?: string
+  can_outbound_view: string
+  can_outbound_execute_self: string
+  can_outbound_assign_handler: string
+  can_outbound_reassign_recall: string
+  can_outbound_execute_any: string
   can_quote_create: string
   can_po_create: string
   can_receive_stock: string
@@ -105,6 +111,27 @@ function normalizeBulkPermissions(row: BulkCreateRow) {
   const canAdminManage = false
   const canManageMaster = parseBoolean(row.can_manage_master)
   const canManagePermissions = parseBoolean(row.can_manage_permissions)
+  const outboundRoleRaw = String(row.outbound_role ?? '').trim().toLowerCase()
+  const explicitOutboundRole =
+    outboundRoleRaw === 'none' || outboundRoleRaw === 'viewer' || outboundRoleRaw === 'worker' || outboundRoleRaw === 'master'
+      ? outboundRoleRaw
+      : null
+  const inferredOutboundRole: 'none' | 'viewer' | 'worker' | 'master' =
+    (explicitOutboundRole as 'none' | 'viewer' | 'worker' | 'master' | null) ??
+    (parseBoolean(row.can_outbound_execute_any) ||
+    parseBoolean(row.can_outbound_assign_handler) ||
+    parseBoolean(row.can_outbound_reassign_recall)
+      ? 'master'
+      : parseBoolean(row.can_outbound_execute_self)
+        ? 'worker'
+        : parseBoolean(row.can_outbound_view)
+          ? 'viewer'
+          : 'none')
+  const canOutboundView = inferredOutboundRole !== 'none'
+  const canOutboundExecuteSelf = inferredOutboundRole === 'worker' || inferredOutboundRole === 'master'
+  const canOutboundAssignHandler = inferredOutboundRole === 'master'
+  const canOutboundReassignRecall = inferredOutboundRole === 'master'
+  const canOutboundExecuteAny = inferredOutboundRole === 'master'
   const canApprovalParticipate = row.can_approval_participate
     ? parseBoolean(row.can_approval_participate)
     : true
@@ -117,6 +144,12 @@ function normalizeBulkPermissions(row: BulkCreateRow) {
     can_qc_manage: canQcManage,
     can_admin_manage: canAdminManage,
     can_manage_permissions: canManagePermissions,
+    outbound_role: inferredOutboundRole,
+    can_outbound_view: canOutboundView,
+    can_outbound_execute_self: canOutboundExecuteSelf,
+    can_outbound_assign_handler: canOutboundAssignHandler,
+    can_outbound_reassign_recall: canOutboundReassignRecall,
+    can_outbound_execute_any: canOutboundExecuteAny,
     can_approval_participate: canApprovalParticipate,
     // legacy fallback columns
     can_quote_create: canSalesManage,

@@ -24,8 +24,8 @@ import {
   showDraftValidationError,
 } from '@/lib/draft-form-feedback'
 import { formatDraftServerSaveFailureReason } from '@/lib/draft-server-save-errors'
-import { getAllowedWarehouseIds } from '@/lib/permissions'
 import type { ApprovalProcessHistoryRow } from '@/components/approvals/ApprovalProcessHistoryPanel'
+import { resolveAppUserRowIdFromAuthSession } from '@/lib/app-user-id'
 
 type Department = {
   id: number
@@ -33,10 +33,36 @@ type Department = {
 }
 
 type WarehouseRow = { id: number; name: string; is_active?: boolean; sort_order?: number }
+type AccessibleWarehousesApiResponse = {
+  has_full_access: boolean
+  warehouse_ids: number[]
+  warehouses: Array<{ id: number; name: string }>
+}
 
-type ItemRow = { id: number; item_code: string; item_name: string }
+type StockItemRow = {
+  id: number
+  item_id: number
+  current_qty: number
+  lot_no: string | null
+  exp_date: string | null
+  serial_no: string | null
+  items: {
+    id: number
+    item_code: string
+    item_name: string
+    is_lot_managed: boolean
+    is_exp_managed: boolean
+    is_sn_managed: boolean
+  } | null
+}
 
-export type OutboundItemLine = { item_id: string; quantity: number }
+export type OutboundItemLine = {
+  item_id: string
+  quantity: number
+  selected_lot?: string
+  selected_exp?: string
+  selected_sn?: string
+}
 
 export type UseOutboundRequestDraftFormParams = {
   enabled?: boolean
@@ -92,7 +118,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
   const [users, setUsers] = useState<ApprovalDraftAppUser[]>([])
   const [departments, setDepartments] = useState<Department[]>([])
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([])
-  const [items, setItems] = useState<ItemRow[]>([])
+  const [stockRows, setStockRows] = useState<StockItemRow[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
   const [isDraftSaving, setIsDraftSaving] = useState(false)
@@ -136,54 +162,90 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       const {
         data: { user },
       } = await supabase.auth.getUser()
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
 
       let allowedWarehouseIds: number[] | null = null
-      if (user) {
-        const { data: profile } = await supabase.from('app_users').select('*').eq('id', user.id).single()
-        allowedWarehouseIds = await getAllowedWarehouseIds(profile)
+      let accessibleWarehousesFromApi: WarehouseRow[] | null = null
+      if (session?.access_token) {
+        const response = await fetch('/api/warehouses/accessible', {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${session.access_token}`,
+          },
+        })
+        if (response.ok) {
+          const payload = (await response.json()) as AccessibleWarehousesApiResponse
+          allowedWarehouseIds = Array.isArray(payload.warehouse_ids)
+            ? payload.warehouse_ids
+                .map((id) => Number(id))
+                .filter((id) => Number.isInteger(id) && id > 0)
+            : []
+          accessibleWarehousesFromApi = Array.isArray(payload.warehouses)
+            ? payload.warehouses
+                .map((row) => ({ id: Number(row.id), name: String(row.name ?? '').trim() }))
+                .filter((row) => Number.isInteger(row.id) && row.id > 0 && row.name.length > 0)
+            : []
+        }
       }
 
-      const [usersRes, deptRes, itemsRes] = await Promise.all([
-        supabase
-          .from('app_users')
-          .select(
-            'id, login_id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate'
-          )
-          .order('user_name'),
+      const usersSelectWithEmail =
+        'id, email, login_id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate'
+      const usersSelectNoEmail =
+        'id, login_id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate'
+
+      const [usersRes, deptRes] = await Promise.all([
+        (async () => {
+          let r: any = await supabase.from('app_users').select(usersSelectWithEmail).order('user_name')
+          if (
+            r.error &&
+            /(\bemail\b|column).*does not exist/i.test(String(r.error.message ?? ''))
+          ) {
+            r = await supabase.from('app_users').select(usersSelectNoEmail).order('user_name')
+          }
+          return r
+        })(),
         supabase.from('departments').select('id, dept_name').order('id'),
-        supabase.from('items').select('id, item_code, item_name').order('item_code'),
       ])
 
-      let whQuery = supabase
-        .from('warehouses')
-        .select('id, name, is_active, sort_order')
-        .eq('is_active', true)
-        .order('sort_order', { ascending: true })
-
-      if (allowedWarehouseIds !== null) {
-        if (allowedWarehouseIds.length === 0) {
-          if (!active) return
-          setUsers((usersRes.data as ApprovalDraftAppUser[]) ?? [])
-          setDepartments((deptRes.data as Department[]) ?? [])
-          setItems((itemsRes.data as ItemRow[]) ?? [])
-          setWarehouses([])
-          setWarehouseId('')
-          if (user) setWriterId(user.id)
-          setIsLoading(false)
-          return
-        }
-        whQuery = whQuery.in('id', allowedWarehouseIds)
+      if (allowedWarehouseIds !== null && allowedWarehouseIds.length === 0) {
+        if (!active) return
+        const rows = (usersRes.data as ApprovalDraftAppUser[]) ?? []
+        setUsers(rows)
+        setDepartments((deptRes.data as Department[]) ?? [])
+        setStockRows([])
+        setWarehouses([])
+        setWarehouseId('')
+        if (user) setWriterId(resolveAppUserRowIdFromAuthSession(rows, user))
+        setIsLoading(false)
+        return
       }
 
-      const { data: whData } = await whQuery
+      let whList: WarehouseRow[] = []
+      if (accessibleWarehousesFromApi) {
+        whList = accessibleWarehousesFromApi
+      } else {
+        let whQuery = supabase
+          .from('warehouses')
+          .select('id, name, is_active, sort_order')
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true })
+
+        if (allowedWarehouseIds !== null) {
+          whQuery = whQuery.in('id', allowedWarehouseIds)
+        }
+
+        const { data: whData } = await whQuery
+        whList = (whData as WarehouseRow[]) ?? []
+      }
 
       if (!active) return
-      setUsers((usersRes.data as ApprovalDraftAppUser[]) ?? [])
+      const rows = (usersRes.data as ApprovalDraftAppUser[]) ?? []
+      setUsers(rows)
       setDepartments((deptRes.data as Department[]) ?? [])
-      setItems((itemsRes.data as ItemRow[]) ?? [])
-      const whList = (whData as WarehouseRow[]) ?? []
       setWarehouses(whList)
-      if (user) setWriterId(user.id)
+      if (user) setWriterId(resolveAppUserRowIdFromAuthSession(rows, user))
       if (whList[0]?.id) setWarehouseId(String(whList[0].id))
       setIsLoading(false)
     }
@@ -193,6 +255,94 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       active = false
     }
   }, [enabled])
+
+  useEffect(() => {
+    if (!enabled || !warehouseId) {
+      setStockRows([])
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      const warehouseNumber = Number(warehouseId)
+      if (!Number.isInteger(warehouseNumber) || warehouseNumber <= 0) {
+        setStockRows([])
+        return
+      }
+      const { data } = await supabase
+        .from('inventory')
+        .select(
+          `
+          id,
+          item_id,
+          current_qty,
+          lot_no,
+          exp_date,
+          serial_no,
+          items!inner(id, item_code, item_name, is_lot_managed, is_exp_managed, is_sn_managed)
+        `
+        )
+        .eq('warehouse_id', warehouseNumber)
+        .gt('current_qty', 0)
+      if (cancelled) return
+      setStockRows((data as unknown as StockItemRow[]) ?? [])
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [enabled, warehouseId])
+
+  const stockByItemId = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        itemId: string
+        itemCode: string
+        itemName: string
+        totalQty: number
+        isLot: boolean
+        isExp: boolean
+        isSn: boolean
+      }
+    >()
+    for (const row of stockRows) {
+      const item = row.items
+      const itemId = String(row.item_id)
+      if (!item) continue
+      const prev = map.get(itemId)
+      const qty = Number(row.current_qty ?? 0)
+      if (!prev) {
+        map.set(itemId, {
+          itemId,
+          itemCode: item.item_code,
+          itemName: item.item_name,
+          totalQty: qty,
+          isLot: item.is_lot_managed === true,
+          isExp: item.is_exp_managed === true,
+          isSn: item.is_sn_managed === true,
+        })
+      } else {
+        prev.totalQty += qty
+      }
+    }
+    return map
+  }, [stockRows])
+
+  useEffect(() => {
+    if (!enabled) return
+    setSelectedItems((prev) =>
+      prev.map((row) => {
+        const exists = stockByItemId.has(String(row.item_id))
+        if (!row.item_id || exists) return row
+        return {
+          ...row,
+          item_id: '',
+          selected_lot: '',
+          selected_exp: '',
+          selected_sn: '',
+        }
+      })
+    )
+  }, [enabled, stockByItemId])
 
   useEffect(() => {
     if (!enabled) return
@@ -231,7 +381,13 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         setWarehouseId(resolvedWh)
         const nextItems: OutboundItemLine[] =
           bundle.itemLines.length > 0
-            ? bundle.itemLines.map((row) => ({ item_id: String(row.item_id), quantity: Math.max(1, row.qty) }))
+            ? bundle.itemLines.map((row) => ({
+                item_id: String(row.item_id),
+                quantity: Math.max(1, row.qty),
+                selected_lot: row.selected_lot ?? '',
+                selected_exp: row.selected_exp ?? '',
+                selected_sn: row.selected_sn ?? '',
+              }))
             : [{ item_id: '', quantity: 1 }]
         setSelectedItems(nextItems)
         const nextOrder =
@@ -492,23 +648,16 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
 
   const itemOptions = useMemo(() => {
     const kw = itemSearchKeyword.trim().toLowerCase()
-    const list = !kw
-      ? items
-      : items.filter(
-          (it) =>
-            String(it.item_code ?? '')
-              .toLowerCase()
-              .includes(kw) ||
-            String(it.item_name ?? '')
-              .toLowerCase()
-              .includes(kw)
-        )
-    return list.map((it) => ({
-      value: String(it.id),
-      label: `[${it.item_code}] ${it.item_name}`,
-      keywords: [it.item_code, it.item_name],
+    const list = Array.from(stockByItemId.values())
+    const filtered = !kw
+      ? list
+      : list.filter((it) => it.itemCode.toLowerCase().includes(kw) || it.itemName.toLowerCase().includes(kw))
+    return filtered.map((it) => ({
+      value: it.itemId,
+      label: `[${it.itemCode}] ${it.itemName} (재고 ${it.totalQty})`,
+      keywords: [it.itemCode, it.itemName, String(it.totalQty)],
     }))
-  }, [items, itemSearchKeyword])
+  }, [itemSearchKeyword, stockByItemId])
 
   const addItemRow = useCallback(() => {
     setSelectedItems((prev) => [...prev, { item_id: '', quantity: 1 }])
@@ -586,7 +735,13 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     try {
       const referenceSummary = buildReferenceSummaryForDraft(approvalOrder, users, deptMap)
       const itemLines = selectedItems
-        .map((r) => ({ item_id: Number(r.item_id), qty: Number(r.quantity) }))
+        .map((r) => ({
+          item_id: Number(r.item_id),
+          qty: Number(r.quantity),
+          selected_lot: r.selected_lot?.trim() || null,
+          selected_exp: r.selected_exp?.trim() || null,
+          selected_sn: r.selected_sn?.trim() || null,
+        }))
         .filter((r) => Number.isFinite(r.item_id) && r.item_id > 0 && Number.isFinite(r.qty) && r.qty >= 1)
 
       const { draftDocId } = await syncOutboundWebDraft({
@@ -748,7 +903,13 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         setWarehouseId(resolvedWh)
         const nextItems: OutboundItemLine[] =
           bundle.itemLines.length > 0
-            ? bundle.itemLines.map((row) => ({ item_id: String(row.item_id), quantity: Math.max(1, row.qty) }))
+            ? bundle.itemLines.map((row) => ({
+                item_id: String(row.item_id),
+                quantity: Math.max(1, row.qty),
+                selected_lot: row.selected_lot ?? '',
+                selected_exp: row.selected_exp ?? '',
+                selected_sn: row.selected_sn ?? '',
+              }))
             : [{ item_id: '', quantity: 1 }]
         setSelectedItems(nextItems)
         const nextOrder =
@@ -799,7 +960,13 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     try {
       const referenceSummary = buildReferenceSummaryForDraft(approvalOrder, users, deptMap)
       const itemLines = selectedItems
-        .map((r) => ({ item_id: Number(r.item_id), qty: Number(r.quantity) }))
+        .map((r) => ({
+          item_id: Number(r.item_id),
+          qty: Number(r.quantity),
+          selected_lot: r.selected_lot?.trim() || null,
+          selected_exp: r.selected_exp?.trim() || null,
+          selected_sn: r.selected_sn?.trim() || null,
+        }))
         .filter((r) => Number.isFinite(r.item_id) && r.item_id > 0 && Number.isFinite(r.qty) && r.qty >= 1)
 
       const { docId, outboundRequestId, leftoverDraftIdToDelete } = await createOutboundRequestApproval({
@@ -910,6 +1077,8 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     warehouseId,
     setWarehouseId,
     warehouses,
+    stockRows,
+    stockByItemId,
     selectedItems,
     setSelectedItems,
     itemSearchKeyword,

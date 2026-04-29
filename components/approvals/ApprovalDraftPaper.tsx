@@ -11,6 +11,8 @@ import { isHtmlContentEffectivelyEmpty } from '@/lib/html-content'
 
 export type ApprovalDraftAppUser = {
   id: string
+  /** 로그인 이메일과 매칭해 `app_users.id`를 찾을 때 사용 */
+  email?: string | null
   login_id: string
   user_name: string
   employee_no?: string | null

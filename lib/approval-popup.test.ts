@@ -58,7 +58,7 @@ describe('openApprovalDocDetailViewPopup', () => {
     expect(location.href).toBe('/approvals/view/7')
   })
 
-  it('출고 문서는 /outbound-requests/view/{출고id} 로 연다', () => {
+  it('출고 문서는 출고요청 상세(출고 행 id)로 연다', () => {
     const open = vi.fn().mockReturnValue(null)
     const { location } = stubWindowWithOpen(open)
     openApprovalDocDetailViewPopup({
@@ -69,11 +69,7 @@ describe('openApprovalDocDetailViewPopup', () => {
       current_line_no: 1,
       outbound_requests: { id: 55 },
     })
-    expect(open).toHaveBeenCalledWith(
-      '/outbound-requests/view/55',
-      'outboundReqView_55',
-      expect.any(String)
-    )
+    expect(open).toHaveBeenCalledWith('/outbound-requests/view/55', 'outboundReqView_55', expect.any(String))
     expect(location.href).toBe('/outbound-requests/view/55')
   })
 })

@@ -486,13 +486,13 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
   }
 
   return (
-    <div className="flex w-full flex-wrap items-center justify-end gap-1.5 overflow-visible border-t-2 border-dashed border-gray-200 pt-1.5 pr-1 sm:pr-2 lg:inline-flex lg:w-auto lg:max-w-full lg:flex-nowrap">
+    <div className="flex w-full flex-wrap items-center justify-end gap-1 overflow-visible pt-0.5 pr-1 sm:pr-2 lg:inline-flex lg:w-auto lg:max-w-full lg:flex-nowrap">
       <div className="relative">
         <button
           ref={msgBtnRef}
           type="button"
           onClick={() => toggle('messages')}
-          className="relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 border-gray-300 bg-white text-sm font-black text-gray-700 transition-colors hover:bg-gray-50"
+          className="relative inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border-2 border-gray-300 bg-white text-sm font-black text-gray-700 transition-colors hover:bg-gray-50"
           aria-label="쪽지"
           aria-expanded={open === 'messages'}
         >
@@ -505,7 +505,7 @@ export function TopInboxStrip({ userId, canSendBroadcast, contentAlignRef }: Pro
           ref={notifBtnRef}
           type="button"
           onClick={() => toggle('notifications')}
-          className="relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border-2 border-gray-300 bg-white text-sm font-black text-gray-700 transition-colors hover:bg-gray-50"
+          className="relative inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border-2 border-gray-300 bg-white text-sm font-black text-gray-700 transition-colors hover:bg-gray-50"
           aria-label="알림"
           aria-expanded={open === 'notifications'}
         >

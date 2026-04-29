@@ -41,6 +41,16 @@ export function getActionLabel(actionType: string) {
       return '결재 취소(완결 후)'
     case 'outbound_cancel_done':
       return '취소·재고환원 완료'
+    case 'outbound_assign_handler':
+      return '출고 담당자 지정'
+    case 'outbound_reassign_handler':
+      return '출고 담당자 변경'
+    case 'outbound_recall_handler':
+      return '출고 담당자 회수'
+    case 'outbound_execute_self':
+      return '출고 시작'
+    case 'outbound_complete':
+      return '출고 처리 완료'
     default:
       return actionType
   }
@@ -52,7 +62,8 @@ export function getIsAdmin(
   currentUserId: string | null
 ) {
   if (!currentUserId) return false
-  const currentUserProfile = users.find((u) => u.id === currentUserId)
+  const key = String(currentUserId).trim().toLowerCase()
+  const currentUserProfile = users.find((u) => String(u.id).trim().toLowerCase() === key)
   if (!currentUserProfile) return false
   return isSystemAdminUser(
     currentUserProfile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'>

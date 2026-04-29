@@ -26,7 +26,7 @@ import {
 import { useSingleSubmit } from '@/hooks/useSingleSubmit';
 
 type AppUserRow = Database['public']['Tables']['app_users']['Row'];
-type SessionUser = { id: string };
+type SessionUser = { id: string; email?: string | null };
 type CurrentUser = AppUserRow | SessionUser;
 type ApprovalParticipantLike = {
   user_id: string
@@ -84,10 +84,15 @@ export default function ApprovalActionButtons({
   doc,
   lines,
   participants = [],
+  actionGuard,
 }: {
   doc: ApprovalDocLike & { id: number; writer_id?: string | null; doc_type?: string | null; status: string };
   lines: ApprovalLineLike[];
   participants?: ApprovalParticipantLike[];
+  actionGuard?: {
+    allow: boolean
+    message?: string
+  }
 }) {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
@@ -95,14 +100,28 @@ export default function ApprovalActionButtons({
   const [opinion, setOpinion] = useState('');
   const [loading, setLoading] = useState(true);
   const [isApprovalAdmin, setIsApprovalAdmin] = useState(false);
+  const actionsAllowed = actionGuard?.allow ?? true;
+  const actionDeniedMessage = actionGuard?.message ?? '현재 사용자에게 이 액션 권한이 없습니다.';
 
   useEffect(() => {
     async function init() {
       const { data: { session } } = await supabase.auth.getSession();
       if (session?.user) {
-        const { data: profile } = await supabase.from('app_users').select('*').eq('id', session.user.id).single();
-        setCurrentUser(profile || session.user);
-        const { data: adminRpc } = await supabase.rpc('is_approval_admin', { p_uid: session.user.id });
+        let profile: AppUserRow | null = null;
+        const byId = await supabase.from('app_users').select('*').eq('id', session.user.id).maybeSingle();
+        if (!byId.error && byId.data) {
+          profile = byId.data;
+        } else {
+          const email = String(session.user.email ?? '').trim();
+          if (email) {
+            const byEmail = await supabase.from('app_users').select('*').eq('email', email).maybeSingle();
+            if (!byEmail.error && byEmail.data) profile = byEmail.data;
+          }
+        }
+
+        const effectiveUserId = profile?.id ?? session.user.id;
+        setCurrentUser(profile || { id: effectiveUserId, email: session.user.email ?? null });
+        const { data: adminRpc } = await supabase.rpc('is_approval_admin', { p_uid: effectiveUserId });
         setIsApprovalAdmin(Boolean(adminRpc));
       } else {
         setIsApprovalAdmin(false);
@@ -219,6 +238,7 @@ export default function ApprovalActionButtons({
   };
 
   const handleRecall = async () => {
+    if (!actionsAllowed) return alert(actionDeniedMessage);
     if (!confirm('기안을 회수하여 임시저장으로 되돌릴까요?')) return;
     await runSingleSubmit(async () => {
       try {
@@ -250,6 +270,7 @@ export default function ApprovalActionButtons({
   };
 
   const handleRequestCancel = async () => {
+    if (!actionsAllowed) return alert(actionDeniedMessage);
     const reason = prompt('취소 사유를 입력하세요 (필수):');
     if (!reason || reason.length < 2) return alert('사유를 입력해주세요.');
     await runSingleSubmit(async () => {
@@ -303,6 +324,7 @@ export default function ApprovalActionButtons({
   };
 
   const handleDirectFinalCancel = async () => {
+    if (!actionsAllowed) return alert(actionDeniedMessage);
     if (
       !confirm(
         '최종 승인을 취소하고 기안자에게 문서를 되돌립니다. 기안자는 반려와 같이 수정·재상신할 수 있습니다. 계속하시겠습니까?'
@@ -379,6 +401,7 @@ export default function ApprovalActionButtons({
 
   // 🌟 [핵심 로직 수정] 취소 릴레이 로직 완벽 교정
   const handleApproveCancellation = async () => {
+    if (!actionsAllowed) return alert(actionDeniedMessage);
     if (!activeLine) return;
     if (!opinion.trim()) return alert('취소 승인 의견을 아래 칸에 필수로 입력해주세요.');
 
@@ -468,6 +491,7 @@ export default function ApprovalActionButtons({
   };
 
   const handleFinalizeCancel = async () => {
+    if (!actionsAllowed) return alert(actionDeniedMessage);
     if (!confirm('최종 취소 처리와 함께 재고를 환원하시겠습니까?')) return;
     await runSingleSubmit(async () => {
       try {
@@ -507,6 +531,7 @@ export default function ApprovalActionButtons({
   };
 
   const handleGeneralAction = async (type: 'approved' | 'rejected') => {
+    if (!actionsAllowed) return alert(actionDeniedMessage);
     if (!activeLine) return;
     if (type === 'rejected' && !opinion) return alert('반려 사유를 입력하세요.');
     
@@ -648,6 +673,7 @@ export default function ApprovalActionButtons({
     !canDirectFinalCancel;
 
   const handleAdminDeleteDocument = async () => {
+    if (!actionsAllowed) return alert(actionDeniedMessage);
     if (!isApprovalAdmin) return;
     const statusLabel =
       getApprovalDocDetailedStatusPresentation(doc, lines).badges[0]?.label ?? String(doc.status ?? '');
@@ -673,6 +699,7 @@ export default function ApprovalActionButtons({
   };
 
   const handleWriterDeleteDocument = async () => {
+    if (!actionsAllowed) return alert(actionDeniedMessage);
     if (!canWriterDeleteApprovalDoc(doc)) return;
     if (
       !confirm(
@@ -702,6 +729,7 @@ export default function ApprovalActionButtons({
   };
 
   const handleApproveRevoke = async () => {
+    if (!actionsAllowed) return alert(actionDeniedMessage);
     if (!revokableApprovalLine) return;
     if (!opinion.trim()) return alert('승인 철회 사유를 입력해주세요.');
     if (!confirm('승인을 철회하면 문서가 반려와 동일하게 종료되며, 기안자가 수정·재상신할 수 있습니다. 계속하시겠습니까?')) return;
@@ -744,6 +772,7 @@ export default function ApprovalActionButtons({
   };
 
   const handleAdminForceCancel = async () => {
+    if (!actionsAllowed) return alert(actionDeniedMessage);
     if (!confirm('관리자 권한으로 강제 취소 및 재고를 환원하시겠습니까?')) return;
     await runSingleSubmit(async () => {
       try {

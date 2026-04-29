@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import * as XLSX from 'xlsx';
 import SearchableCombobox from '@/components/SearchableCombobox';
 import { supabase } from '@/lib/supabase';
@@ -24,33 +25,8 @@ type AppUser = {
   major: string | null;
   teacher_subject: string | null;
   seal_image_path: string | null;
-  can_approval_participate: boolean;
-  can_manage_master: boolean | null;
-  can_sales_manage: boolean | null;
-  can_material_manage: boolean | null;
-  can_production_manage: boolean | null;
-  can_qc_manage: boolean | null;
-  can_admin_manage: boolean | null;
-  can_manage_permissions: boolean | null;
   is_active: boolean | null;
 };
-
-type Warehouse = {
-  id: number;
-  code: string | null;
-  name: string;
-  is_active: boolean | null;
-};
-
-type PermissionKey =
-  | 'can_manage_master'
-  | 'can_sales_manage'
-  | 'can_material_manage'
-  | 'can_production_manage'
-  | 'can_qc_manage'
-  | 'can_admin_manage'
-  | 'can_manage_permissions'
-  | 'can_approval_participate';
 
 type EditForm = {
   id: string;
@@ -67,8 +43,6 @@ type EditForm = {
   major: string;
   teacher_subject: string;
   seal_image_path: string;
-  can_approval_participate: boolean;
-  warehouse_ids: number[];
   new_password: string;
 };
 
@@ -79,17 +53,6 @@ const USER_KIND_OPTIONS: { value: UserKind; label: string }[] = [
   { value: 'teacher', label: '교사' },
   { value: 'student', label: '학생' },
 ];
-const PERMISSION_FIELDS: { key: PermissionKey; label: string; disabled?: boolean }[] = [
-  { key: 'can_manage_master', label: '기준정보' },
-  { key: 'can_sales_manage', label: '영업/구매' },
-  { key: 'can_material_manage', label: '자재/재고' },
-  { key: 'can_production_manage', label: '생산/BOM' },
-  { key: 'can_qc_manage', label: '품질(QC)' },
-  { key: 'can_admin_manage', label: '경영/관리 (미사용)', disabled: true },
-  { key: 'can_manage_permissions', label: '시스템관리' },
-  { key: 'can_approval_participate', label: '결재권권한' },
-];
-
 const EMPTY_EDIT_FORM: EditForm = {
   id: '',
   user_name: '',
@@ -105,8 +68,6 @@ const EMPTY_EDIT_FORM: EditForm = {
   major: '',
   teacher_subject: '',
   seal_image_path: '',
-  can_approval_participate: true,
-  warehouse_ids: [],
   new_password: '',
 };
 
@@ -168,8 +129,6 @@ function getProfileColumns(user: AppUser): { first: { label: string; value: stri
 
 export default function UserPermissionsPage() {
   const [users, setUsers] = useState<AppUser[]>([]);
-  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
-  const [userWarehouseMap, setUserWarehouseMap] = useState<Record<string, number[]>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [nameFilterUserId, setNameFilterUserId] = useState('');
   const [kindFilter, setKindFilter] = useState('');
@@ -263,42 +222,23 @@ export default function UserPermissionsPage() {
 
   const fetchUsersAndWarehouses = async () => {
     setLoading(true);
-    const [usersResult, warehousesResult, mappingsResult] = await Promise.all([
-      supabase
-        .from('app_users')
-        .select(`
-          id, employee_no, user_name, email, phone, role_name, user_kind,
-          department, job_rank, school_name, training_program, grade_level, major, teacher_subject, seal_image_path,
-          can_approval_participate, can_manage_master, can_sales_manage, can_material_manage,
-          can_production_manage, can_qc_manage, can_admin_manage, can_manage_permissions, is_active
-        `)
-        .neq('role_name', 'pending')
-        .order('user_name', { ascending: true }),
-      supabase.from('warehouses').select('id, code, name, is_active').order('sort_order', { ascending: true }),
-      supabase.from('app_user_warehouses').select('user_id, warehouse_id'),
-    ]);
+    const usersResult = await supabase
+      .from('app_users')
+      .select(`
+        id, employee_no, user_name, email, phone, role_name, user_kind,
+        department, job_rank, school_name, training_program, grade_level, major, teacher_subject, seal_image_path,
+        is_active
+      `)
+      .neq('role_name', 'pending')
+      .order('user_name', { ascending: true });
 
     if (usersResult.error) alert(`사용자 조회 실패: ${usersResult.error.message}`);
-    if (warehousesResult.error) alert(`창고 조회 실패: ${warehousesResult.error.message}`);
-    if (mappingsResult.error) alert(`창고 권한 조회 실패: ${mappingsResult.error.message}`);
 
     const normalizedUsers = ((usersResult.data ?? []).map((row) => ({
       ...row,
       user_kind: parseUserKind(row.user_kind),
-      can_approval_participate: row.can_approval_participate === true,
     })) as AppUser[]).sort(compareUsersForDisplay);
     setUsers(normalizedUsers);
-    setWarehouses((warehousesResult.data ?? []) as Warehouse[]);
-
-    const map: Record<string, number[]> = {};
-    for (const row of mappingsResult.data ?? []) {
-      const userId = String(row.user_id ?? '');
-      const warehouseId = Number(row.warehouse_id);
-      if (!userId || !Number.isInteger(warehouseId) || warehouseId <= 0) continue;
-      if (!map[userId]) map[userId] = [];
-      map[userId].push(warehouseId);
-    }
-    setUserWarehouseMap(map);
 
     setSelectedIds([]);
     setLoading(false);
@@ -363,46 +303,6 @@ export default function UserPermissionsPage() {
     alert('삭제 버튼 활성화 고민중입니다');
   };
 
-  const togglePermission = async (user: AppUser, key: PermissionKey) => {
-    if (key === 'can_admin_manage') return;
-    setSavingUserId(user.id);
-    try {
-      const nextPermissions: Record<PermissionKey, boolean> = {
-        can_manage_master: user.can_manage_master === true,
-        can_sales_manage: user.can_sales_manage === true,
-        can_material_manage: user.can_material_manage === true,
-        can_production_manage: user.can_production_manage === true,
-        can_qc_manage: user.can_qc_manage === true,
-        can_admin_manage: user.can_admin_manage === true,
-        can_manage_permissions: user.can_manage_permissions === true,
-        can_approval_participate: user.can_approval_participate === true,
-      };
-      nextPermissions[key] = !nextPermissions[key];
-      await postUserUpdate(user.id, nextPermissions);
-      await fetchUsersAndWarehouses();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '권한 수정 실패';
-      alert(message);
-    } finally {
-      setSavingUserId(null);
-    }
-  };
-
-  const toggleWarehouseForUser = async (userId: string, warehouseId: number, checked: boolean) => {
-    const current = userWarehouseMap[userId] ?? [];
-    const next = checked ? Array.from(new Set([...current, warehouseId])) : current.filter((id) => id !== warehouseId);
-    setSavingUserId(userId);
-    try {
-      await postUserUpdate(userId, { warehouse_ids: next });
-      setUserWarehouseMap((prev) => ({ ...prev, [userId]: next }));
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '창고 권한 수정 실패';
-      alert(message);
-    } finally {
-      setSavingUserId(null);
-    }
-  };
-
   const openEditModal = (user: AppUser) => {
     setEditingUser(user);
     setEditForm({
@@ -420,8 +320,6 @@ export default function UserPermissionsPage() {
       major: user.major ?? '',
       teacher_subject: user.teacher_subject ?? '',
       seal_image_path: user.seal_image_path ?? '',
-      can_approval_participate: user.can_approval_participate,
-      warehouse_ids: userWarehouseMap[user.id] ?? [],
       new_password: '',
     });
   };
@@ -448,8 +346,6 @@ export default function UserPermissionsPage() {
         major: editForm.user_kind === 'student' ? normalizeString(editForm.major) : null,
         teacher_subject: editForm.user_kind === 'teacher' ? normalizeString(editForm.teacher_subject) : null,
         seal_image_path: normalizeString(editForm.seal_image_path),
-        can_approval_participate: editForm.can_approval_participate,
-        warehouse_ids: editForm.warehouse_ids,
         new_password: normalizeString(editForm.new_password),
       });
       alert('사용자 정보가 저장되었습니다.');
@@ -492,10 +388,16 @@ export default function UserPermissionsPage() {
         <div>
           <h1 className="text-3xl font-black italic text-blue-600">사용자 조회 및 설정</h1>
           <p className="mt-1 text-[11px] font-bold text-gray-500">
-            이름 필터, 권한/창고 아코디언, 사용자 상세 수정 모달을 통한 통합 관리 화면
+            사용자 기본정보 조회 및 계정관리 전용 화면
           </p>
         </div>
         <div className="flex gap-2">
+          <Link
+            href="/admin/user-access-control"
+            className="inline-flex items-center rounded-lg border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-black text-blue-700 transition-all hover:bg-blue-100"
+          >
+            사용자 권한 관리로 이동
+          </Link>
           <button
             disabled={loading}
             onClick={handleDownloadUsersExcel}
@@ -599,19 +501,12 @@ export default function UserPermissionsPage() {
                     className="w-[120px]"
                   />
                 </th>
-                <th className="px-3 py-3 text-left">권한 상세</th>
-                <th className="px-3 py-3 text-left">창고 권한</th>
                 <th className="px-3 py-3 text-center">계정 관리</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {pageUsers.map((user) => {
                 const profile = getProfileColumns(user);
-                const isSaving = savingUserId === user.id;
-                const assignedWarehouseIds = userWarehouseMap[user.id] ?? [];
-                const isSystemAdmin =
-                  user.role_name?.toLowerCase() === 'admin' ||
-                  user.can_manage_permissions === true;
                 return (
                   <tr key={user.id} className={`align-top hover:bg-blue-50/40 ${!user.is_active ? 'bg-gray-50 opacity-70' : ''}`}>
                     <td className="px-3 py-3 text-center">
@@ -655,62 +550,6 @@ export default function UserPermissionsPage() {
                       {user.training_program ? (
                         <p className="mt-1 text-[11px] text-gray-500">교육프로그램: {user.training_program}</p>
                       ) : null}
-                    </td>
-                    <td className="px-3 py-3">
-                      <details className="rounded-lg border border-gray-200 bg-white">
-                        <summary className="cursor-pointer px-3 py-2 text-[11px] font-black text-gray-700">
-                          권한 보기/수정
-                        </summary>
-                        <div className="space-y-2 border-t bg-gray-50 px-3 py-2">
-                          {PERMISSION_FIELDS.map((field) => {
-                            const checked =
-                              field.key === 'can_approval_participate'
-                                ? user.can_approval_participate
-                                : user[field.key] === true;
-                            return (
-                              <label key={field.key} className="flex items-center justify-between gap-2 text-[11px] font-semibold">
-                                <span>{field.label}</span>
-                                <input
-                                  type="checkbox"
-                                  checked={checked}
-                                  disabled={isSaving || field.disabled}
-                                  onChange={() => void togglePermission(user, field.key)}
-                                  className="h-4 w-4 cursor-pointer accent-black disabled:cursor-not-allowed"
-                                />
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </details>
-                    </td>
-                    <td className="px-3 py-3">
-                      <details className="rounded-lg border border-gray-200 bg-white">
-                        <summary className="cursor-pointer px-3 py-2 text-[11px] font-black text-gray-700">
-                          창고 선택 ({assignedWarehouseIds.length})
-                        </summary>
-                        <div className="max-h-44 space-y-2 overflow-y-auto border-t bg-gray-50 px-3 py-2">
-                          {isSystemAdmin ? (
-                            <p className="text-[11px] font-semibold text-blue-600">시스템 관리자: 모든 창고 접근 가능</p>
-                          ) : null}
-                          {warehouses.map((warehouse) => (
-                            <label key={warehouse.id} className="flex items-center justify-between gap-2 text-[11px]">
-                              <span className="font-semibold text-gray-700">
-                                {warehouse.code ? `[${warehouse.code}] ` : ''}
-                                {warehouse.name}
-                              </span>
-                              <input
-                                type="checkbox"
-                                checked={assignedWarehouseIds.includes(warehouse.id)}
-                                disabled={isSaving}
-                                onChange={(event) =>
-                                  void toggleWarehouseForUser(user.id, warehouse.id, event.target.checked)
-                                }
-                                className="h-4 w-4 cursor-pointer accent-blue-600 disabled:cursor-not-allowed"
-                              />
-                            </label>
-                          ))}
-                        </div>
-                      </details>
                     </td>
                     <td className="px-3 py-3">
                       <div className="flex justify-center gap-1">
@@ -917,48 +756,6 @@ export default function UserPermissionsPage() {
                     className="w-full rounded-xl border-2 border-gray-100 p-3 text-sm font-bold outline-none focus:border-black"
                     placeholder="user-seals/... 경로"
                   />
-                </div>
-              </div>
-
-              <div className="rounded-xl border-2 border-gray-100 p-4">
-                <label className="flex items-center justify-between text-sm font-black">
-                  <span>결재권권한</span>
-                  <input
-                    type="checkbox"
-                    checked={editForm.can_approval_participate}
-                    onChange={(e) =>
-                      setEditForm((prev) => ({ ...prev, can_approval_participate: e.target.checked }))
-                    }
-                    className="h-4 w-4 cursor-pointer accent-blue-600"
-                  />
-                </label>
-              </div>
-
-              <div className="rounded-xl border-2 border-gray-100 p-4">
-                <p className="mb-2 text-[10px] font-black uppercase tracking-widest text-gray-400">창고 권한</p>
-                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                  {warehouses.map((warehouse) => (
-                    <label key={warehouse.id} className="flex items-center justify-between rounded border bg-gray-50 px-2 py-1.5 text-xs">
-                      <span className="font-semibold">
-                        {warehouse.code ? `[${warehouse.code}] ` : ''}
-                        {warehouse.name}
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={editForm.warehouse_ids.includes(warehouse.id)}
-                        onChange={(e) => {
-                          const checked = e.target.checked;
-                          setEditForm((prev) => {
-                            const next = checked
-                              ? Array.from(new Set([...prev.warehouse_ids, warehouse.id]))
-                              : prev.warehouse_ids.filter((id) => id !== warehouse.id);
-                            return { ...prev, warehouse_ids: next };
-                          });
-                        }}
-                        className="h-4 w-4 cursor-pointer accent-blue-600"
-                      />
-                    </label>
-                  ))}
                 </div>
               </div>
 

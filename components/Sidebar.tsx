@@ -7,9 +7,11 @@ import { LayoutDashboard } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import {
   hasManagePermission,
+  hasOutboundPermission,
   isSystemAdminUser,
   type CurrentUserPermissions,
   type ManagePermissionKey,
+  type OutboundPermissionKey,
 } from '@/lib/permissions'
 
 type SidebarUser = CurrentUserPermissions
@@ -17,6 +19,11 @@ type MenuItem = {
   name: string
   href: string
   perm: ManagePermissionKey | null
+  /**
+   * When set, gates this item with `hasOutboundPermission` (관리자 예외는 출고요청 조회와 동일).
+   * `perm`은 이 경우 무시됩니다.
+   */
+  outboundPerm?: OutboundPermissionKey
   /** When true, item stays active for nested routes (e.g. /groupware/board/…). */
   nestedActive?: boolean
 }
@@ -119,6 +126,14 @@ export default function Sidebar() {
     return hasManagePermission(userData, permKey)
   };
 
+  const itemEnabled = (item: MenuItem) => {
+    if (loading || !userData) return false
+    if (item.outboundPerm) {
+      return hasOutboundPermission(userData, item.outboundPerm)
+    }
+    return hasPermission(item.perm)
+  }
+
   const menuGroups: MenuGroup[] = [
     {
       title: '그룹웨어',
@@ -162,7 +177,12 @@ export default function Sidebar() {
         { name: '입고 등록', href: '/inbound/new', perm: 'can_material_manage' }, 
         { name: '입고 보완 입력', href: '/inbound/complete-tracking', perm: 'can_material_manage' },
         { name: '자재 이동', href: '/inventory-transfers/new', perm: 'can_material_manage' },
-        { name: '출고 지시 현황', href: '/outbound-instructions', perm: 'can_material_manage'},
+        {
+          name: '출고 요청 현황',
+          href: '/outbound-instructions',
+          perm: null,
+          outboundPerm: 'can_outbound_view',
+        },
         { name: '재고 실사/조정', href: '/inventory-adjustments', perm: 'can_material_manage' },
       ]
     },
@@ -178,6 +198,7 @@ export default function Sidebar() {
       items: [
         { name: '사용자 가입 설정', href: '/admin/user-approvals', perm: 'can_manage_permissions'},
         { name: '사용자 조회 및 설정', href: '/admin/user-permissions', perm: 'can_manage_permissions' },
+        { name: '사용자 권한 관리', href: '/admin/user-access-control', perm: 'can_manage_permissions' },
         { name: '로그인 모니터', href: '/admin/login-audit', perm: 'can_manage_permissions' },
         { name: '입고 로그 조회', href: '/admin/inbound-logs', perm: 'can_manage_permissions' },
         { name: '창고 관리', href: '/admin/warehouses', perm: 'can_manage_permissions' },
@@ -265,7 +286,7 @@ export default function Sidebar() {
               {isOpen && (
                 <div className="space-y-0.5 ml-1 border-l border-sidebar-border">
                   {group.items.map((item) => {
-                    const enabled = hasPermission(item.perm)
+                    const enabled = itemEnabled(item)
                     const isCurrent =
                       pathname === item.href ||
                       (item.nestedActive === true &&

@@ -3,6 +3,10 @@ import { createClient } from '@supabase/supabase-js'
 import { hasOutboundPermission, isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
 import { logApprovalHistory } from '@/lib/approval-history-log'
 import { applyOutboundDispatchConcurrencyGuard } from '@/lib/outbound-dispatch-concurrency'
+import {
+  logOutboundDispatchAuditEvent,
+  type OutboundDispatchAuditSnapshot,
+} from '@/lib/outbound-dispatch-audit-log'
 
 type DispatchActionType = 'assign' | 'reassign' | 'recall' | 'execute_self' | 'complete'
 
@@ -41,6 +45,7 @@ type AppUserPermissionRow = Pick<
   | 'role_name'
   | 'can_manage_permissions'
   | 'can_admin_manage'
+  | 'outbound_role'
   | 'can_outbound_view'
   | 'can_outbound_execute_self'
   | 'can_outbound_assign_handler'
@@ -103,6 +108,7 @@ export async function POST(request: NextRequest) {
       .select(`
         id, user_name, user_kind, role_name, is_active,
         can_manage_permissions, can_admin_manage,
+        outbound_role,
         can_outbound_view, can_outbound_execute_self, can_outbound_assign_handler,
         can_outbound_reassign_recall, can_outbound_execute_any
       `)
@@ -178,6 +184,14 @@ export async function POST(request: NextRequest) {
     }
 
     const now = new Date().toISOString()
+    const beforeSnapshot: OutboundDispatchAuditSnapshot = {
+      status: outboundRequest.status,
+      outbound_completed: outboundRequest.outbound_completed,
+      dispatch_state: outboundRequest.dispatch_state ?? 'queue',
+      dispatch_handler_user_id: outboundRequest.dispatch_handler_user_id,
+      dispatch_handler_name: outboundRequest.dispatch_handler_name,
+      remarks: outboundRequest.remarks,
+    }
 
     let nextStatus = outboundRequest.status
     let nextCompletedFlag = outboundRequest.outbound_completed
@@ -305,6 +319,28 @@ export async function POST(request: NextRequest) {
       action_comment: historyComment,
       action_at: now,
       dedupe_key: `dispatch:${outboundRequest.approval_doc_id}:${action}:${currentUser.id}:${now}`,
+    })
+
+    const afterSnapshot: OutboundDispatchAuditSnapshot = {
+      status: nextStatus,
+      outbound_completed: nextCompletedFlag,
+      dispatch_state: nextState,
+      dispatch_handler_user_id: nextHandlerId,
+      dispatch_handler_name: nextHandlerName,
+      remarks: note ?? outboundRequest.remarks,
+    }
+
+    await logOutboundDispatchAuditEvent(adminClient, {
+      outbound_request_id: outboundRequest.id,
+      approval_doc_id: outboundRequest.approval_doc_id,
+      action_type: action,
+      actor_id: currentUser.id,
+      actor_name: currentUser.user_name ?? null,
+      reason: note,
+      occurred_at: now,
+      before_state: beforeSnapshot,
+      after_state: afterSnapshot,
+      dedupe_key: `dispatch-audit:${outboundRequest.id}:${action}:${currentUser.id}:${now}`,
     })
 
     return NextResponse.json({

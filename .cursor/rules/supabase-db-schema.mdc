@@ -1,0 +1,17 @@
+---
+description: DB·Supabase 작업 시 스키마 점검 스킬과 MCP 절차를 강제한다
+alwaysApply: true
+---
+
+# Supabase / Postgres 작업
+
+다음 중 하나라도 해당하면 **작업을 마치기 전에** 반드시 `.cursor/skills/supabase-schema-migrations/SKILL.md`를 읽고 그 지시를 따른다.
+
+- `supabase/migrations/` 또는 저장소 안의 SQL 편집
+- 테이블·컬럼·인덱스·제약·뷰·함수(RPC)·트리거·RLS 정책 추가/변경/삭제
+- Supabase MCP 사용 (`apply_migration`, `execute_sql`, `list_tables` 등)
+- 서버·클라이언트에서 Postgres/Supabase 쿼리·RPC 호출 코드 추가/변경
+
+실행 순서 요약: (1) 기존 `supabase/migrations/`와 충돌·중복 없는지 확인 (2) MCP 도구 호출 전 `mcps/user-supabase/tools/`에서 스키마 확인 (3) DDL은 `apply_migration` 사용 (4) 스키마 변경 후 `get_advisors`(performance·security) 검토 (5) 앱 타입·호출부와 스키마 일치 확인.
+
+서브에이전트(Task)를 쓰지 않아도 이 규칙만으로 같은 기준이 적용된다.

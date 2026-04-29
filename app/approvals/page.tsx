@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FilterX } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
-import SearchableCombobox from '@/components/SearchableCombobox'
+import TableFilterCombobox from '@/components/TableFilterCombobox'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -114,6 +114,7 @@ export default function ApprovalsPage() {
   const [inboxViewerId, setInboxViewerId] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<(typeof PAGE_SIZE_OPTIONS)[number]>(20);
+  const [expandedApproverLineDocId, setExpandedApproverLineDocId] = useState<number | null>(null);
 
   const [filterDocNo, setFilterDocNo] = useState('');
   const [filterDocType, setFilterDocType] = useState('');
@@ -431,6 +432,71 @@ export default function ApprovalsPage() {
     };
   }, [docs]);
 
+  const stripDraftCompletePrefix = useCallback((progress: string) => {
+    return progress
+      .replace(/기안완료(?:\s*[>,/|·]\s*|\s*)/gu, '')
+      // 다양한 구분 기호(>, 전각>, 화살표류, 불릿)를 표시에서 제거
+      .replace(/[>＞›»→▶▸•·]/g, ' ')
+      .replace(/^[>,/|·\s]+/u, '')
+      .replace(/^-\s*/u, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }, []);
+
+  const getPendingActorNames = useCallback((progress: string) => {
+    const cleaned = stripDraftCompletePrefix(progress);
+    const names: string[] = [];
+    const regex = /([^\s]+?)(?:결재대기중|협조대기중|대기중|결재중|협조중)/g;
+    let m: RegExpExecArray | null = null;
+    while ((m = regex.exec(cleaned)) !== null) {
+      const name = String(m[1] ?? '').trim();
+      if (name) names.push(name);
+    }
+    return [...new Set(names)];
+  }, [stripDraftCompletePrefix]);
+
+  const getCollapsedApproverLineText = useCallback((line: string, pendingName?: string | null) => {
+    const value = line.trim();
+    if (!value) return '-';
+    if (pendingName) {
+      const parts = value.split('-').map((p) => p.trim()).filter(Boolean);
+      const first = parts[0] ?? pendingName;
+      if (parts.length >= 2) return `${first}-${pendingName}...`;
+      return `${pendingName}...`;
+    }
+    const parts = value.split('-').map((p) => p.trim()).filter(Boolean);
+    if (parts.length >= 2) return `${parts[0]}-...`;
+    if (value.length <= 8) return value;
+    return `${value.slice(0, 8)}...`;
+  }, []);
+
+  const keepOnlyActiveProgress = useCallback((progress: string) => {
+    const noDraft = stripDraftCompletePrefix(progress);
+    const activeOnly = noDraft
+      .replace(/[^\s]+(?:결재완료|협조완료)\s*/gu, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    return activeOnly || noDraft;
+  }, [stripDraftCompletePrefix]);
+
+  const renderApproverLineWithPendingHighlight = useCallback((line: string, pendingNames: string[]) => {
+    if (!pendingNames.length) return line;
+    const unique = [...new Set(pendingNames.filter(Boolean))];
+    if (!unique.length) return line;
+    const escaped = unique.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const pattern = new RegExp(`(${escaped.join('|')})`, 'g');
+    const parts = line.split(pattern);
+    return parts.map((part, idx) =>
+      unique.includes(part) ? (
+        <span key={`${part}-${idx}`} className="font-semibold text-blue-600">
+          {part}
+        </span>
+      ) : (
+        <span key={`text-${idx}`}>{part}</span>
+      )
+    );
+  }, []);
+
   return (
     <div className="mx-auto flex min-h-[calc(100dvh-10.5rem)] max-w-[1800px] flex-col gap-4 bg-background p-4 font-sans md:p-6">
       <PageHeader
@@ -511,13 +577,13 @@ export default function ApprovalsPage() {
 
           <div className="flex min-h-[min(60vh,32rem)] min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
             <div className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full min-w-[1120px] table-fixed border-collapse text-left text-sm text-card-foreground">
+              <table className="w-full min-w-[1160px] table-fixed border-collapse text-left text-sm text-card-foreground">
                 <colgroup>
                   <col className="w-[11rem]" />
-                  <col className="w-[6.75rem]" />
-                  <col className="w-[14rem]" />
-                  <col className="w-[14rem]" />
-                  <col className="w-[18rem]" />
+                  <col className="w-[5.5rem]" />
+                  <col className="w-[20rem]" />
+                  <col className="w-[8.75rem]" />
+                  <col className="w-[10.5rem]" />
                   <col className="w-[7.5rem]" />
                   <col className="w-[6.5rem]" />
                 </colgroup>
@@ -547,7 +613,7 @@ export default function ApprovalsPage() {
                   </tr>
                   <tr className="border-b border-border bg-muted/30 text-[11px] font-medium normal-case tracking-normal text-muted-foreground">
                 <th className="relative z-[2] px-2 py-2 align-top">
-                  <SearchableCombobox
+                  <TableFilterCombobox
                     value={filterDocNo}
                     onChange={setFilterDocNoP}
                     options={hintOptions.docNo.length > 1 ? hintOptions.docNo : COMBO_EMPTY}
@@ -555,25 +621,25 @@ export default function ApprovalsPage() {
                     creatable
                     showClearOption={false}
                     listMaxHeightClass="max-h-56 overflow-y-auto"
-                    buttonClassName="min-w-[9rem] whitespace-nowrap text-[11px] font-semibold"
+                    buttonClassName="w-full min-w-0 whitespace-nowrap text-[11px] font-semibold"
                     dropdownPlacement="auto"
                   />
                 </th>
                 <th className="relative z-[2] px-1 py-2 align-top">
-                  <SearchableCombobox
+                  <TableFilterCombobox
                     value={filterDocType}
                     onChange={setFilterDocTypeP}
                     options={DOC_TYPE_FILTER_OPTIONS}
                     placeholder="유형"
                     showClearOption={false}
                     listMaxHeightClass="max-h-56 overflow-y-auto"
-                    buttonClassName="text-[11px] font-bold leading-snug py-1.5 px-1.5"
-                    dropdownClassName="min-w-[6.75rem] max-w-[9rem] text-xs"
+                    buttonClassName="w-full min-w-0 text-[11px] font-bold leading-snug py-1.5 px-1.5"
+                    dropdownClassName="min-w-[5rem] max-w-[7rem] text-xs"
                     dropdownPlacement="auto"
                   />
                 </th>
                 <th className="relative z-[2] px-2 py-2 align-top">
-                  <SearchableCombobox
+                  <TableFilterCombobox
                     value={filterTitle}
                     onChange={setFilterTitleP}
                     options={hintOptions.title.length > 1 ? hintOptions.title : COMBO_EMPTY}
@@ -581,12 +647,12 @@ export default function ApprovalsPage() {
                     creatable
                     showClearOption={false}
                     listMaxHeightClass="max-h-56 overflow-y-auto"
-                    buttonClassName="min-w-[10rem] whitespace-nowrap text-[11px] font-semibold"
+                    buttonClassName="w-full min-w-0 whitespace-nowrap text-[11px] font-semibold"
                     dropdownPlacement="auto"
                   />
                 </th>
                 <th className="relative z-[2] px-2 py-2 align-top">
-                  <SearchableCombobox
+                  <TableFilterCombobox
                     value={filterApproverLine}
                     onChange={setFilterApproverLineP}
                     options={hintOptions.line.length > 1 ? hintOptions.line : COMBO_EMPTY}
@@ -594,12 +660,12 @@ export default function ApprovalsPage() {
                     creatable
                     showClearOption={false}
                     listMaxHeightClass="max-h-56 overflow-y-auto"
-                    buttonClassName="min-w-[10rem] whitespace-nowrap text-[11px] font-semibold"
+                    buttonClassName="w-full min-w-0 whitespace-nowrap text-[11px] font-semibold"
                     dropdownPlacement="auto"
                   />
                 </th>
                 <th className="relative z-[2] px-2 py-2 align-top">
-                  <SearchableCombobox
+                  <TableFilterCombobox
                     value={filterProgress}
                     onChange={setFilterProgressP}
                     options={hintOptions.progress.length > 1 ? hintOptions.progress : COMBO_EMPTY}
@@ -607,12 +673,12 @@ export default function ApprovalsPage() {
                     creatable
                     showClearOption={false}
                     listMaxHeightClass="max-h-56 overflow-y-auto"
-                    buttonClassName="min-w-[10rem] whitespace-nowrap text-[11px] font-semibold"
+                    buttonClassName="w-full min-w-0 whitespace-nowrap text-[11px] font-semibold"
                     dropdownPlacement="auto"
                   />
                 </th>
                 <th className="relative z-[2] px-1 py-2 align-top">
-                  <SearchableCombobox
+                  <TableFilterCombobox
                     value={filterStatus}
                     onChange={setFilterStatusP}
                     options={[...APPROVAL_INBOX_STATUS_FILTER_OPTIONS]}
@@ -620,13 +686,13 @@ export default function ApprovalsPage() {
                     creatable
                     showClearOption={false}
                     listMaxHeightClass="max-h-56 overflow-y-auto"
-                    buttonClassName="text-[11px] font-bold py-1.5 px-1.5"
-                    dropdownClassName="min-w-[11rem] text-xs"
+                    buttonClassName="w-full min-w-0 text-[11px] font-bold py-1.5 px-1.5"
+                    dropdownClassName="min-w-[9rem] text-xs"
                     dropdownPlacement="auto"
                   />
                 </th>
                 <th className="relative z-[2] px-2 py-2 align-top">
-                  <SearchableCombobox
+                  <TableFilterCombobox
                     value={filterDraftDate}
                     onChange={setFilterDraftDateP}
                     options={COMBO_EMPTY}
@@ -634,7 +700,7 @@ export default function ApprovalsPage() {
                     creatable
                     showClearOption={false}
                     listMaxHeightClass="max-h-56 overflow-y-auto"
-                    buttonClassName="min-w-[8rem] whitespace-nowrap text-[11px] font-semibold"
+                    buttonClassName="w-full min-w-0 whitespace-nowrap text-[11px] font-semibold"
                     dropdownPlacement="auto"
                   />
                 </th>
@@ -673,6 +739,8 @@ export default function ApprovalsPage() {
                   const pres = getApprovalDocDetailedStatusPresentation(doc, doc.linesForStatusPresentation);
                   const typeLabel = getDocTypeLabel(doc.doc_type);
                   const draftDate = doc.drafted_at?.slice(0, 10) ?? '';
+                  const pendingNames = getPendingActorNames(doc.progressLabel);
+                  const collapsedLine = getCollapsedApproverLineText(doc.approverLineNames);
                   return (
                     <tr key={doc.id} className="transition-colors hover:bg-muted/40">
                       <td className="px-3 py-3 font-semibold md:px-4 md:py-4">
@@ -706,10 +774,7 @@ export default function ApprovalsPage() {
                             className="block min-w-0"
                             title={inboxDisplayText(doc.title)}
                           >
-                            <InboxTruncated
-                              text={doc.title}
-                              className="cursor-pointer text-primary underline-offset-2 hover:underline"
-                            />
+                            <InboxTruncated text={doc.title} className="cursor-pointer text-[15px] font-bold text-primary underline-offset-2 hover:underline" />
                           </a>
                           {doc.recent_reject_comment && (
                             <p
@@ -721,13 +786,30 @@ export default function ApprovalsPage() {
                           )}
                         </div>
                       </td>
-                      <td className="px-3 py-3 text-sm font-medium text-foreground md:px-4 md:py-4">
-                        <InboxTruncated text={doc.approverLineNames} />
+                      <td className="px-2.5 py-3 text-sm font-medium text-foreground md:px-3 md:py-4">
+                        <div className="relative inline-block max-w-full align-top">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setExpandedApproverLineDocId((prev) => (prev === doc.id ? null : doc.id))
+                            }
+                            className="block max-w-full truncate rounded-sm text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+                            title={doc.approverLineNames}
+                            aria-expanded={expandedApproverLineDocId === doc.id}
+                          >
+                            {collapsedLine}
+                          </button>
+                          {expandedApproverLineDocId === doc.id ? (
+                            <div className="pointer-events-none absolute left-0 top-full z-20 mt-0 max-w-[22rem] whitespace-nowrap rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs font-medium text-popover-foreground shadow-lg">
+                              {renderApproverLineWithPendingHighlight(doc.approverLineNames, pendingNames)}
+                            </div>
+                          ) : null}
+                        </div>
                       </td>
                       <td className="px-3 py-3 text-xs font-medium leading-relaxed text-foreground md:px-4 md:py-4">
                         <div className="flex min-w-0 items-center gap-2">
                           <div className="min-w-0 flex-1">
-                            <InboxTruncated text={doc.progressLabel} />
+                            <InboxTruncated text={keepOnlyActiveProgress(doc.progressLabel)} />
                           </div>
                           <span
                             aria-label={doc.hasLineOpinion ? '결재·협조 의견 있음' : '결재·협조 의견 없음'}

@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { notFound, redirect } from 'next/navigation'
+import { notFound } from 'next/navigation'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import ApprovalActionButtons from '@/components/ApprovalActionButtons'
 import ApprovalDocumentPaperView from '@/components/approvals/ApprovalDocumentPaperView'
@@ -157,20 +157,6 @@ export async function ApprovalDetailShared({
 
   const { data: head } = await supabase.from('approval_docs').select('id, doc_type').eq('id', docId).single()
   if (!head) notFound()
-  if (head.doc_type === 'outbound_request') {
-    const { data: req } = await supabase.from('outbound_requests').select('id').eq('approval_doc_id', docId).maybeSingle()
-    if (req?.id != null) {
-      const base = shellMode === 'bare' ? `/outbound-requests/view/${req.id}` : `/outbound-requests/${req.id}`
-      if (attachmentFrom?.enabled) {
-        const q = new URLSearchParams()
-        q.set('fromAttachment', '1')
-        if (attachmentFrom.sourceDocNo?.trim()) q.set('fromDocNo', attachmentFrom.sourceDocNo.trim())
-        if (attachmentFrom.sourceTitle?.trim()) q.set('fromDocTitle', attachmentFrom.sourceTitle.trim())
-        redirect(`${base}?${q.toString()}`)
-      }
-      redirect(base)
-    }
-  }
 
   const result = await getApprovalDetail(supabase, id)
 
@@ -383,7 +369,11 @@ export async function ApprovalDetailShared({
             <>
               {canWriterEditResubmit && (
                 <Link
-                  href={`/approvals/new?resubmit=${doc.id}`}
+                  href={
+                    doc.doc_type === 'outbound_request'
+                      ? `/outbound-requests/new?resubmit=${doc.id}`
+                      : `/approvals/new?resubmit=${doc.id}`
+                  }
                   className="rounded-lg border-2 border-blue-600 bg-blue-50 px-4 py-2 text-sm font-black text-blue-900 hover:bg-blue-100"
                 >
                   수정·재상신

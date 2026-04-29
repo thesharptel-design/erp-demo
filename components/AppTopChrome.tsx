@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Clock3, Home, LogOut, Menu, RefreshCcw } from 'lucide-react'
 import { toast } from 'sonner'
 import { supabase } from '@/lib/supabase'
 import { useIdleSession } from '@/components/IdleSessionContext'
@@ -14,6 +15,8 @@ import {
 } from '@/lib/permissions'
 import { TopInboxStrip } from '@/components/inbox/TopInboxStrip'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Card, CardContent } from '@/components/ui/card'
 
 type Props = {
   onMenuClick?: () => void
@@ -51,7 +54,7 @@ export default function AppTopChrome({ onMenuClick }: Props) {
   const [user, setUser] = useState<CurrentUserPermissions | null>(null)
   const wasWarningRef = useRef(isWarning)
   /** 쪽지/알림 패널을 메인 콘텐츠 우측 라인에 맞출 때 사용 */
-  const topChromeAlignRef = useRef<HTMLElement | null>(null)
+  const topChromeAlignRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     async function loadCurrentUser() {
@@ -116,83 +119,87 @@ export default function AppTopChrome({ onMenuClick }: Props) {
   }
 
   return (
-    <section
+    <Card
       ref={topChromeAlignRef}
-      className={`mb-3 rounded-xl border bg-card p-3 shadow-sm sm:mb-4 sm:p-3 ${
-        isWarning ? 'border-amber-300' : 'border-border'
-      }`}
+      className={`mb-3 border shadow-sm sm:mb-4 ${isWarning ? 'border-amber-300' : 'border-border'}`}
       aria-live="polite"
     >
-      <div className="flex w-full flex-col gap-2">
-        <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start lg:justify-between lg:gap-4">
-          {/* 좌측: 1줄 이름·메타 → 그 아래 활성 권한 */}
+      <CardContent className="space-y-0.5 py-1 px-2 sm:py-1.5 sm:px-2.5">
+        <div className="flex flex-col gap-1 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex min-w-0 flex-1 items-start gap-2">
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="icon"
               onClick={onMenuClick}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-input bg-background text-base font-semibold text-foreground lg:hidden"
+              className="h-8 w-8 shrink-0 lg:hidden"
               aria-label="메뉴 열기"
             >
-              ☰
-            </button>
-            <div className="flex min-w-0 flex-1 flex-col gap-3">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <Menu className="h-4 w-4" />
+            </Button>
+
+            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="truncate text-base font-semibold tracking-tight text-foreground sm:text-lg">
                   {userIcon} {user?.user_name ?? '사용자'}
                 </span>
-                <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                <Badge variant="outline" className="h-4 border-emerald-200 bg-emerald-50 px-1.5 text-[10px] font-medium text-emerald-700">
                   {userKindLabel}
-                </span>
+                </Badge>
                 {userMetaLabels.map((label) => (
-                  <span key={label} className="rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-foreground">
+                  <Badge key={label} variant="outline" className="h-4 px-1.5 text-[10px] font-medium">
                     {label}
-                  </span>
+                  </Badge>
                 ))}
-                <span className="max-w-full break-all rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                <Badge variant="outline" className="h-4 max-w-full break-all px-1.5 text-[10px] text-muted-foreground">
                   {user?.email ?? '이메일 없음'}
-                </span>
-                <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+                </Badge>
+                <Badge variant="outline" className="h-4 border-indigo-200 bg-indigo-50 px-1.5 text-[10px] text-indigo-700">
                   사번 {user?.employee_no ?? '-'}
-                </span>
+                </Badge>
               </div>
+
               {user ? (
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">활성 권한</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {permissionLabels.length === 0 ? (
-                      <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">권한 없음</span>
-                    ) : (
-                      permissionLabels.map((label) => (
-                        <span key={label} className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-medium text-blue-700">
-                          {label}
-                        </span>
-                      ))
-                    )}
-                  </div>
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">활성 권한</span>
+                  {permissionLabels.length === 0 ? (
+                    <Badge variant="outline" className="h-4 px-1.5 text-[10px] font-medium text-muted-foreground">
+                      권한 없음
+                    </Badge>
+                  ) : (
+                    permissionLabels.map((label) => (
+                      <Badge key={label} variant="outline" className="h-4 border-blue-200 bg-blue-50 px-1.5 text-[10px] text-blue-700">
+                        {label}
+                      </Badge>
+                    ))
+                  )}
                 </div>
               ) : null}
             </div>
           </div>
 
-          {/* 우측: 1줄 홈·로그아웃·타이머 → 점선 아래 쪽지·알림 */}
-          <div className="flex w-full shrink-0 flex-col items-stretch gap-0 lg:w-auto lg:items-end">
-            <div className="flex flex-nowrap items-center justify-end gap-1.5 overflow-x-auto pb-0.5">
-              <Button asChild variant="outline" size="sm" className="h-9 shrink-0 px-3.5 text-xs sm:px-4 sm:text-sm">
-                <Link href="/dashboard">홈</Link>
+          <div className="flex w-full shrink-0 flex-col gap-0 lg:w-auto lg:items-end">
+            <div className="flex flex-nowrap items-center justify-end gap-1.5 overflow-x-auto">
+              <Button asChild variant="outline" size="sm" className="h-5 shrink-0 px-1.5 text-[10px]">
+                <Link href="/dashboard" className="inline-flex items-center gap-1.5">
+                  <Home className="h-2.5 w-2.5" />
+                  Home
+                </Link>
               </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={handleLogout}
-                className="h-9 shrink-0 px-3.5 text-xs sm:px-4 sm:text-sm"
+
+              <Button type="button" variant="outline" size="sm" onClick={handleLogout} className="h-5 shrink-0 px-1.5 text-[10px]">
+                <LogOut className="mr-1 h-2.5 w-2.5" />
+                Logout
+              </Button>
+
+              <div
+                className={`inline-flex h-5 min-w-[108px] shrink-0 items-center justify-between gap-1 rounded-md border px-1 ${
+                  isWarning ? 'border-amber-300 bg-amber-50/70' : 'border-input bg-muted/50'
+                }`}
               >
-                로그아웃
-              </Button>
-              <div className="inline-flex h-9 min-w-[140px] shrink-0 items-center justify-between gap-1.5 rounded-md border border-input bg-muted/50 px-2.5">
                 <div className="leading-none">
-                  <p className="text-[8px] font-semibold uppercase tracking-wide text-muted-foreground">AUTO LOGOUT</p>
-                  <p className={`text-xs font-semibold tracking-tight sm:text-sm ${isWarning ? 'text-amber-700' : 'text-foreground'}`}>
+                  <p className="text-[7px] font-semibold uppercase tracking-wide text-muted-foreground">AUTO LOGOUT</p>
+                  <p className={`text-[10px] font-semibold tracking-tight ${isWarning ? 'text-amber-700' : 'text-foreground'}`}>
                     {formatRemainingMs(remainingMs)}
                   </p>
                 </div>
@@ -201,14 +208,15 @@ export default function AppTopChrome({ onMenuClick }: Props) {
                   onClick={extendSession}
                   variant="outline"
                   size="icon"
-                  className="h-6 w-6 shrink-0 text-[10px] font-semibold"
+                  className="h-3.5 w-3.5 shrink-0"
                   aria-label="세션 연장"
                   title="세션 연장"
                 >
-                  ↻
+                  <RefreshCcw className="h-2 w-2" />
                 </Button>
               </div>
             </div>
+
             {user?.id ? (
               <TopInboxStrip
                 userId={user.id}
@@ -220,11 +228,12 @@ export default function AppTopChrome({ onMenuClick }: Props) {
         </div>
 
         {isWarning ? (
-          <p className="rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-700">
+          <div className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[10px] font-medium text-amber-800">
+            <Clock3 className="h-3 w-3" />
             곧 유휴 로그아웃됩니다. 마우스/키보드 입력 또는 세션 연장 버튼으로 시간을 갱신하세요.
-          </p>
+          </div>
         ) : null}
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   )
 }

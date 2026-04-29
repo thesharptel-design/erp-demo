@@ -6,7 +6,11 @@ import type { Database } from '@/lib/database.types'
 import { getOutboundRequestRowPresentation } from '@/lib/approval-status'
 import type { ApprovalDocLike, ApprovalLineLike } from '@/lib/approval-status'
 import { openApprovalShellPopup, openOutboundRequestDetailViewPopup } from '@/lib/approval-popup'
-import { isSystemAdminUser, type CurrentUserPermissions } from '@/lib/permissions'
+import {
+  hasOutboundPermission,
+  isSystemAdminUser,
+  type CurrentUserPermissions,
+} from '@/lib/permissions'
 
 type OutboundRequestRow = Database['public']['Tables']['outbound_requests']['Row'] & {
   approval_doc?: (ApprovalDocLike & { approval_lines?: ApprovalLineLike[] }) | null
@@ -37,8 +41,10 @@ export default function OutboundRequestsPage() {
   const [customers, setCustomers] = useState<CustomerRow[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
+  const [isPermissionDenied, setIsPermissionDenied] = useState(false)
   
   const [isAdmin, setIsAdmin] = useState(false)
+  const [canOutboundView, setCanOutboundView] = useState(false)
 
   useEffect(() => {
     async function loadData() {
@@ -47,6 +53,7 @@ export default function OutboundRequestsPage() {
       setErrorMessage('');
 
       try {
+        setIsPermissionDenied(false)
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
           setRequests([]);
@@ -56,23 +63,50 @@ export default function OutboundRequestsPage() {
 
         const { data: profile } = await supabase
           .from('app_users')
-          .select('role_name, can_manage_permissions, can_admin_manage')
+          .select(`
+            role_name,
+            can_manage_permissions,
+            can_admin_manage,
+            outbound_role,
+            can_outbound_view,
+            can_outbound_execute_self,
+            can_outbound_assign_handler,
+            can_outbound_reassign_recall,
+            can_outbound_execute_any
+          `)
           .eq('id', user.id)
           .single();
 
         const userIsAdmin = isSystemAdminUser(
           profile as Pick<CurrentUserPermissions, 'role_name' | 'can_manage_permissions' | 'can_admin_manage'> | null
         );
+        const userCanOutboundView = hasOutboundPermission(
+          profile as Partial<
+            Pick<
+              CurrentUserPermissions,
+              | 'role_name'
+              | 'can_manage_permissions'
+              | 'can_admin_manage'
+              | 'outbound_role'
+              | 'can_outbound_view'
+              | 'can_outbound_execute_self'
+              | 'can_outbound_assign_handler'
+              | 'can_outbound_reassign_recall'
+              | 'can_outbound_execute_any'
+            >
+          >,
+          'can_outbound_view'
+        );
         setIsAdmin(userIsAdmin);
+        setCanOutboundView(userCanOutboundView);
 
-        let myDocIds: number[] = [];
-        if (!userIsAdmin) {
-          const { data: lines } = await supabase
-            .from('approval_participants')
-            .select('approval_doc_id')
-            .eq('user_id', user.id);
-          
-          myDocIds = lines?.map(line => line.approval_doc_id).filter(id => id !== null) as number[] || [];
+        if (!userCanOutboundView) {
+          setRequests([]);
+          setUsers([]);
+          setCustomers([]);
+          setIsPermissionDenied(true);
+          setErrorMessage('출고요청 조회 권한이 없습니다. 관리자에게 출고권한(조회)을 요청해 주세요.');
+          return;
         }
 
         // 🌟 [오류 수정 완료] approval_lines를 approval_doc 안에 중첩해서 올바르게 가져옵니다!
@@ -89,6 +123,8 @@ export default function OutboundRequestsPage() {
             status,
             approval_doc_id,
             outbound_completed,
+            dispatch_state,
+            dispatch_handler_name,
             created_at,
             approval_doc:approval_docs (
               status, 
@@ -102,14 +138,6 @@ export default function OutboundRequestsPage() {
             warehouses:warehouse_id(name)
           `)
           .order('id', { ascending: false });
-
-        if (!userIsAdmin) {
-          if (myDocIds.length > 0) {
-            query = query.or(`requester_id.eq.${user.id},approval_doc_id.in.(${myDocIds.join(',')})`);
-          } else {
-            query = query.eq('requester_id', user.id);
-          }
-        }
 
         const { data: requestData, error: requestError } = await query;
 
@@ -164,24 +192,36 @@ export default function OutboundRequestsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-3xl font-black tracking-tight text-gray-900">출고요청서 조회</h1>
+          <h1 className="text-3xl font-black tracking-tight text-gray-900">출고요청 조회</h1>
           <p className="mt-2 text-sm font-bold text-gray-500">
             {isAdmin 
-              ? '모든 출고요청 문서를 조회하고 승인 전후 상태를 확인합니다. (최고관리자 모드)' 
-              : '내가 작성했거나 결재해야 할 출고요청 문서만 표시됩니다.'}
+              ? '전체 요청 조회 (관리자 모드)' 
+              : '내 요청/결재 대상만 표시'}
           </p>
         </div>
 
         <button
           type="button"
           onClick={openOutboundDraftPopup}
+          disabled={!canOutboundView}
           className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-black hover:bg-blue-700 transition-colors shadow-sm text-sm"
         >
-          + 출고요청서 작성
+          + 요청 작성
         </button>
       </div>
 
-      {errorMessage && <div className="p-4 bg-red-50 text-red-600 rounded-lg border border-red-200 font-bold">{errorMessage}</div>}
+      {isPermissionDenied ? (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 sm:p-6 shadow-sm">
+          <h2 className="text-base sm:text-lg font-black text-amber-900">조회 권한 없음</h2>
+          <p className="mt-3 text-sm sm:text-base font-bold leading-relaxed text-amber-800">
+            출고권한(조회) 미부여 상태입니다.
+            관리자에게 권한 부여를 요청해 주세요.
+          </p>
+        </div>
+      ) : null}
+      {!isPermissionDenied && errorMessage ? (
+        <div className="p-4 bg-red-50 text-red-600 rounded-lg border border-red-200 font-bold">{errorMessage}</div>
+      ) : null}
 
       <div className="overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm">
         <div className="overflow-x-auto">
@@ -189,26 +229,28 @@ export default function OutboundRequestsPage() {
             <thead className="bg-gray-50 border-b border-gray-100 text-gray-500">
               <tr>
                 <th className="px-5 py-4 font-bold">요청번호</th>
-                <th className="px-5 py-4 font-bold">상태 (결재진행)</th>
+                <th className="px-5 py-4 font-bold">진행상태</th>
+                <th className="px-5 py-4 font-bold">출고통제</th>
+                <th className="px-5 py-4 font-bold">담당자</th>
                 <th className="px-5 py-4 font-bold">요청일</th>
                 <th className="px-5 py-4 font-bold">요청자</th>
                 <th className="px-5 py-4 font-bold">창고</th>
                 <th className="px-5 py-4 font-bold">거래처</th>
-                <th className="px-5 py-4 font-bold max-w-[200px]">출고목적</th>
-                <th className="px-5 py-4 font-bold">비고 (반려/취소사유)</th>
+                <th className="px-5 py-4 font-bold max-w-[200px]">목적</th>
+                <th className="px-5 py-4 font-bold">사유/메모</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {isLoading ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-16 text-center font-bold text-gray-400">
-                    출고요청서 데이터를 불러오는 중입니다...
+                  <td colSpan={10} className="px-5 py-16 text-center font-bold text-gray-400">
+                    출고요청 데이터 불러오는 중...
                   </td>
                 </tr>
               ) : requests.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-5 py-16 text-center font-bold text-gray-400">
-                    권한이 있는 출고요청서 데이터가 없습니다.
+                  <td colSpan={10} className="px-5 py-16 text-center font-bold text-gray-400">
+                    조회 가능한 출고요청이 없습니다.
                   </td>
                 </tr>
               ) : (
@@ -219,6 +261,7 @@ export default function OutboundRequestsPage() {
                     approvalDoc: request.approval_doc,
                     lines,
                     reqStatus: request.status,
+                    dispatchState: request.dispatch_state,
                   });
 
                   return (
@@ -239,6 +282,20 @@ export default function OutboundRequestsPage() {
                       </td>
                       <td className="px-5 py-4">
                         <span className={statusInfo.className}>{statusInfo.label}</span>
+                      </td>
+                      <td className="px-5 py-4">
+                        <span className="inline-flex items-center rounded-full border border-slate-300 bg-slate-100 px-2.5 py-1 text-[11px] font-black text-slate-700">
+                          {request.dispatch_state === 'assigned'
+                            ? '담당자 지정'
+                            : request.dispatch_state === 'in_progress'
+                            ? '처리중'
+                            : request.dispatch_state === 'completed'
+                            ? '완료'
+                            : '지시 대기'}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 font-bold text-gray-900">
+                        {request.dispatch_handler_name ?? <span className="text-gray-300">-</span>}
                       </td>
                       <td className="px-5 py-4 font-bold text-gray-600">{request.req_date}</td>
                       <td className="px-5 py-4 font-bold text-gray-900">

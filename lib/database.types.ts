@@ -66,12 +66,38 @@ export type Database = {
           status: 'draft' | 'submitted' | 'approved' | 'rejected' | 'completed' | 'cancelled'
           approval_doc_id: number | null
           outbound_completed: boolean
+          dispatch_state: 'queue' | 'assigned' | 'in_progress' | 'completed'
+          dispatch_handler_user_id: string | null
+          dispatch_handler_name: string | null
+          dispatch_assigned_at: string | null
+          dispatch_started_at: string | null
+          dispatch_completed_at: string | null
+          dispatch_last_actor_id: string | null
+          dispatch_last_action_at: string | null
           warehouse_id: number
           created_at: string
           updated_at: string | null
         }
         Insert: Partial<Database['public']['Tables']['outbound_requests']['Row']>
         Update: Partial<Database['public']['Tables']['outbound_requests']['Row']>
+      }
+      outbound_dispatch_audit_logs: {
+        Row: {
+          id: number
+          outbound_request_id: number
+          approval_doc_id: number | null
+          action_type: 'assign' | 'reassign' | 'recall' | 'execute_self' | 'complete'
+          actor_id: string
+          actor_name: string | null
+          reason: string | null
+          occurred_at: string
+          before_state: Json
+          after_state: Json
+          dedupe_key: string | null
+          created_at: string
+        }
+        Insert: Partial<Database['public']['Tables']['outbound_dispatch_audit_logs']['Row']>
+        Update: Partial<Database['public']['Tables']['outbound_dispatch_audit_logs']['Row']>
       }
       inventory: {
         Row: {
@@ -151,6 +177,12 @@ export type Database = {
           role: string | null
           dept_id: number | null
           employee_no: string | null
+          outbound_role: 'none' | 'viewer' | 'worker' | 'master' | null
+          can_outbound_view: boolean | null
+          can_outbound_execute_self: boolean | null
+          can_outbound_assign_handler: boolean | null
+          can_outbound_reassign_recall: boolean | null
+          can_outbound_execute_any: boolean | null
         }
         Insert: Partial<Database['public']['Tables']['app_users']['Row']>
         Update: Partial<Database['public']['Tables']['app_users']['Row']>

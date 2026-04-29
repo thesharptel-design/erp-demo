@@ -2,6 +2,8 @@
 
 BEGIN;
 
+DROP FUNCTION IF EXISTS public.list_sent_private_messages_with_stats(integer);
+
 CREATE OR REPLACE FUNCTION public.list_sent_private_messages_with_stats(p_limit integer DEFAULT 50)
 RETURNS TABLE (
   message_id uuid,

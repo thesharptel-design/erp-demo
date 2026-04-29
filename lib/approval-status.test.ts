@@ -10,6 +10,7 @@ import {
   getApprovalDocDetailedStatusLabel,
   getApprovalDocDetailedStatusPresentation,
   getDocDetailOpenHref,
+  getOutboundDispatchStatePresentation,
   getOutboundRequestRowPresentation,
   getUnifiedApprovalWorkflowBadges,
   isApprovalCancellationRemarkProcess,
@@ -467,7 +468,7 @@ describe('getDocDetailOpenHref', () => {
     expect(getDocDetailOpenHref({ ...base, status: 'rejected', writer_id: 'u1' }, 'u2')).toBe('/approvals/view/10')
   })
 
-  it('기안자 출고 반려는 출고 view 유지', () => {
+  it('기안자 출고 반려는 출고 재상신 작성 화면으로 연다', () => {
     expect(
       getDocDetailOpenHref(
         {
@@ -480,7 +481,23 @@ describe('getDocDetailOpenHref', () => {
         },
         'w'
       )
-    ).toBe('/outbound-requests/view/33')
+    ).toBe('/outbound-requests/new?resubmit=9')
+  })
+
+  it('기안자 출고 임시저장도 출고 재상신 작성 화면으로 연다', () => {
+    expect(
+      getDocDetailOpenHref(
+        {
+          ...base,
+          id: 11,
+          status: 'draft',
+          doc_type: 'outbound_request',
+          writer_id: 'w',
+          outbound_requests: { id: 33 },
+        },
+        'w'
+      )
+    ).toBe('/outbound-requests/new?resubmit=11')
   })
 
   it('대소문자 다른 writer_id/currentUserId도 동일 사용자로 판단한다', () => {
@@ -494,6 +511,37 @@ describe('getDocDetailOpenHref', () => {
         'user-abc'
       )
     ).toBe('/approvals/new?resubmit=10')
+  })
+
+  it('출고요청·상신 완료 등은 출고 상세 view URL (outbound id)', () => {
+    expect(
+      getDocDetailOpenHref(
+        {
+          ...base,
+          id: 99,
+          status: 'approved',
+          doc_type: 'outbound_request',
+          writer_id: 'other',
+          outbound_requests: { id: 55 },
+        },
+        'u1'
+      )
+    ).toBe('/outbound-requests/view/55')
+  })
+
+  it('출고요청인데 outbound id 없으면 결재 view로 폴백', () => {
+    expect(
+      getDocDetailOpenHref(
+        {
+          ...base,
+          id: 99,
+          status: 'approved',
+          doc_type: 'outbound_request',
+          writer_id: 'other',
+        },
+        'u1'
+      )
+    ).toBe('/approvals/view/99')
   })
 })
 
@@ -542,5 +590,48 @@ describe('getOutboundRequestRowPresentation', () => {
       reqStatus: 'approved',
     })
     expect(p.label).toBe('기안자 재고환원 대기')
+  })
+
+  it('shows 지시 대기 / 담당자 지정됨 / 출고 처리중 by dispatch state', () => {
+    const baseDoc = {
+      status: 'approved' as const,
+      remarks: null as string | null,
+      current_line_no: null as number | null,
+      doc_type: 'outbound_request' as const,
+    }
+    expect(
+      getOutboundRequestRowPresentation({
+        approvalDoc: baseDoc,
+        lines: [],
+        reqStatus: 'approved',
+        dispatchState: 'queue',
+      }).label
+    ).toBe('지시 대기')
+    expect(
+      getOutboundRequestRowPresentation({
+        approvalDoc: baseDoc,
+        lines: [],
+        reqStatus: 'approved',
+        dispatchState: 'assigned',
+      }).label
+    ).toBe('담당자 지정됨')
+    expect(
+      getOutboundRequestRowPresentation({
+        approvalDoc: baseDoc,
+        lines: [],
+        reqStatus: 'approved',
+        dispatchState: 'in_progress',
+      }).label
+    ).toBe('출고 처리중')
+  })
+})
+
+describe('getOutboundDispatchStatePresentation', () => {
+  it('maps each dispatch state label consistently', () => {
+    expect(getOutboundDispatchStatePresentation('queue').label).toBe('지시 대기')
+    expect(getOutboundDispatchStatePresentation('assigned').label).toBe('담당자 지정')
+    expect(getOutboundDispatchStatePresentation('in_progress').label).toBe('처리중')
+    expect(getOutboundDispatchStatePresentation('completed').label).toBe('완료')
+    expect(getOutboundDispatchStatePresentation(null).label).toBe('지시 대기')
   })
 })

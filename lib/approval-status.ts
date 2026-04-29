@@ -30,6 +30,7 @@ export type ApprovalLineLike = Pick<
 }
 
 export type OutboundRequestStatus = Database['public']['Tables']['outbound_requests']['Row']['status']
+export type OutboundDispatchState = Database['public']['Tables']['outbound_requests']['Row']['dispatch_state']
 
 export function getWriterName(appUsers: { user_name?: string } | { user_name?: string }[] | null | undefined) {
   if (!appUsers) return '-'
@@ -133,23 +134,30 @@ export function getDocTypeLabel(docType: string | null | undefined) {
   }
 }
 
+/**
+ * 출고요청 결재 문서는 상세 UI가 `/outbound-requests/view/{outbound_requests.id}` 에만 구현되어 있다.
+ * (통합함에 `outbound_requests` id가 없으면 기존처럼 결재 문서 view로 폴백)
+ */
+export function getOutboundRequestViewHrefFromApprovalDoc(doc: ApprovalDocLike & { id: number }): string | null {
+  if (String(doc.doc_type ?? '') !== 'outbound_request') return null
+  const raw = doc.outbound_requests
+  if (!raw) return null
+  const rid = Array.isArray(raw) ? raw[0]?.id : raw.id
+  if (rid == null || !Number.isFinite(Number(rid))) return null
+  return `/outbound-requests/view/${Number(rid)}`
+}
+
 /** 통합 결재함 / 대시보드: 행 링크 목적지 */
 export function getDocDetailHref(doc: ApprovalDocLike & { id: number }) {
-  if (doc.doc_type === 'outbound_request' && doc.outbound_requests) {
-    const rows = Array.isArray(doc.outbound_requests) ? doc.outbound_requests : [doc.outbound_requests]
-    const rid = rows[0]?.id
-    if (rid != null) return `/outbound-requests/${rid}`
-  }
+  const outboundHref = getOutboundRequestViewHrefFromApprovalDoc(doc)
+  if (outboundHref) return outboundHref
   return `/approvals/${doc.id}`
 }
 
 /** 팝업(베어 셸) 상세: 사이드바 없이 동일 크기 창으로 연다. */
 export function getDocDetailViewHref(doc: ApprovalDocLike & { id: number }) {
-  if (doc.doc_type === 'outbound_request' && doc.outbound_requests) {
-    const rows = Array.isArray(doc.outbound_requests) ? doc.outbound_requests : [doc.outbound_requests]
-    const rid = rows[0]?.id
-    if (rid != null) return `/outbound-requests/view/${rid}`
-  }
+  const outboundHref = getOutboundRequestViewHrefFromApprovalDoc(doc)
+  if (outboundHref) return outboundHref
   return `/approvals/view/${doc.id}`
 }
 
@@ -166,7 +174,7 @@ export function getDocDetailOpenHref(doc: DocInboxOpen, currentUserId: string | 
       : ''
   const wid = doc.writer_id != null ? String(doc.writer_id).toLowerCase() : ''
   if (uid && wid === uid && (doc.status === 'draft' || doc.status === 'rejected')) {
-    if (doc.doc_type === 'outbound_request') return getDocDetailViewHref(doc)
+    if (doc.doc_type === 'outbound_request') return `/outbound-requests/new?resubmit=${doc.id}`
     return `/approvals/new?resubmit=${doc.id}`
   }
   return getDocDetailViewHref(doc)
@@ -296,8 +304,9 @@ export function getOutboundRequestRowPresentation(input: {
   approvalDoc: ApprovalDocLike | null | undefined
   lines: ApprovalLineLike[]
   reqStatus: OutboundRequestStatus
+  dispatchState?: OutboundDispatchState | null
 }): { label: string; className: string } {
-  const { approvalDoc: doc, lines, reqStatus } = input
+  const { approvalDoc: doc, lines, reqStatus, dispatchState } = input
   const sorted = [...lines].sort((a, b) => a.line_no - b.line_no)
 
   if (!doc) {
@@ -328,14 +337,42 @@ export function getOutboundRequestRowPresentation(input: {
   }
 
   if (reqStatus === 'completed') {
-    return { label: '출고 완료', className: badge('bg-purple-100 text-purple-700 font-black border-purple-200 shadow-sm') }
+    return { label: '출고완료', className: badge('bg-purple-100 text-purple-700 font-black border-purple-200 shadow-sm') }
   }
+
+  if (reqStatus === 'approved') {
+    if (dispatchState === 'assigned') {
+      return { label: '출고대기', className: badge('bg-slate-100 text-slate-700 border-slate-300 font-black') }
+    }
+    if (dispatchState === 'in_progress') {
+      return { label: '진행중', className: badge('bg-indigo-50 text-indigo-800 border-indigo-300 font-black') }
+    }
+    if (dispatchState === 'queue') {
+      return { label: '출고대기', className: badge('bg-slate-100 text-slate-700 border-slate-300 font-black') }
+    }
+  }
+
   if (reqStatus === 'cancelled') {
     return { label: '취소 완료', className: badge('bg-gray-200 text-gray-500 font-bold line-through border-gray-300') }
   }
 
   const b = getUnifiedApprovalWorkflowBadges(doc, sorted)
   return { label: b[0].label, className: b[0].className }
+}
+
+export function getOutboundDispatchStatePresentation(
+  state: OutboundDispatchState | null | undefined
+): { label: string; className: string } {
+  if (state === 'assigned' || state === 'queue' || state == null) {
+    return { label: '출고대기', className: badge('bg-slate-100 text-slate-700 border-slate-300 font-black') }
+  }
+  if (state === 'in_progress') {
+    return { label: '진행중', className: badge('bg-indigo-50 text-indigo-800 border-indigo-300 font-black') }
+  }
+  if (state === 'completed') {
+    return { label: '출고완료', className: badge('bg-purple-100 text-purple-700 border-purple-200 font-black') }
+  }
+  return { label: '출고대기', className: badge('bg-slate-100 text-slate-700 border-slate-300 font-black') }
 }
 
 /** 결재 취소 릴레이 UI (`ApprovalActionButtons`)와 동일한 문자열 기준 */

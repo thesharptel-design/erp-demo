@@ -16,6 +16,7 @@ import {
 import { toast } from 'sonner'
 import type { ApprovalRole } from '@/lib/approval-roles'
 import type { ApprovalDraftAppUser, ApprovalOrderItem } from '@/components/approvals/ApprovalDraftPaper'
+import { resolveAppUserRowIdFromAuthSession } from '@/lib/app-user-id'
 import { isHtmlContentEffectivelyEmpty } from '@/lib/html-content'
 import {
   executionDateForDb,
@@ -126,20 +127,30 @@ export function useApprovalDraftForm({
       const {
         data: { user },
       } = await supabase.auth.getUser()
-      const [{ data: usersData }, { data: deptData }] = await Promise.all([
-        supabase
-          .from('app_users')
-          .select(
-            'id, login_id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate'
-          )
-          .order('user_name'),
+      const usersSelectWithEmail =
+        'id, email, login_id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate'
+      const usersSelectNoEmail =
+        'id, login_id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, can_approval_participate'
+
+      const [usersRes, deptRes] = await Promise.all([
+        (async () => {
+          let r: any = await supabase.from('app_users').select(usersSelectWithEmail).order('user_name')
+          if (
+            r.error &&
+            /(\bemail\b|column).*does not exist/i.test(String(r.error.message ?? ''))
+          ) {
+            r = await supabase.from('app_users').select(usersSelectNoEmail).order('user_name')
+          }
+          return r
+        })(),
         supabase.from('departments').select('id, dept_name').order('id'),
       ])
 
       if (!active) return
-      setUsers((usersData as ApprovalDraftAppUser[]) ?? [])
-      setDepartments((deptData as Department[]) ?? [])
-      if (user) setWriterId(user.id)
+      const rows = (usersRes.data as ApprovalDraftAppUser[]) ?? []
+      setUsers(rows)
+      setDepartments((deptRes.data as Department[]) ?? [])
+      if (user) setWriterId(resolveAppUserRowIdFromAuthSession(rows, user))
       setIsLoading(false)
     }
 

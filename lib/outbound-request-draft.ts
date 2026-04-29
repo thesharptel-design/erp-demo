@@ -30,6 +30,9 @@ export { getApprovalCreateErrorMessage as getOutboundApprovalCreateErrorMessage 
 export type OutboundRequestLineInput = {
   item_id: number
   qty: number
+  selected_lot?: string | null
+  selected_exp?: string | null
+  selected_sn?: string | null
 }
 
 export type CreateOutboundRequestApprovalInput = {
@@ -178,6 +181,14 @@ async function insertNewOutboundRequestApprovalBundle(
       line_no: idx + 1,
       item_id: row.item_id,
       qty: row.qty,
+      remarks:
+        row.selected_lot || row.selected_exp || row.selected_sn
+          ? JSON.stringify({
+              selected_lot: row.selected_lot ?? null,
+              selected_exp: row.selected_exp ?? null,
+              selected_sn: row.selected_sn ?? null,
+            })
+          : null,
     }))
     const { error: itemError } = await supabase.from('outbound_request_items').insert(itemInserts)
     if (itemError) throw itemError
@@ -530,6 +541,14 @@ async function upsertOutboundRequestItems(
     line_no: idx + 1,
     item_id: row.item_id,
     qty: row.qty,
+    remarks:
+      row.selected_lot || row.selected_exp || row.selected_sn
+        ? JSON.stringify({
+            selected_lot: row.selected_lot ?? null,
+            selected_exp: row.selected_exp ?? null,
+            selected_sn: row.selected_sn ?? null,
+          })
+        : null,
   }))
   const { error: ins } = await supabase.from('outbound_request_items').insert(rows)
   if (ins) throw ins
@@ -760,15 +779,39 @@ export async function fetchOutboundWebDraftBundle(
 
   const { data: itemRows, error: iErr } = await supabase
     .from('outbound_request_items')
-    .select('item_id, qty, line_no')
+    .select('item_id, qty, line_no, remarks')
     .eq('outbound_request_id', reqId)
     .order('line_no')
   if (iErr) throw iErr
 
-  const itemLines: OutboundRequestLineInput[] = (itemRows ?? []).map((r: { item_id: number; qty: number }) => ({
-    item_id: Number(r.item_id),
-    qty: Number(r.qty),
-  }))
+  const itemLines: OutboundRequestLineInput[] = (itemRows ?? []).map(
+    (r: { item_id: number; qty: number; remarks?: string | null }) => {
+      let selectedLot: string | null = null
+      let selectedExp: string | null = null
+      let selectedSn: string | null = null
+      try {
+        if (r.remarks) {
+          const parsed = JSON.parse(r.remarks) as {
+            selected_lot?: unknown
+            selected_exp?: unknown
+            selected_sn?: unknown
+          }
+          selectedLot = typeof parsed.selected_lot === 'string' ? parsed.selected_lot : null
+          selectedExp = typeof parsed.selected_exp === 'string' ? parsed.selected_exp : null
+          selectedSn = typeof parsed.selected_sn === 'string' ? parsed.selected_sn : null
+        }
+      } catch {
+        // ignore legacy/non-JSON remarks
+      }
+      return {
+        item_id: Number(r.item_id),
+        qty: Number(r.qty),
+        selected_lot: selectedLot,
+        selected_exp: selectedExp,
+        selected_sn: selectedSn,
+      }
+    }
+  )
 
   return {
     doc: doc as Record<string, unknown>,
@@ -831,15 +874,39 @@ export async function fetchOutboundResubmitBundle(
 
   const { data: itemRows, error: iErr } = await supabase
     .from('outbound_request_items')
-    .select('item_id, qty, line_no')
+    .select('item_id, qty, line_no, remarks')
     .eq('outbound_request_id', reqId)
     .order('line_no')
   if (iErr) throw iErr
 
-  const itemLines: OutboundRequestLineInput[] = (itemRows ?? []).map((r: { item_id: number; qty: number }) => ({
-    item_id: Number(r.item_id),
-    qty: Number(r.qty),
-  }))
+  const itemLines: OutboundRequestLineInput[] = (itemRows ?? []).map(
+    (r: { item_id: number; qty: number; remarks?: string | null }) => {
+      let selectedLot: string | null = null
+      let selectedExp: string | null = null
+      let selectedSn: string | null = null
+      try {
+        if (r.remarks) {
+          const parsed = JSON.parse(r.remarks) as {
+            selected_lot?: unknown
+            selected_exp?: unknown
+            selected_sn?: unknown
+          }
+          selectedLot = typeof parsed.selected_lot === 'string' ? parsed.selected_lot : null
+          selectedExp = typeof parsed.selected_exp === 'string' ? parsed.selected_exp : null
+          selectedSn = typeof parsed.selected_sn === 'string' ? parsed.selected_sn : null
+        }
+      } catch {
+        // ignore legacy/non-JSON remarks
+      }
+      return {
+        item_id: Number(r.item_id),
+        qty: Number(r.qty),
+        selected_lot: selectedLot,
+        selected_exp: selectedExp,
+        selected_sn: selectedSn,
+      }
+    }
+  )
 
   return {
     doc: doc as Record<string, unknown>,

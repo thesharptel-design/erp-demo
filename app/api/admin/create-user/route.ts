@@ -7,6 +7,12 @@ import { hasManagePermission } from '@/lib/permissions';
 const ALLOWED_USER_KINDS = ['student', 'teacher', 'staff'] as const;
 type UserKind = (typeof ALLOWED_USER_KINDS)[number];
 
+function normalizeOutboundRole(raw: unknown): 'none' | 'viewer' | 'worker' | 'master' | null {
+  const value = String(raw ?? '').trim().toLowerCase();
+  if (value === 'none' || value === 'viewer' || value === 'worker' || value === 'master') return value;
+  return null;
+}
+
 function normalizePermissionPayload(raw: Record<string, unknown>) {
   const asBool = (value: unknown) => value === true;
 
@@ -17,6 +23,23 @@ function normalizePermissionPayload(raw: Record<string, unknown>) {
   const canAdminManage = false;
   const canManageMaster = asBool(raw.can_manage_master);
   const canManagePermissions = asBool(raw.can_manage_permissions);
+  const explicitOutboundRole = normalizeOutboundRole(raw.outbound_role);
+  const inferredOutboundRole: 'none' | 'viewer' | 'worker' | 'master' =
+    explicitOutboundRole ??
+    (asBool(raw.can_outbound_execute_any) ||
+    asBool(raw.can_outbound_assign_handler) ||
+    asBool(raw.can_outbound_reassign_recall)
+      ? 'master'
+      : asBool(raw.can_outbound_execute_self)
+        ? 'worker'
+        : asBool(raw.can_outbound_view)
+          ? 'viewer'
+          : 'none');
+  const canOutboundView = inferredOutboundRole !== 'none';
+  const canOutboundExecuteSelf = inferredOutboundRole === 'worker' || inferredOutboundRole === 'master';
+  const canOutboundAssignHandler = inferredOutboundRole === 'master';
+  const canOutboundReassignRecall = inferredOutboundRole === 'master';
+  const canOutboundExecuteAny = inferredOutboundRole === 'master';
 
   return {
     can_manage_master: canManageMaster,
@@ -26,6 +49,12 @@ function normalizePermissionPayload(raw: Record<string, unknown>) {
     can_qc_manage: canQcManage,
     can_admin_manage: canAdminManage,
     can_manage_permissions: canManagePermissions,
+    outbound_role: inferredOutboundRole,
+    can_outbound_view: canOutboundView,
+    can_outbound_execute_self: canOutboundExecuteSelf,
+    can_outbound_assign_handler: canOutboundAssignHandler,
+    can_outbound_reassign_recall: canOutboundReassignRecall,
+    can_outbound_execute_any: canOutboundExecuteAny,
     // legacy fallback columns
     can_quote_create: canSalesManage,
     can_po_create: canSalesManage,

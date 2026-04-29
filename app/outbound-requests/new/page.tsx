@@ -14,6 +14,7 @@ import SearchableCombobox from '@/components/SearchableCombobox'
 import { useOutboundRequestDraftForm } from '@/components/outbound/useOutboundRequestDraftForm'
 import { listOutboundWebDrafts, WEB_OUTBOUND_DRAFT_REMARKS } from '@/lib/outbound-request-draft'
 import { useSingleSubmit } from '@/hooks/useSingleSubmit'
+import { InventoryTransferCommandCombobox } from '@/app/inventory-transfers/new/InventoryTransferCommandCombobox'
 
 const OUTBOUND_DOC_TYPE_OPTIONS = [{ value: 'outbound_request', label: '출고요청' }]
 const AUTOSAVE_KEY = 'approval-outbound-request-draft-v3'
@@ -94,6 +95,8 @@ function NewOutboundPageInner() {
     warehouseId,
     setWarehouseId,
     warehouses,
+    stockRows,
+    stockByItemId,
     selectedItems,
     setSelectedItems,
     itemSearchKeyword,
@@ -341,18 +344,115 @@ function NewOutboundPageInner() {
                         {selectedItems.map((si, idx) => (
                           <tr key={idx}>
                             <td className="px-2 py-2">
-                              <SearchableCombobox
-                                value={String(si.item_id || '')}
-                                onChange={(next) => {
-                                  const nextArr = [...selectedItems]
-                                  nextArr[idx] = { ...nextArr[idx], item_id: next }
-                                  setSelectedItems(nextArr)
-                                }}
-                                options={itemOptions}
-                                placeholder="품목 선택"
-                                showClearOption={false}
-                                dropdownPlacement="auto"
-                              />
+                              {(() => {
+                                const itemMeta = stockByItemId.get(String(si.item_id))
+                                const itemStocks = stockRows.filter((row) => String(row.item_id) === String(si.item_id))
+                                const selectedLot = si.selected_lot ?? ''
+                                const selectedSn = si.selected_sn ?? ''
+                                const selectedExp = si.selected_exp ?? ''
+                                const lotOptions = Array.from(
+                                  new Set(
+                                    itemStocks
+                                      .filter(
+                                        (row) =>
+                                          (!selectedSn || row.serial_no === selectedSn) &&
+                                          (!selectedExp || String(row.exp_date ?? '') === selectedExp)
+                                      )
+                                      .map((row) => row.lot_no)
+                                      .filter((v): v is string => Boolean(v))
+                                  )
+                                )
+                                const snOptions = Array.from(
+                                  new Set(
+                                    itemStocks
+                                      .filter(
+                                        (row) =>
+                                          (!selectedLot || row.lot_no === selectedLot) &&
+                                          (!selectedExp || String(row.exp_date ?? '') === selectedExp)
+                                      )
+                                      .map((row) => row.serial_no)
+                                      .filter((v): v is string => Boolean(v))
+                                  )
+                                )
+                                const expOptions = Array.from(
+                                  new Set(
+                                    itemStocks
+                                      .filter(
+                                        (row) =>
+                                          (!selectedLot || row.lot_no === selectedLot) &&
+                                          (!selectedSn || row.serial_no === selectedSn)
+                                      )
+                                      .map((row) => row.exp_date)
+                                      .filter((v): v is string => Boolean(v))
+                                      .map((v) => String(v))
+                                  )
+                                )
+
+                                return (
+                                  <div className="space-y-1.5">
+                                    <InventoryTransferCommandCombobox
+                                      value={String(si.item_id || '')}
+                                      onChange={(next) => {
+                                        const nextArr = [...selectedItems]
+                                        nextArr[idx] = {
+                                          ...nextArr[idx],
+                                          item_id: next,
+                                          selected_lot: '',
+                                          selected_exp: '',
+                                          selected_sn: '',
+                                        }
+                                        setSelectedItems(nextArr)
+                                      }}
+                                      options={itemOptions}
+                                      placeholder="품목 선택"
+                                      showClearOption={false}
+                                      commandInputPlaceholder="품목 선택"
+                                    />
+                                    {itemMeta?.isLot ? (
+                                      <InventoryTransferCommandCombobox
+                                        value={selectedLot}
+                                        onChange={(next) => {
+                                          const nextArr = [...selectedItems]
+                                          nextArr[idx] = { ...nextArr[idx], selected_lot: next }
+                                          setSelectedItems(nextArr)
+                                        }}
+                                        options={lotOptions.map((v) => ({ value: v, label: `LOT: ${v}` }))}
+                                        placeholder="LOT 선택(선택사항)"
+                                        showClearOption
+                                        commandInputPlaceholder="LOT 선택"
+                                      />
+                                    ) : null}
+                                    {itemMeta?.isExp ? (
+                                      <InventoryTransferCommandCombobox
+                                        value={selectedExp}
+                                        onChange={(next) => {
+                                          const nextArr = [...selectedItems]
+                                          nextArr[idx] = { ...nextArr[idx], selected_exp: next }
+                                          setSelectedItems(nextArr)
+                                        }}
+                                        options={expOptions.map((v) => ({ value: v, label: `EXP: ${v}` }))}
+                                        placeholder="EXP 선택(선택사항)"
+                                        showClearOption
+                                        commandInputPlaceholder="EXP 선택"
+                                      />
+                                    ) : null}
+                                    {itemMeta?.isSn ? (
+                                      <InventoryTransferCommandCombobox
+                                        value={selectedSn}
+                                        onChange={(next) => {
+                                          const nextArr = [...selectedItems]
+                                          nextArr[idx] = { ...nextArr[idx], selected_sn: next }
+                                          setSelectedItems(nextArr)
+                                        }}
+                                        options={snOptions.map((v) => ({ value: v, label: `SN: ${v}` }))}
+                                        placeholder="SN 선택(선택사항)"
+                                        showClearOption
+                                        commandInputPlaceholder="SN 선택"
+                                      />
+                                    ) : null}
+                                  </div>
+                                )
+                              })()}
                             </td>
                             <td className="px-2 py-2">
                               <input
