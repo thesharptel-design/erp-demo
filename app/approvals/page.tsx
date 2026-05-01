@@ -67,6 +67,22 @@ const GENERAL_DRAFT_COMPOSE_WINDOW_NAME = getApprovalComposePopupWindowName('dra
 const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
 const COMBO_EMPTY = [{ value: '', label: '전체' }];
+const REJECT_HISTORY_ACTIONS = ['reject', 'reject_direct', 'reject_sequential', 'reject_targeted'] as const;
+const OPINION_HISTORY_ACTIONS = [
+  'approve',
+  'reject',
+  'reject_direct',
+  'reject_sequential',
+  'reject_targeted',
+  'approve_revoke',
+  'cancel_request',
+  'cancel_relay',
+  'cancel_requested_by_writer',
+  'direct_cancel_final',
+  'confirm_pre_cooperation',
+  'confirm_post_cooperation',
+  'override_approve',
+] as const;
 
 function inboxDisplayText(value: string | null | undefined, empty = '—') {
   const s = value == null ? '' : String(value).trim();
@@ -246,14 +262,14 @@ export default function ApprovalsPage() {
           .from('approval_histories')
           .select('approval_doc_id, action_comment, action_at')
           .in('approval_doc_id', docIds)
-          .eq('action_type', 'reject')
+          .in('action_type', [...REJECT_HISTORY_ACTIONS])
           .not('action_comment', 'is', null)
           .order('action_at', { ascending: false }),
         supabase
           .from('approval_histories')
           .select('approval_doc_id, action_comment, action_type')
           .in('approval_doc_id', docIds)
-          .in('action_type', ['approve', 'reject', 'approve_revoke', 'cancel_request', 'cancel_relay', 'direct_cancel_final'])
+          .in('action_type', [...OPINION_HISTORY_ACTIONS])
           .not('action_comment', 'is', null),
         supabase
           .from('approval_lines')
