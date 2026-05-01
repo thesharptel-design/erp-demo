@@ -99,4 +99,19 @@ describe('hasOutboundPermission', () => {
     expect(hasOutboundPermission(systemAdminLike, 'can_outbound_reassign_recall')).toBe(true)
     expect(hasOutboundPermission(systemAdminLike, 'can_outbound_execute_any')).toBe(true)
   })
+
+  it('explicit outbound_role viewer는 실행 권한을 허용하지 않는다', () => {
+    const user = {
+      role_name: 'staff',
+      can_manage_permissions: false,
+      can_admin_manage: false,
+      outbound_role: 'viewer',
+      // 오래된 true 값이 남아있어도 명시 role을 우선 적용해야 함
+      can_outbound_execute_self: true,
+      can_outbound_assign_handler: true,
+    } as const
+    expect(hasOutboundPermission(user, 'can_outbound_view')).toBe(true)
+    expect(hasOutboundPermission(user, 'can_outbound_execute_self')).toBe(false)
+    expect(hasOutboundPermission(user, 'can_outbound_assign_handler')).toBe(false)
+  })
 })

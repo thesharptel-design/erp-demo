@@ -193,7 +193,6 @@ export async function ApprovalDetailShared({
           acted_at: line.acted_at ?? null,
           opinion: line.opinion ?? null,
         }))
-  const cooperativeLines = displayLines.filter((line) => line.approver_role === 'cooperator')
   const writerProfile = userMap.get(doc.writer_id)
   const sealUrlMap = new Map<string, string>()
   for (const user of users) {
@@ -207,31 +206,24 @@ export async function ApprovalDetailShared({
   const writerName = writerProfile?.user_name || doc.writer_id.slice(0, 8)
   const writerEmployeeNo = writerProfile?.employee_no ?? null
   const writerDeptName = formatWriterDepartmentLabel(writerProfile, deptMap, { docDeptId: doc.dept_id })
-  const approverLines = displayLines
-    .filter((line) => line.approver_role === 'approver')
+  const stampLines = displayLines
+    .filter((line) => line.approver_role === 'approver' || line.approver_role === 'cooperator')
     .sort((a, b) => a.line_no - b.line_no)
-  const approverColumns = approverLines.map((line) => {
+  const stampColumns = stampLines.map((line) => {
     const profile = userMap.get(line.approver_id)
     const userName = profile?.user_name ?? '—'
+    const isCoop = line.approver_role === 'cooperator'
     return {
       id: `${line.line_no}-${line.approver_id}`,
+      role: isCoop ? ('cooperator' as const) : ('approver' as const),
       name: userName,
       employeeNo: profile?.employee_no ?? null,
       sealUrl: sealUrlMap.get(line.approver_id) ?? null,
       status: getDetailLineStatus(line.approver_role, line.status),
       actedAt: line.acted_at,
       showSeal: line.status === 'approved',
-    }
-  })
-  const cooperativeRows = cooperativeLines.map((line) => {
-    const profile = userMap.get(line.approver_id)
-    const dept = formatWriterDepartmentLabel(profile, deptMap)
-    return {
-      id: `coop-${line.line_no}-${line.approver_id}`,
-      dept,
-      name: profile?.user_name ?? '—',
-      readStatus: cooperatorReadBadge(line.status),
-      opinionText: line.opinion,
+      readStatus: isCoop ? cooperatorReadBadge(line.status) : undefined,
+      opinionText: isCoop ? line.opinion : undefined,
     }
   })
   const reviewerNames = participants
@@ -309,6 +301,7 @@ export async function ApprovalDetailShared({
   )
 
   const listBare = shellMode === 'bare'
+  const listHref = doc.doc_type === 'outbound_request' ? '/outbound-requests' : '/approvals'
   const showAttachmentNotice = Boolean(
     attachmentFrom?.enabled && (attachmentFrom.sourceDocNo?.trim() || attachmentFrom.sourceTitle?.trim())
   )
@@ -334,8 +327,7 @@ export async function ApprovalDetailShared({
         draftedDate={draftedDate}
         docNo={doc.doc_no}
         writerSealUrl={sealUrlMap.get(doc.writer_id) ?? null}
-        approverColumns={approverColumns}
-        cooperators={cooperativeRows}
+        stampColumns={stampColumns}
         docTypeLabel={getDocTypeLabel(doc.doc_type)}
         referenceText={referenceText}
         executionText={`${doc.execution_start_date || '-'} ~ ${doc.execution_end_date || '-'}`}
@@ -379,7 +371,7 @@ export async function ApprovalDetailShared({
                   수정·재상신
                 </Link>
               )}
-              <ApprovalShellListNav href="/approvals" popupListBehavior={listBare}>
+              <ApprovalShellListNav href={listHref} popupListBehavior={listBare}>
                 목록
               </ApprovalShellListNav>
               <ApprovalActionButtons doc={doc} lines={lines} participants={participants} />

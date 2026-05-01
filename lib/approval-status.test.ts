@@ -495,6 +495,38 @@ describe('getDocDetailOpenHref', () => {
       )
     ).toBe('/approvals/view/99')
   })
+
+  it('출고요청 기안자·반려면 출고 재상신 URL로 열린다', () => {
+    expect(
+      getDocDetailOpenHref(
+        {
+          ...base,
+          id: 88,
+          doc_type: 'outbound_request',
+          status: 'rejected',
+          writer_id: 'writer-a',
+          outbound_requests: { id: 3001 },
+        },
+        'writer-a'
+      )
+    ).toBe('/outbound-requests/new?resubmit=88')
+  })
+
+  it('출고요청이라도 비기안자면 출고 상세 view URL을 유지한다', () => {
+    expect(
+      getDocDetailOpenHref(
+        {
+          ...base,
+          id: 77,
+          doc_type: 'outbound_request',
+          status: 'rejected',
+          writer_id: 'writer-a',
+          outbound_requests: { id: 900 },
+        },
+        'other-user'
+      )
+    ).toBe('/outbound-requests/view/900')
+  })
 })
 
 describe('getOutboundRequestRowPresentation', () => {
@@ -574,7 +606,7 @@ describe('getOutboundRequestRowPresentation', () => {
         reqStatus: 'approved',
         dispatchState: 'in_progress',
       }).label
-    ).toBe('진행중')
+    ).toBe('인수확인중')
   })
 })
 
@@ -582,7 +614,7 @@ describe('getOutboundDispatchStatePresentation', () => {
   it('maps each dispatch state label consistently', () => {
     expect(getOutboundDispatchStatePresentation('queue').label).toBe('출고대기')
     expect(getOutboundDispatchStatePresentation('assigned').label).toBe('출고대기')
-    expect(getOutboundDispatchStatePresentation('in_progress').label).toBe('진행중')
+    expect(getOutboundDispatchStatePresentation('in_progress').label).toBe('인수확인중')
     expect(getOutboundDispatchStatePresentation('completed').label).toBe('출고완료')
     expect(getOutboundDispatchStatePresentation(null).label).toBe('출고대기')
   })

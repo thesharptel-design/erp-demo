@@ -363,7 +363,7 @@ export function getOutboundRequestRowPresentation(input: {
       return { label: '출고대기', className: badge('bg-slate-100 text-slate-700 border-slate-300 font-black') }
     }
     if (dispatchState === 'in_progress') {
-      return { label: '진행중', className: badge('bg-indigo-50 text-indigo-800 border-indigo-300 font-black') }
+      return { label: '인수확인중', className: badge('bg-indigo-50 text-indigo-800 border-indigo-300 font-black') }
     }
     if (dispatchState === 'queue') {
       return { label: '출고대기', className: badge('bg-slate-100 text-slate-700 border-slate-300 font-black') }
@@ -385,7 +385,7 @@ export function getOutboundDispatchStatePresentation(
     return { label: '출고대기', className: badge('bg-slate-100 text-slate-700 border-slate-300 font-black') }
   }
   if (state === 'in_progress') {
-    return { label: '진행중', className: badge('bg-indigo-50 text-indigo-800 border-indigo-300 font-black') }
+    return { label: '인수확인중', className: badge('bg-indigo-50 text-indigo-800 border-indigo-300 font-black') }
   }
   if (state === 'completed') {
     return { label: '출고완료', className: badge('bg-purple-100 text-purple-700 border-purple-200 font-black') }

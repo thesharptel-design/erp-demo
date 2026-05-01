@@ -136,6 +136,7 @@ export default function ApprovalActionButtons({
 
   const myId = String(currentUser.id).toLowerCase();
   const isWriter = String(doc?.writer_id || '').toLowerCase() === myId;
+  const listHref = doc.doc_type === 'outbound_request' ? '/outbound-requests' : '/approvals';
   const actorIdForHistory = 'id' in currentUser ? String(currentUser.id) : myId;
   const docTitleForNotify =
     String((doc as { title?: string | null }).title ?? '문서').trim() || '문서';
@@ -194,9 +195,10 @@ export default function ApprovalActionButtons({
     throwIfSupabaseError(error);
 
     if (doc.doc_type === 'outbound_request' && data.status) {
-      await supabase.from('outbound_requests')
+      const { error: outboundUpdateError } = await supabase.from('outbound_requests')
         .update({ status: data.status })
         .eq('approval_doc_id', doc.id);
+      throwIfSupabaseError(outboundUpdateError);
     }
   };
 
@@ -429,7 +431,7 @@ export default function ApprovalActionButtons({
             payload: { approval_doc_id: doc.id, doc_type: doc.doc_type ?? null },
           });
           alert('문서가 종료되었습니다.');
-          router.push('/approvals');
+          router.push(listHref);
           return;
         }
 
@@ -522,7 +524,7 @@ export default function ApprovalActionButtons({
         });
 
         alert('✅ 취소 승인 및 재고 환원이 모두 완료되었습니다!');
-        router.push('/approvals');
+        router.push(listHref);
       } catch (e: unknown) {
         console.error(e);
         alert('처리 중 오류 발생: ' + formatClientError(e));

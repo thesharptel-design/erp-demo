@@ -58,8 +58,15 @@ export function openApprovalDocFromInbox(doc: InboxDoc, currentUserId: string | 
   openApprovalShellPopup(url, winName)
 }
 
-export function openOutboundRequestDetailViewPopup(outboundRequestId: number) {
-  const url = `/outbound-requests/view/${outboundRequestId}`
+export function openOutboundRequestDetailViewPopup(
+  outboundRequestId: number,
+  options?: { source?: 'instructions' | 'approvals' }
+) {
+  const source = options?.source
+  const url =
+    source === 'instructions'
+      ? `/outbound-requests/view/${outboundRequestId}?from=instructions`
+      : `/outbound-requests/view/${outboundRequestId}`
   const winName = getApprovalPopupWindowName({
     docType: 'outbound_request',
     mode: 'view',

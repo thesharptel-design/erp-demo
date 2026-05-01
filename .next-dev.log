@@ -1,0 +1,11 @@
+
+> erp-demo@0.1.0 dev
+> next dev --webpack
+
+▲ Next.js 16.2.4 (webpack)
+- Local:         http://localhost:3000
+- Network:       http://10.40.176.77:3000
+- Environments: .env.local
+✓ Ready in 397ms
+
+ GET /login 200 in 3.1s (next.js: 2.9s, proxy.ts: 6ms, application-code: 243ms)

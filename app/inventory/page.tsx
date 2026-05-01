@@ -5,6 +5,7 @@ import { supabase } from '@/lib/supabase';
 import PageHeader from '@/components/PageHeader';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 import {
   InventoryTransferCommandCombobox,
   type TransferComboboxOption,
@@ -60,6 +61,7 @@ const PAGE_SIZE_OPTIONS = [20, 25, 30, 50] as const;
 
 export default function InventoryPage() {
   const [groupedInventory, setGroupedInventory] = useState<GroupedInventoryRow[]>([]);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
   const [warehouseFilter, setWarehouseFilter] = useState<string>('all');
   const [hasWarehouseAccess, setHasWarehouseAccess] = useState(true);
@@ -266,6 +268,7 @@ export default function InventoryPage() {
     setItemNameFilter('');
     setWarehouseFilter('all');
     setCurrentPage(1);
+    setExpandedGroups({});
     void fetchInventory();
   }, [fetchInventory]);
 
@@ -347,25 +350,75 @@ export default function InventoryPage() {
                     </tr>
                   ) : (
                     pageRows.map((group) => (
-                      <tr key={group.group_key} className="transition-colors hover:bg-muted/40">
-                        <td className="px-3 py-3 font-medium text-foreground">{group.item_code}</td>
-                        <td className="px-3 py-3 font-medium text-foreground">{group.warehouse_name}</td>
-                        <td className="px-3 py-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <div className="flex gap-1">
-                              {group.is_lot ? <span className="rounded border border-blue-200 bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-800">LOT</span> : null}
-                              {group.is_exp ? <span className="rounded border border-emerald-200 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">EXP</span> : null}
-                              {group.is_sn ? <span className="rounded border border-purple-200 bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold text-purple-800">SN</span> : null}
+                      <React.Fragment key={group.group_key}>
+                        <tr className="transition-colors hover:bg-muted/40">
+                          <td className="px-3 py-3 font-medium text-foreground">{group.item_code}</td>
+                          <td className="px-3 py-3 font-medium text-foreground">{group.warehouse_name}</td>
+                          <td className="px-3 py-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="flex gap-1">
+                                {group.is_lot ? <span className="rounded border border-blue-200 bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-800">LOT</span> : null}
+                                {group.is_exp ? <span className="rounded border border-emerald-200 bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">EXP</span> : null}
+                                {group.is_sn ? <span className="rounded border border-purple-200 bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold text-purple-800">SN</span> : null}
+                              </div>
+                              {(group.is_lot || group.is_exp || group.is_sn) && group.details.length > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setExpandedGroups((prev) => ({ ...prev, [group.group_key]: !prev[group.group_key] }))
+                                  }
+                                  className="inline-flex items-center rounded border border-border bg-background px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground hover:bg-muted"
+                                  aria-label={`${group.item_name} 상세 ${expandedGroups[group.group_key] ? '접기' : '펼치기'}`}
+                                >
+                                  {expandedGroups[group.group_key] ? (
+                                    <ChevronDown className="h-3 w-3" />
+                                  ) : (
+                                    <ChevronRight className="h-3 w-3" />
+                                  )}
+                                </button>
+                              ) : null}
+                              <span className="truncate font-medium text-foreground">{group.item_name}</span>
                             </div>
-                            <span className="truncate font-medium text-foreground">{group.item_name}</span>
-                          </div>
-                        </td>
-                        <td className="px-3 py-3 font-medium text-muted-foreground">{group.item_spec || '-'}</td>
-                        <td className="px-3 py-3 text-right text-base font-semibold text-primary">
-                          {group.total_qty.toLocaleString()}
-                          <span className="ml-1 text-xs font-medium text-muted-foreground">{group.unit}</span>
-                        </td>
-                      </tr>
+                          </td>
+                          <td className="px-3 py-3 font-medium text-muted-foreground">{group.item_spec || '-'}</td>
+                          <td className="px-3 py-3 text-right text-base font-semibold text-primary">
+                            {group.total_qty.toLocaleString()}
+                            <span className="ml-1 text-xs font-medium text-muted-foreground">{group.unit}</span>
+                          </td>
+                        </tr>
+                        {expandedGroups[group.group_key] &&
+                        (group.is_lot || group.is_exp || group.is_sn) &&
+                        group.details.length > 0 ? (
+                          <tr className="bg-muted/20">
+                            <td colSpan={5} className="px-3 py-3">
+                              <div className="overflow-x-auto">
+                                <table className="w-full min-w-[34rem] table-fixed border-collapse text-xs sm:text-sm">
+                                  <thead>
+                                    <tr className="border-b border-border/70 text-muted-foreground">
+                                      <th className="w-[8rem] px-2 py-2 text-left font-medium">LOT</th>
+                                      <th className="w-[9rem] px-2 py-2 text-left font-medium">EXP</th>
+                                      <th className="min-w-[14rem] px-2 py-2 text-left font-medium">SN</th>
+                                      <th className="w-[8rem] px-2 py-2 text-right font-medium">수량</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody className="divide-y divide-border/50">
+                                    {group.details.map((detail) => (
+                                      <tr key={detail.id} className="text-foreground">
+                                        <td className="px-2 py-2">{detail.lot_no ?? '-'}</td>
+                                        <td className="px-2 py-2">{detail.exp_date ?? '-'}</td>
+                                        <td className="px-2 py-2 break-all">{detail.serial_no ?? '-'}</td>
+                                        <td className="px-2 py-2 text-right font-medium">
+                                          {Number(detail.current_qty).toLocaleString()}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                      </React.Fragment>
                     ))
                   )}
                 </tbody>

@@ -1,8 +1,9 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useSingleSubmit } from '@/hooks/useSingleSubmit'
+import SearchableCombobox from '@/components/SearchableCombobox'
 
 type DispatchState = 'queue' | 'assigned' | 'in_progress' | 'completed' | null
 type RequestStatus = 'draft' | 'submitted' | 'approved' | 'rejected' | 'completed' | 'cancelled'
@@ -13,6 +14,8 @@ type HandlerOption = {
 }
 
 type PlannedOutboundItem = {
+  req_item_id: number
+  item_id: number
   no: number
   itemCode: string
   itemName: string
@@ -20,6 +23,9 @@ type PlannedOutboundItem = {
   sn: string | null
   exp: string | null
   qty: number
+  is_lot: boolean
+  is_sn: boolean
+  is_exp: boolean
 }
 
 function getErrorMessage(payload: unknown, fallback: string): string {
@@ -45,7 +51,11 @@ export default function OutboundDispatchActionButtons({
   canRecallByTeacherPolicy,
   handlerOptions,
   plannedItems = [],
+  warehouseId,
   compact = false,
+  requesterId = '',
+  receiptConfirmedAt = null,
+  receiptConfirmedBy = null,
 }: {
   outboundRequestId: number
   requestStatus: RequestStatus
@@ -61,27 +71,91 @@ export default function OutboundDispatchActionButtons({
   canRecallByTeacherPolicy: boolean
   handlerOptions: HandlerOption[]
   plannedItems?: PlannedOutboundItem[]
+  warehouseId: number
   compact?: boolean
+  requesterId?: string | null
+  receiptConfirmedAt?: string | null
+  receiptConfirmedBy?: string | null
 }) {
   const { isSubmitting, run } = useSingleSubmit()
   const [selectedHandlerId, setSelectedHandlerId] = useState<string>(handlerUserId ?? '')
   const [note, setNote] = useState<string>('')
+  const [lineSelections, setLineSelections] = useState<
+    Array<{ req_item_id: number; item_id: number; selected_lot: string; selected_sn: string; selected_exp: string }>
+  >([])
+  const [inventoryRows, setInventoryRows] = useState<
+    Array<{ id: number; item_id: number; lot_no: string | null; serial_no: string | null; exp_date: string | null; current_qty: number }>
+  >([])
 
   const isApprovedFlow = requestStatus === 'approved'
   const isDone = requestStatus === 'completed' || dispatchState === 'completed'
   const isAssignedToMe = Boolean(currentUserId && handlerUserId && currentUserId === handlerUserId)
+  const isReceiptPending = dispatchState === 'in_progress' && !(receiptConfirmedAt && receiptConfirmedBy)
+  const isRequester = Boolean(currentUserId && requesterId && currentUserId === requesterId)
 
   const canAssign = isApprovedFlow && !isDone && !handlerUserId && (canAssignHandler || canExecuteAny)
   const canReassign = isApprovedFlow && !isDone && !!handlerUserId && (canReassignRecall || canExecuteAny)
   const canRecall = isApprovedFlow && !isDone && !!handlerUserId && (canReassignRecall || canRecallByTeacherPolicy || canExecuteAny)
-  const canStartSelf = isApprovedFlow && !isDone && (canExecuteSelf || canExecuteAny)
-  const canComplete = isApprovedFlow && !isDone && (isAssignedToMe || canExecuteAny)
+  const canStartSelf =
+    isApprovedFlow &&
+    !isDone &&
+    (dispatchState === 'queue' || dispatchState === 'assigned' || dispatchState == null) &&
+    (canExecuteSelf || canExecuteAny)
+  const canComplete =
+    isApprovedFlow &&
+    !isDone &&
+    dispatchState === 'in_progress' &&
+    (isAssignedToMe || canExecuteAny)
   const canShowControls = canAssign || canReassign || canRecall || canStartSelf || canComplete
 
   const sortedHandlers = useMemo(
     () => [...handlerOptions].sort((a, b) => a.name.localeCompare(b.name, 'ko')),
     [handlerOptions]
   )
+
+  useEffect(() => {
+    setLineSelections(
+      plannedItems.map((item) => ({
+        req_item_id: item.req_item_id,
+        item_id: item.item_id,
+        selected_lot: String(item.lot ?? ''),
+        selected_sn: String(item.sn ?? ''),
+        selected_exp: String(item.exp ?? ''),
+      }))
+    )
+  }, [plannedItems])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const itemIds = [...new Set(plannedItems.map((item) => Number(item.item_id)).filter((id) => Number.isFinite(id) && id > 0))]
+      if (!Number.isFinite(warehouseId) || warehouseId <= 0 || itemIds.length === 0) {
+        if (!cancelled) setInventoryRows([])
+        return
+      }
+      const { data } = await supabase
+        .from('inventory')
+        .select('id, item_id, lot_no, serial_no, exp_date, current_qty')
+        .eq('warehouse_id', warehouseId)
+        .in('item_id', itemIds)
+        .gt('current_qty', 0)
+      if (!cancelled) {
+        setInventoryRows(
+          ((data ?? []) as Array<{
+            id: number
+            item_id: number
+            lot_no: string | null
+            serial_no: string | null
+            exp_date: string | null
+            current_qty: number
+          }>)
+        )
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [plannedItems, warehouseId])
 
   const runAction = (action: 'assign' | 'reassign' | 'recall' | 'execute_self' | 'complete') =>
     run(async () => {
@@ -105,6 +179,14 @@ export default function OutboundDispatchActionButtons({
         }
         body.handler_user_id = selectedHandlerId
       }
+      if (action === 'complete') {
+        body.line_overrides = lineSelections.map((line) => ({
+          req_item_id: line.req_item_id,
+          selected_lot: line.selected_lot || null,
+          selected_sn: line.selected_sn || null,
+          selected_exp: line.selected_exp || null,
+        }))
+      }
 
       const response = await fetch('/api/outbound-requests/dispatch-actions', {
         method: 'POST',
@@ -127,7 +209,12 @@ export default function OutboundDispatchActionButtons({
 
   if (!isApprovedFlow || !canShowControls) return null
 
-  const uiStateLabel = dispatchState === 'in_progress' ? '진행중' : '출고대기'
+  const uiStateLabel =
+    dispatchState === 'in_progress'
+      ? receiptConfirmedAt && receiptConfirmedBy
+        ? '수령확인완료(완료가능)'
+        : '인수확인중'
+      : '출고대기'
   const uiHandlerName =
     handlerName ??
     ((dispatchState == null || dispatchState === 'queue') && canStartSelf && currentUserName
@@ -209,9 +296,63 @@ export default function OutboundDispatchActionButtons({
                     <td className="px-2 py-2 font-bold text-slate-500">{item.no}</td>
                     <td className="px-2 py-2 font-black text-blue-700">{item.itemCode || '—'}</td>
                     <td className="px-2 py-2 font-bold text-slate-800">{item.itemName || '—'}</td>
-                    <td className="px-2 py-2 font-bold text-slate-600">{item.lot || '-'}</td>
-                    <td className="px-2 py-2 font-bold text-slate-600">{item.sn || '-'}</td>
-                    <td className="px-2 py-2 font-bold text-slate-600">{item.exp || '-'}</td>
+                    <td className="px-2 py-2 font-bold text-slate-600">
+                      {canComplete && item.is_lot ? (
+                        <SearchableCombobox
+                          value={lineSelections.find((line) => line.req_item_id === item.req_item_id)?.selected_lot ?? ''}
+                          onChange={(next) =>
+                            setLineSelections((prev) =>
+                              prev.map((line) =>
+                                line.req_item_id === item.req_item_id ? { ...line, selected_lot: next } : line
+                              )
+                            )
+                          }
+                          options={Array.from(new Set(inventoryRows.filter((row) => row.item_id === item.item_id).map((row) => String(row.lot_no ?? '')).filter(Boolean))).map((value) => ({ value, label: value }))}
+                          placeholder="-"
+                          className="min-w-[7rem]"
+                        />
+                      ) : (
+                        item.lot || '-'
+                      )}
+                    </td>
+                    <td className="px-2 py-2 font-bold text-slate-600">
+                      {canComplete && item.is_sn ? (
+                        <SearchableCombobox
+                          value={lineSelections.find((line) => line.req_item_id === item.req_item_id)?.selected_sn ?? ''}
+                          onChange={(next) =>
+                            setLineSelections((prev) =>
+                              prev.map((line) =>
+                                line.req_item_id === item.req_item_id ? { ...line, selected_sn: next } : line
+                              )
+                            )
+                          }
+                          options={Array.from(new Set(inventoryRows.filter((row) => row.item_id === item.item_id).map((row) => String(row.serial_no ?? '')).filter(Boolean))).map((value) => ({ value, label: value }))}
+                          placeholder="-"
+                          className="min-w-[7rem]"
+                        />
+                      ) : (
+                        item.sn || '-'
+                      )}
+                    </td>
+                    <td className="px-2 py-2 font-bold text-slate-600">
+                      {canComplete && item.is_exp ? (
+                        <SearchableCombobox
+                          value={lineSelections.find((line) => line.req_item_id === item.req_item_id)?.selected_exp ?? ''}
+                          onChange={(next) =>
+                            setLineSelections((prev) =>
+                              prev.map((line) =>
+                                line.req_item_id === item.req_item_id ? { ...line, selected_exp: next } : line
+                              )
+                            )
+                          }
+                          options={Array.from(new Set(inventoryRows.filter((row) => row.item_id === item.item_id).map((row) => String(row.exp_date ?? '')).filter(Boolean))).map((value) => ({ value, label: value }))}
+                          placeholder="-"
+                          className="min-w-[7rem]"
+                        />
+                      ) : (
+                        item.exp || '-'
+                      )}
+                    </td>
                     <td className="px-2 py-2 text-right font-black text-slate-900">{item.qty}</td>
                   </tr>
                 ))
@@ -252,10 +393,26 @@ export default function OutboundDispatchActionButtons({
             출고 시작
           </button>
         ) : null}
+        {dispatchState === 'in_progress' && isReceiptPending ? (
+          <button
+            type="button"
+            onClick={() => alert('인수확인이 필요합니다. 출고결재문서함에서 수령확인을 먼저 진행해 주세요.')}
+            disabled={isSubmitting}
+            className={`rounded-xl border-2 border-indigo-300 bg-indigo-50 px-4 py-2 font-black text-indigo-700 ${compact ? 'text-xs' : 'text-sm'}`}
+          >
+            인수확인중
+          </button>
+        ) : null}
         {canComplete ? (
           <button
             type="button"
-            onClick={() => void runAction('complete')}
+            onClick={() => {
+              if (dispatchState === 'in_progress' && isReceiptPending) {
+                alert('인수확인이 필요합니다. 출고결재문서함에서 수령확인을 먼저 진행해 주세요.')
+                return
+              }
+              void runAction('complete')
+            }}
             disabled={isSubmitting}
             className={`rounded-xl border-2 border-purple-700 bg-purple-600 px-4 py-2 font-black text-white hover:bg-purple-700 ${compact ? 'text-xs' : 'text-sm'}`}
           >
@@ -263,6 +420,16 @@ export default function OutboundDispatchActionButtons({
           </button>
         ) : null}
         </div>
+        {dispatchState === 'in_progress' && isReceiptPending ? (
+          <p className={`font-bold text-amber-700 ${compact ? 'text-[11px]' : 'text-xs'}`}>
+            인수확인 대기 중입니다. 수령확인(요청자 전용) 완료 후 출고완료가 가능합니다.
+          </p>
+        ) : null}
+        {dispatchState === 'in_progress' && !isRequester ? (
+          <p className={`font-bold text-slate-500 ${compact ? 'text-[11px]' : 'text-xs'}`}>
+            수령확인은 출고요청자만 진행할 수 있습니다.
+          </p>
+        ) : null}
       </div>
     </div>
   )

@@ -2,7 +2,6 @@
 
 import type { ReactNode } from 'react'
 import SearchableCombobox, { type ComboboxOption } from '@/components/SearchableCombobox'
-import { formatWriterDepartmentLabel } from '@/lib/approval-draft'
 import type { ApprovalRole } from '@/lib/approval-roles'
 import ApprovalLineDnD from '@/components/approvals/ApprovalLineDnD'
 import ExecutionDateHybridInput from '@/components/approvals/ExecutionDateHybridInput'
@@ -125,83 +124,82 @@ export default function ApprovalDraftPaper({
   processHistorySlot,
   docTypeSelectDisabled = false,
 }: ApprovalDraftPaperProps) {
-  const approverSlots = approvalOrder.filter((l) => l.role === 'approver')
-  const cooperatorSlots = approvalOrder.filter((l) => l.role === 'cooperator' && l.userId.trim())
-  const approvalStampColCount = 1 + approverSlots.length
+  /** 기안 다음 열: 결재선 순서대로 협조·결재 모두 표시 (참조는 별도 란) */
+  const stampSlots = approvalOrder.filter((l) => l.role === 'approver' || l.role === 'cooperator')
+  const approvalStampColCount = 1 + stampSlots.length
   const requiresExecutionDate = docType === 'leave_request'
 
   return (
     <div className="overflow-x-auto">
-      <div className="w-full min-w-0 space-y-4 rounded-xl border-2 border-black bg-white p-3 sm:p-4 md:min-w-[860px]">
-        <div className="space-y-3 border-b-2 border-black pb-4">
+      <div className="w-full min-w-0 space-y-4 rounded-xl border-2 border-border bg-card p-3 font-sans antialiased sm:p-4 md:min-w-[860px]">
+        <div className="space-y-3 border-b-2 border-border pb-4">
           <div>
-            <h3 className="text-xl font-black tracking-tight text-gray-900 sm:text-2xl">{paperTitle}</h3>
-            <p className="mt-1 text-xs font-bold text-gray-500">{paperSubtitle}</p>
+            <h3 className="text-xl font-black tracking-tight text-foreground sm:text-2xl">{paperTitle}</h3>
+            <p className="mt-1 text-xs font-bold text-muted-foreground">{paperSubtitle}</p>
           </div>
 
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-stretch">
-            <table className="w-full table-fixed border border-black text-left text-xs lg:w-[300px] lg:flex-shrink-0">
-              <tbody>
-                <tr className="border-b border-black">
-                  <th className="w-[28%] border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">기안자</th>
-                  <td className="px-2 py-2 font-bold text-gray-900">{writerName || '—'}</td>
-                </tr>
-                <tr className="border-b border-black">
-                  <th className="border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">부서</th>
-                  <td className="px-2 py-2 font-bold text-gray-900">{writerDeptName || '—'}</td>
-                </tr>
-                <tr className="border-b border-black">
-                  <th className="border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">사번</th>
-                  <td className="px-2 py-2 font-bold text-gray-900">{writerEmployeeNo?.trim() || '—'}</td>
-                </tr>
-                <tr className="border-b border-black">
-                  <th className="border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">기안일</th>
-                  <td className="px-2 py-2 font-bold text-gray-900">{draftedDate}</td>
-                </tr>
-                <tr>
-                  <th className="border-r border-black bg-gray-100 px-2 py-2 font-black text-gray-800">문서번호</th>
-                  <td className="px-2 py-2 font-bold text-gray-600">{documentNumberHint}</td>
-                </tr>
-              </tbody>
-            </table>
+          <div className="grid overflow-hidden rounded-md border-2 border-border lg:grid-cols-[16.875rem_minmax(0,1fr)]">
+              <table className="w-full table-fixed border-collapse border-b border-border text-left text-xs lg:border-b-0 lg:border-r">
+                <tbody>
+                  <tr className="border-b border-border">
+                    <th className="w-[32%] border-r border-border bg-muted px-2 py-1.5 font-black text-foreground">기안자</th>
+                    <td className="px-2 py-1.5 font-bold text-foreground">{writerName || '—'}</td>
+                  </tr>
+                  <tr className="border-b border-border">
+                    <th className="border-r border-border bg-muted px-2 py-1.5 font-black text-foreground">부서</th>
+                    <td className="px-2 py-1.5 font-bold text-foreground">{writerDeptName || '—'}</td>
+                  </tr>
+                  <tr className="border-b border-border">
+                    <th className="border-r border-border bg-muted px-2 py-1.5 font-black text-foreground">사번</th>
+                    <td className="px-2 py-1.5 font-bold text-foreground">{writerEmployeeNo?.trim() || '—'}</td>
+                  </tr>
+                  <tr className="border-b border-border">
+                    <th className="border-r border-border bg-muted px-2 py-1.5 font-black text-foreground">기안일</th>
+                    <td className="px-2 py-1.5 font-bold text-foreground">{draftedDate}</td>
+                  </tr>
+                  <tr>
+                    <th className="border-r border-border bg-muted px-2 py-1.5 font-black text-foreground">문서번호</th>
+                    <td className="px-2 py-1.5 font-bold text-muted-foreground">{documentNumberHint}</td>
+                  </tr>
+                </tbody>
+              </table>
 
-            <div className="min-w-0 flex-1 space-y-2">
-              <div className="overflow-x-auto rounded border border-black">
-                <table className="w-full table-fixed border-collapse text-center text-xs">
+              <div className="flex min-h-0 min-w-0 items-center justify-center overflow-x-auto bg-card lg:min-h-0">
+                <table className="w-full min-w-0 table-fixed border-collapse text-center text-xs sm:min-w-[260px]">
                   <colgroup>
                     {Array.from({ length: approvalStampColCount }).map((_, i) => (
                       <col key={i} style={{ width: `${100 / approvalStampColCount}%` }} />
                     ))}
                   </colgroup>
                   <thead>
-                    <tr className="border-b border-black bg-gray-100">
-                      <th className="border-r border-black px-2 py-2 font-black text-gray-800">기안</th>
-                      {approverSlots.map((line) => (
-                        <th key={line.id} className="border-l border-black px-2 py-2 font-black text-gray-800">
-                          결재
+                    <tr className="border-b border-border bg-muted">
+                      <th className="border-r border-border px-1.5 py-1.5 font-black text-foreground sm:px-2 sm:py-2">기안</th>
+                      {stampSlots.map((line) => (
+                        <th key={line.id} className="border-l border-border px-1.5 py-1.5 font-black text-foreground sm:px-2 sm:py-2">
+                          {line.role === 'cooperator' ? '협조' : '결재'}
                         </th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    <tr className="border-b border-black">
-                      <td className="min-w-0 border-r border-black bg-white px-2 py-3 font-bold text-gray-900">
+                    <tr className="border-b border-border">
+                      <td className="min-w-0 border-r border-border bg-card px-1.5 py-2 font-bold text-foreground sm:px-2 sm:py-2.5">
                         <span className="block truncate">{writerName || '—'}</span>
-                        <span className="mt-0.5 block truncate text-[10px] font-bold text-gray-500">
+                        <span className="mt-0.5 block truncate text-[10px] font-bold text-muted-foreground">
                           {writerEmployeeNo?.trim() || '-'}
                         </span>
                       </td>
-                      {approverSlots.map((line) => {
+                      {stampSlots.map((line) => {
                         const u = line.userId.trim() ? resolveLineUser(line.userId) : undefined
                         return (
                           <td
                             key={line.id}
-                            className="min-w-0 border-l border-black bg-white px-2 py-3 font-bold text-gray-900"
+                            className="min-w-0 border-l border-border bg-card px-1.5 py-2 font-bold text-foreground sm:px-2 sm:py-2.5"
                           >
                             <span className="block truncate">
                               {u?.user_name ?? (line.userId.trim() ? '—' : '미지정')}
                             </span>
-                            <span className="mt-0.5 block truncate text-[10px] font-bold text-gray-500">
+                            <span className="mt-0.5 block truncate text-[10px] font-bold text-muted-foreground">
                               {u?.employee_no?.trim() || '-'}
                             </span>
                           </td>
@@ -209,79 +207,26 @@ export default function ApprovalDraftPaper({
                       })}
                     </tr>
                     <tr>
-                      <td className="border-r border-black bg-gray-50 px-1 py-8 align-top text-[10px] font-bold text-gray-400">
+                      <td className="border-r border-border bg-muted/45 px-1 py-3 align-middle text-[10px] font-bold text-muted-foreground sm:px-2 sm:py-4">
                         서명/날인
                       </td>
-                      {approverSlots.map((line) => (
-                        <td key={`sig-${line.id}`} className="border-l border-black bg-gray-50 px-1 py-8 align-top" />
+                      {stampSlots.map((line) => (
+                        <td
+                          key={`sig-${line.id}`}
+                          className="border-l border-border bg-muted/45 px-1 py-3 align-middle sm:px-2 sm:py-4"
+                        >
+                          <span className="text-[10px] font-bold text-muted-foreground">서명/날인</span>
+                        </td>
                       ))}
                     </tr>
                   </tbody>
                 </table>
               </div>
-
-              <div className="rounded border border-gray-400 bg-gray-50 p-2">
-                <p className="mb-2 border-b border-gray-300 pb-1 text-center text-[11px] font-black text-gray-800">협조</p>
-                {cooperatorSlots.length === 0 ? (
-                  <p className="py-2 text-center text-[11px] font-bold text-gray-500">
-                    결재 라인에서 역할을 &quot;협조&quot;로 지정하면 이곳에 표시됩니다.
-                  </p>
-                ) : (
-                  <table className="w-full table-fixed border border-gray-300 bg-white text-left text-[11px]">
-                    <colgroup>
-                      <col className="w-[4.25rem]" />
-                      <col className="w-[5.25rem]" />
-                      <col className="w-[4.75rem]" />
-                      <col />
-                    </colgroup>
-                    <thead>
-                      <tr className="bg-gray-100">
-                        <th className="border-b border-gray-300 px-1 py-1 text-[10px] font-black">부서</th>
-                        <th className="border-b border-l border-gray-300 px-1 py-1 text-[10px] font-black">이름</th>
-                        <th className="border-b border-l border-gray-300 px-1 py-1 text-[10px] font-black">확인</th>
-                        <th className="border-b border-l border-gray-300 px-2 py-1 text-[10px] font-black">의견</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cooperatorSlots.map((line) => {
-                        const u = resolveLineUser(line.userId)
-                        const dept = u ? formatWriterDepartmentLabel(u, deptMap) : '—'
-                        return (
-                          <tr key={line.id} className="border-t border-gray-200">
-                            <td className="max-w-0 truncate px-1 py-1.5 text-[10px] font-bold text-gray-800" title={dept}>
-                              {dept}
-                            </td>
-                            <td
-                              className="max-w-0 truncate border-l border-gray-200 px-1 py-1.5 text-[10px] font-bold text-gray-900"
-                              title={u?.user_name ?? '—'}
-                            >
-                              {u?.user_name ?? '—'}
-                            </td>
-                            <td className="border-l border-gray-200 px-1 py-1.5 text-center">
-                              <span className="inline-flex rounded bg-amber-100 px-1 py-0.5 text-[9px] font-black text-amber-800">
-                                안읽음
-                              </span>
-                            </td>
-                            <td className="min-w-0 border-l border-gray-200 px-2 py-1.5 text-[10px] font-bold text-gray-400">
-                              —
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                )}
-                <p className="mt-1 text-[10px] font-bold text-gray-500">
-                  읽음 여부는 상신 후 협조자가 문서를 열람하면 시스템에서 갱신하도록 연동할 수 있습니다. (작성 화면에서는 안내용으로
-                  &quot;안읽음&quot;을 표시합니다.)
-                </p>
-              </div>
-            </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 border border-gray-200 text-sm sm:grid-cols-[120px_1fr] md:grid-cols-[150px_1fr]">
-          <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">시행일자</div>
+        <div className="grid grid-cols-1 overflow-hidden rounded-md border border-border text-sm sm:grid-cols-[120px_1fr] md:grid-cols-[150px_1fr]">
+          <div className="border-b bg-muted/45 px-3 py-2 font-black text-foreground sm:border-r">시행일자</div>
           <div className="grid grid-cols-1 items-center gap-2 border-b px-3 py-2 min-[430px]:grid-cols-[1fr_auto_1fr]">
             <ExecutionDateHybridInput
               value={executionStartDate}
@@ -290,7 +235,7 @@ export default function ApprovalDraftPaper({
               placeholder="시작일 (YYYYMMDD)"
               calendarLabel="시작일 달력"
             />
-            <span className="hidden text-xs font-bold text-gray-500 min-[430px]:inline">~</span>
+            <span className="hidden text-xs font-bold text-muted-foreground min-[430px]:inline">~</span>
             <ExecutionDateHybridInput
               value={executionEndDate}
               onChange={onExecutionEndDateChange}
@@ -299,10 +244,10 @@ export default function ApprovalDraftPaper({
               calendarLabel="종료일 달력"
             />
           </div>
-          <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">문서유형</div>
+          <div className="border-b bg-muted/45 px-3 py-2 font-black text-foreground sm:border-r">문서유형</div>
           <div className="border-b px-3 py-2">
             {docTypeSelectDisabled ? (
-              <span className="inline-block rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-900">
+              <span className="inline-block rounded-md border border-border bg-muted/45 px-3 py-2 text-sm font-bold text-foreground">
                 {docTypeOptions.find((o) => o.value === docType)?.label ?? docType}
               </span>
             ) : (
@@ -315,37 +260,37 @@ export default function ApprovalDraftPaper({
               />
             )}
           </div>
-          <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">참조</div>
+          <div className="border-b bg-muted/45 px-3 py-2 font-black text-foreground sm:border-r">참조</div>
           <div className="border-b px-3 py-2">
-            <p className="rounded border border-dashed border-gray-200 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-800">
+            <p className="rounded-md border border-dashed border-border bg-muted/45 px-3 py-2 text-sm font-bold text-foreground">
               {formatReferenceLine(approvalOrder, resolveLineUser)}
             </p>
-            <p className="mt-1 text-[11px] font-bold text-gray-500">
+            <p className="mt-1 text-[11px] font-bold text-muted-foreground">
               결재 라인에서 역할을 &quot;참조&quot;로 지정한 사람이 자동으로 표시됩니다.
             </p>
           </div>
-          <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">합의</div>
+          <div className="border-b bg-muted/45 px-3 py-2 font-black text-foreground sm:border-r">합의</div>
           <div className="border-b px-3 py-2">
             <textarea
               value={agreementText}
               onChange={(e) => onAgreementTextChange(e.target.value)}
               rows={2}
               placeholder="합의 내용을 입력하세요"
-              className="w-full resize-none rounded border border-gray-300 px-3 py-2 text-sm"
+              className="w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground shadow-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
             />
           </div>
-          <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">제목</div>
+          <div className="border-b bg-muted/45 px-3 py-2 font-black text-foreground sm:border-r">제목</div>
           <div className="border-b px-3 py-2">
             <input
               name="draft_title"
               value={title}
               onChange={(e) => onTitleChange(e.target.value)}
               placeholder="기안 제목"
-              className="w-full rounded border border-gray-300 px-3 py-2 text-sm"
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground shadow-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
               required
             />
           </div>
-          <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">본문</div>
+          <div className="border-b bg-muted/45 px-3 py-2 font-black text-foreground sm:border-r">본문</div>
           <div className="border-b px-3 py-2">
             {/* TipTap은 폼 제약 검사 대상이 아니므로, 본문 비었을 때 브라우저 기본 검증(이 입력란을 작성하세요)용 게이트 */}
             <input
@@ -362,9 +307,9 @@ export default function ApprovalDraftPaper({
           </div>
           {processHistorySlot ? (
             <>
-              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">
+              <div className="border-b bg-muted/45 px-3 py-2 font-black text-foreground sm:border-r">
                 처리 이력
-                <span className="mt-0.5 block text-[10px] font-bold normal-case text-gray-500">
+                <span className="mt-0.5 block text-[10px] font-bold normal-case text-muted-foreground">
                   이전 상신·결재 기록 (읽기 전용)
                 </span>
               </div>
@@ -373,20 +318,20 @@ export default function ApprovalDraftPaper({
           ) : null}
           {postBodyGridSlot ? (
             <>
-              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">출고</div>
+              <div className="border-b bg-muted/45 px-3 py-2 font-black text-foreground sm:border-r">출고</div>
               <div className="border-b px-3 py-2">{postBodyGridSlot}</div>
             </>
           ) : null}
           {attachmentsSlot ? (
             <>
-              <div className="border-b bg-gray-50 px-3 py-2 font-black text-gray-700 sm:border-r">첨부문서</div>
+              <div className="border-b bg-muted/45 px-3 py-2 font-black text-foreground sm:border-r">첨부문서</div>
               <div className="border-b px-3 py-2">{attachmentsSlot}</div>
             </>
           ) : null}
         </div>
 
-        <div className="rounded-xl border border-gray-200 p-3">
-          <h4 className="mb-3 text-sm font-black text-gray-800">결재 라인 지정</h4>
+        <div className="rounded-xl border border-border bg-muted/10 p-3">
+          <h4 className="mb-3 text-sm font-black text-foreground">결재 라인 지정</h4>
           <ApprovalLineDnD
             lines={approvalOrder}
             users={selectableUsers}

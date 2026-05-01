@@ -56,6 +56,16 @@ type StockItemRow = {
   } | null
 }
 
+type ReservedOutboundItem = {
+  outbound_request_id: number
+  req_no: string | null
+  status: string
+  item_id: number
+  selected_lot: string | null
+  selected_sn: string | null
+  selected_exp: string | null
+}
+
 export type OutboundItemLine = {
   item_id: string
   quantity: number
@@ -73,6 +83,12 @@ export type UseOutboundRequestDraftFormParams = {
   webDraftRemarksTag?: string
   /** `/outbound-requests/new?resubmit=` — 회수·반려 출고문서 재상신 */
   initialResubmitDocId?: number | null
+}
+
+function pickRandom<T>(list: T[]): T | null {
+  if (!Array.isArray(list) || list.length === 0) return null
+  const index = Math.floor(Math.random() * list.length)
+  return list[index] ?? null
 }
 
 type OutboundDraftAutosavePayloadV3 = {
@@ -143,6 +159,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
   const [itemSearchKeyword, setItemSearchKeyword] = useState('')
 
   const [errorMessage, setErrorMessage] = useState('')
+  const [reservedOutboundItems, setReservedOutboundItems] = useState<ReservedOutboundItem[]>([])
   const [lastLocalSaveAt, setLastLocalSaveAt] = useState<string | null>(null)
   const [lastServerSaveAt, setLastServerSaveAt] = useState<string | null>(null)
   const hasRestoredAutosaveRef = useRef(false)
@@ -285,6 +302,70 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
         .gt('current_qty', 0)
       if (cancelled) return
       setStockRows((data as unknown as StockItemRow[]) ?? [])
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [enabled, warehouseId])
+
+  useEffect(() => {
+    if (!enabled || !warehouseId) {
+      setReservedOutboundItems([])
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      const warehouseNumber = Number(warehouseId)
+      if (!Number.isInteger(warehouseNumber) || warehouseNumber <= 0) {
+        setReservedOutboundItems([])
+        return
+      }
+      const { data: openRequests } = await supabase
+        .from('outbound_requests')
+        .select('id, req_no, status')
+        .eq('warehouse_id', warehouseNumber)
+        .in('status', ['submitted', 'approved'])
+      const requestRows = (openRequests ?? []) as Array<{ id: number; req_no: string | null; status: string }>
+      if (requestRows.length === 0) {
+        if (!cancelled) setReservedOutboundItems([])
+        return
+      }
+      const requestIdMap = new Map(requestRows.map((r) => [r.id, r]))
+      const { data: itemRows } = await supabase
+        .from('outbound_request_items')
+        .select('outbound_request_id, item_id, remarks')
+        .in('outbound_request_id', requestRows.map((r) => r.id))
+      if (cancelled) return
+      const parsed: ReservedOutboundItem[] = ((itemRows ?? []) as Array<{
+        outbound_request_id: number
+        item_id: number
+        remarks: string | null
+      }>).map((row) => {
+        let selected_lot: string | null = null
+        let selected_sn: string | null = null
+        let selected_exp: string | null = null
+        try {
+          const p = row.remarks ? (JSON.parse(row.remarks) as { selected_lot?: unknown; selected_sn?: unknown; selected_exp?: unknown }) : null
+          selected_lot = typeof p?.selected_lot === 'string' ? p.selected_lot : null
+          selected_sn = typeof p?.selected_sn === 'string' ? p.selected_sn : null
+          selected_exp = typeof p?.selected_exp === 'string' ? p.selected_exp : null
+        } catch {
+          selected_lot = null
+          selected_sn = null
+          selected_exp = null
+        }
+        const req = requestIdMap.get(row.outbound_request_id)
+        return {
+          outbound_request_id: row.outbound_request_id,
+          req_no: req?.req_no ?? null,
+          status: req?.status ?? 'submitted',
+          item_id: Number(row.item_id),
+          selected_lot,
+          selected_sn,
+          selected_exp,
+        }
+      })
+      setReservedOutboundItems(parsed)
     })()
     return () => {
       cancelled = true
@@ -480,6 +561,9 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
           parsed.selectedItems.map((row) => ({
             item_id: String((row as OutboundItemLine).item_id ?? ''),
             quantity: Math.max(1, Number((row as OutboundItemLine).quantity) || 1),
+            selected_lot: String((row as OutboundItemLine).selected_lot ?? ''),
+            selected_exp: String((row as OutboundItemLine).selected_exp ?? ''),
+            selected_sn: String((row as OutboundItemLine).selected_sn ?? ''),
           }))
         )
       }
@@ -659,6 +743,100 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     }))
   }, [itemSearchKeyword, stockByItemId])
 
+  const notifyIfReservedSelection = useCallback((line: OutboundItemLine) => {
+    const itemId = Number(line.item_id)
+    if (!Number.isFinite(itemId) || itemId <= 0) return
+    const lot = String(line.selected_lot ?? '').trim()
+    const sn = String(line.selected_sn ?? '').trim()
+    const exp = String(line.selected_exp ?? '').trim()
+    const hit = reservedOutboundItems.find((r) => {
+      if (r.item_id !== itemId) return false
+      const lotMatch = !lot || !r.selected_lot || r.selected_lot === lot
+      const snMatch = !sn || !r.selected_sn || r.selected_sn === sn
+      const expMatch = !exp || !r.selected_exp || r.selected_exp === exp
+      return lotMatch && snMatch && expMatch
+    })
+    if (!hit) return
+    alert(
+      `이미 선점된 품목입니다.\n요청서: ${hit.req_no ?? `#${hit.outbound_request_id}`}\n상태: ${hit.status}\n계속 진행 시 재고 부족으로 상신/완료가 차단될 수 있습니다.`
+    )
+  }, [reservedOutboundItems])
+
+  const applyRandomTrackingSelections = useCallback(
+    (lines: OutboundItemLine[]) => {
+      let changed = false
+      const next = lines.map((line) => {
+        const itemMeta = stockByItemId.get(String(line.item_id))
+        if (!itemMeta) return line
+        if (!itemMeta.isLot && !itemMeta.isExp && !itemMeta.isSn) return line
+
+        let selected_lot = String(line.selected_lot ?? '').trim()
+        let selected_exp = String(line.selected_exp ?? '').trim()
+        let selected_sn = String(line.selected_sn ?? '').trim()
+
+        const itemStocks = stockRows.filter((row) => Number(row.item_id) === Number(line.item_id))
+        if (itemStocks.length === 0) return line
+
+        const lotOptions = Array.from(
+          new Set(
+            itemStocks
+              .filter((row) => (!selected_sn || row.serial_no === selected_sn) && (!selected_exp || String(row.exp_date ?? '') === selected_exp))
+              .map((row) => row.lot_no)
+              .filter((v): v is string => Boolean(v))
+          )
+        )
+        const snOptions = Array.from(
+          new Set(
+            itemStocks
+              .filter((row) => (!selected_lot || row.lot_no === selected_lot) && (!selected_exp || String(row.exp_date ?? '') === selected_exp))
+              .map((row) => row.serial_no)
+              .filter((v): v is string => Boolean(v))
+          )
+        )
+        const expOptions = Array.from(
+          new Set(
+            itemStocks
+              .filter((row) => (!selected_lot || row.lot_no === selected_lot) && (!selected_sn || row.serial_no === selected_sn))
+              .map((row) => row.exp_date)
+              .filter((v): v is string => Boolean(v))
+              .map((v) => String(v))
+          )
+        )
+
+        if (itemMeta.isLot && !selected_lot) {
+          const randomLot = pickRandom(lotOptions)
+          if (randomLot) {
+            selected_lot = randomLot
+            changed = true
+          }
+        }
+        if (itemMeta.isSn && !selected_sn) {
+          const randomSn = pickRandom(snOptions)
+          if (randomSn) {
+            selected_sn = randomSn
+            changed = true
+          }
+        }
+        if (itemMeta.isExp && !selected_exp) {
+          const randomExp = pickRandom(expOptions)
+          if (randomExp) {
+            selected_exp = randomExp
+            changed = true
+          }
+        }
+
+        return {
+          ...line,
+          selected_lot,
+          selected_exp,
+          selected_sn,
+        }
+      })
+      return { lines: next, changed }
+    },
+    [stockByItemId, stockRows]
+  )
+
   const addItemRow = useCallback(() => {
     setSelectedItems((prev) => [...prev, { item_id: '', quantity: 1 }])
   }, [])
@@ -688,11 +866,36 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
       .map((r) => ({
         item_id: Number(r.item_id),
         qty: Number(r.quantity),
+        selected_lot: String(r.selected_lot ?? '').trim(),
+        selected_exp: String(r.selected_exp ?? '').trim(),
+        selected_sn: String(r.selected_sn ?? '').trim(),
       }))
       .filter((r) => Number.isFinite(r.item_id) && r.item_id > 0 && Number.isFinite(r.qty) && r.qty >= 1)
     if (lines.length === 0) {
       showDraftValidationError(setErrorMessage, '품목을 1개 이상, 수량 1 이상으로 지정하십시오.')
       return false
+    }
+    // 기안/상신 시점 재고 검증: 완료 시점 실패를 사전에 차단한다.
+    const totalRequestedByItem = new Map<number, number>()
+    for (const line of lines) {
+      const itemMeta = stockByItemId.get(String(line.item_id))
+      const itemLabel = itemMeta ? `[${itemMeta.itemCode}] ${itemMeta.itemName}` : `item_id=${line.item_id}`
+      totalRequestedByItem.set(line.item_id, (totalRequestedByItem.get(line.item_id) ?? 0) + line.qty)
+      void itemLabel
+    }
+    for (const [itemId, requestedQty] of totalRequestedByItem.entries()) {
+      const itemMeta = stockByItemId.get(String(itemId))
+      const itemLabel = itemMeta ? `[${itemMeta.itemCode}] ${itemMeta.itemName}` : `item_id=${itemId}`
+      const availableQty = stockRows
+        .filter((row) => Number(row.item_id) === Number(itemId))
+        .reduce((sum, row) => sum + Number(row.current_qty ?? 0), 0)
+      if (availableQty < requestedQty) {
+        showDraftValidationError(
+          setErrorMessage,
+          `재고 부족으로 상신할 수 없습니다. (${itemLabel}, 요청=${requestedQty}, 가용=${availableQty})`
+        )
+        return false
+      }
     }
     const hasAnyExecutionPeriodInput = Boolean(executionStartDate.trim() || executionEndDate.trim())
     if (hasAnyExecutionPeriodInput) {
@@ -713,6 +916,8 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     executionEndDate,
     executionStartDate,
     selectedItems,
+    stockByItemId,
+    stockRows,
     title,
     warehouseId,
     writerHasApprovalRight,
@@ -734,7 +939,13 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     setIsDraftSaving(true)
     try {
       const referenceSummary = buildReferenceSummaryForDraft(approvalOrder, users, deptMap)
-      const itemLines = selectedItems
+      const randomized = applyRandomTrackingSelections(selectedItems)
+      const normalizedSelectedItems = randomized.lines
+      if (randomized.changed) {
+        setSelectedItems(normalizedSelectedItems)
+        toast.message('SN/LOT/EXP는 랜덤으로 자동 선택되었습니다. 출고 단계에서 변경할 수 있습니다.')
+      }
+      const itemLines = normalizedSelectedItems
         .map((r) => ({
           item_id: Number(r.item_id),
           qty: Number(r.quantity),
@@ -786,7 +997,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
           agreementText,
           approvalOrder,
           warehouseId,
-          selectedItems,
+          selectedItems: normalizedSelectedItems,
           itemSearchKeyword,
         }
         localStorage.setItem(autosaveKey, JSON.stringify(payload))
@@ -812,6 +1023,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     itemSearchKeyword,
     persistLocalPayload,
     selectedItems,
+    applyRandomTrackingSelections,
     selectedWriter?.dept_id,
     serverDraftDocId,
     title,
@@ -959,7 +1171,13 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     setIsSaving(true)
     try {
       const referenceSummary = buildReferenceSummaryForDraft(approvalOrder, users, deptMap)
-      const itemLines = selectedItems
+      const randomized = applyRandomTrackingSelections(selectedItems)
+      const normalizedSelectedItems = randomized.lines
+      if (randomized.changed) {
+        setSelectedItems(normalizedSelectedItems)
+        toast.message('SN/LOT/EXP는 랜덤으로 자동 선택되었습니다. 출고 단계에서 변경할 수 있습니다.')
+      }
+      const itemLines = normalizedSelectedItems
         .map((r) => ({
           item_id: Number(r.item_id),
           qty: Number(r.quantity),
@@ -1035,6 +1253,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     executionEndDate,
     executionStartDate,
     selectedItems,
+    applyRandomTrackingSelections,
     selectedWriter?.dept_id,
     serverDraftDocId,
     resubmitDocId,
@@ -1086,6 +1305,7 @@ export function useOutboundRequestDraftForm(params: UseOutboundRequestDraftFormP
     itemOptions,
     addItemRow,
     removeItemRow,
+    notifyIfReservedSelection,
     submitForApproval,
     saveDraftNow,
     deleteDraftDocument,

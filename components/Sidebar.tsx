@@ -138,7 +138,14 @@ export default function Sidebar() {
     {
       title: '그룹웨어',
       items: [
-        { name: '통합결재문서함', href: '/approvals', perm: null },
+        { name: '일반기안문서함', href: '/approvals', perm: null },
+        { name: '출고결재문서함', href: '/outbound-requests', perm: null, outboundPerm: 'can_outbound_view' },
+        {
+          name: '출고요청현황',
+          href: '/outbound-instructions',
+          perm: null,
+          outboundPerm: 'can_outbound_view',
+        },
         { name: '게시판', href: '/groupware/board', perm: null, nestedActive: true },
       ]
     },
@@ -177,12 +184,6 @@ export default function Sidebar() {
         { name: '입고 등록', href: '/inbound/new', perm: 'can_material_manage' }, 
         { name: '입고 보완 입력', href: '/inbound/complete-tracking', perm: 'can_material_manage' },
         { name: '자재 이동', href: '/inventory-transfers/new', perm: 'can_material_manage' },
-        {
-          name: '출고 요청 현황',
-          href: '/outbound-instructions',
-          perm: null,
-          outboundPerm: 'can_outbound_view',
-        },
         { name: '재고 실사/조정', href: '/inventory-adjustments', perm: 'can_material_manage' },
       ]
     },

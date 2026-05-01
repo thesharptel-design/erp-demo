@@ -123,6 +123,8 @@ type OutboundRequestRow = {
   dispatch_state: 'queue' | 'assigned' | 'in_progress' | 'completed' | null
   dispatch_handler_user_id: string | null
   dispatch_handler_name: string | null
+  receipt_confirmed_at: string | null
+  receipt_confirmed_by: string | null
   created_at: string
 }
 
@@ -146,6 +148,9 @@ type OutboundItemRow = {
     item_name: string | null
     item_spec: string | null
     unit: string | null
+    is_lot_managed: boolean | null
+    is_sn_managed: boolean | null
+    is_exp_managed: boolean | null
   } | null
 }
 
@@ -247,7 +252,8 @@ export async function getOutboundRequestDetail(supabase: SupabaseClient, id: str
     .from('outbound_requests')
     .select(`
       id, req_no, requester_id, purpose, status, approval_doc_id, warehouse_id,
-      dispatch_state, dispatch_handler_user_id, dispatch_handler_name, created_at
+      dispatch_state, dispatch_handler_user_id, dispatch_handler_name,
+      receipt_confirmed_at, receipt_confirmed_by, created_at
     `)
     .eq('id', reqId)
     .single()
@@ -375,7 +381,7 @@ export async function getOutboundRequestDetail(supabase: SupabaseClient, id: str
 
   const { data: items } = await supabase
     .from('outbound_request_items')
-    .select('id, line_no, qty, item_id, remarks, items(item_code, item_name, item_spec, unit)')
+    .select('id, line_no, qty, item_id, remarks, items(item_code, item_name, item_spec, unit, is_lot_managed, is_sn_managed, is_exp_managed)')
     .eq('outbound_request_id', reqId)
     .order('line_no')
 
@@ -395,6 +401,8 @@ export async function getOutboundRequestDetail(supabase: SupabaseClient, id: str
       exp = null
     }
     return {
+      req_item_id: row.id,
+      item_id: row.item_id,
       no: row.line_no ?? idx + 1,
       itemCode: row.items?.item_code ?? '',
       itemName: row.items?.item_name ?? '',
@@ -402,6 +410,9 @@ export async function getOutboundRequestDetail(supabase: SupabaseClient, id: str
       sn,
       exp,
       qty: row.qty,
+      is_lot: row.items?.is_lot_managed === true,
+      is_sn: row.items?.is_sn_managed === true,
+      is_exp: row.items?.is_exp_managed === true,
     }
   })
   const itemIds = itemRows.map((r) => r.item_id).filter((x) => Number.isFinite(x) && x > 0)
@@ -446,10 +457,12 @@ export async function OutboundDetailShared({
   id,
   shellMode,
   attachmentFrom,
+  showDispatchControlBox = false,
 }: {
   supabase: SupabaseClient
   id: string
   shellMode: ShellMode
+  showDispatchControlBox?: boolean
   attachmentFrom?: {
     enabled: boolean
     sourceDocNo: string | null
@@ -588,32 +601,25 @@ export async function OutboundDetailShared({
           opinion: line.opinion ?? null,
         }))
 
-  const cooperativeLines = displayLines.filter((line) => line.approver_role === 'cooperator')
-  const approverLines = displayLines
-    .filter((line) => line.approver_role === 'approver')
+  const stampLines = displayLines
+    .filter((line) => line.approver_role === 'approver' || line.approver_role === 'cooperator')
     .sort((a, b) => a.line_no - b.line_no)
-  const approverColumns = approverLines.map((line) => {
+  const stampColumns = stampLines.map((line) => {
     const profile = userMap.get(normUserIdKey(line.approver_id))
     const userName = profile?.user_name ?? '—'
+    const isCoop = line.approver_role === 'cooperator'
+    const uid = normUserIdKey(line.approver_id)
     return {
       id: `${line.line_no}-${line.approver_id}`,
+      role: isCoop ? ('cooperator' as const) : ('approver' as const),
       name: userName,
       employeeNo: profile?.employee_no ?? null,
-      sealUrl: sealUrlMap.get(normUserIdKey(line.approver_id)) ?? sealUrlMap.get(line.approver_id) ?? null,
+      sealUrl: sealUrlMap.get(uid) ?? sealUrlMap.get(line.approver_id) ?? null,
       status: getDetailLineStatus(line.approver_role, line.status),
       actedAt: line.acted_at,
       showSeal: line.status === 'approved',
-    }
-  })
-  const cooperativeRows = cooperativeLines.map((line) => {
-    const profile = userMap.get(normUserIdKey(line.approver_id))
-    const dept = formatWriterDepartmentLabel(profile, deptMap)
-    return {
-      id: `coop-${line.line_no}-${line.approver_id}`,
-      dept,
-      name: profile?.user_name ?? '—',
-      readStatus: cooperatorReadBadge(line.status),
-      opinionText: line.opinion,
+      readStatus: isCoop ? cooperatorReadBadge(line.status) : undefined,
+      opinionText: isCoop ? line.opinion : undefined,
     }
   })
   const reviewerNames = participants
@@ -785,8 +791,7 @@ export async function OutboundDetailShared({
         draftedDate={draftedDate}
         docNo={docNo}
         writerSealUrl={sealUrlMap.get(normUserIdKey(writerIdForPaper)) ?? sealUrlMap.get(writerIdForPaper) ?? null}
-        approverColumns={approverColumns}
-        cooperators={cooperativeRows}
+        stampColumns={stampColumns}
         docTypeLabel={docTypeLabel}
         referenceText={referenceText}
         executionText={executionText}
@@ -815,23 +820,29 @@ export async function OutboundDetailShared({
 
       <div className="mt-6 space-y-4 border-t border-gray-200 pt-4">
         <ApprovalProcessHistoryPanel rows={outboundHistoryRowsSorted} />
-        <OutboundDispatchActionButtons
-          outboundRequestId={request.id}
-          requestStatus={request.status as 'draft' | 'submitted' | 'approved' | 'rejected' | 'completed' | 'cancelled'}
-          dispatchState={request.dispatch_state}
-          handlerUserId={request.dispatch_handler_user_id}
-          handlerName={request.dispatch_handler_name}
-          currentUserId={currentUserId}
-          currentUserName={currentUserName}
-          canAssignHandler={canAssignHandler}
-          canReassignRecall={canReassignRecall}
-          canExecuteSelf={canExecuteSelf}
-          canExecuteAny={canExecuteAny}
-          canRecallByTeacherPolicy={canRecallByTeacherPolicy}
-          handlerOptions={dispatchUserOptions}
-          plannedItems={outboundPlannedItems}
-          compact={listBare}
-        />
+        {showDispatchControlBox ? (
+          <OutboundDispatchActionButtons
+            outboundRequestId={request.id}
+            requestStatus={request.status as 'draft' | 'submitted' | 'approved' | 'rejected' | 'completed' | 'cancelled'}
+            dispatchState={request.dispatch_state}
+            handlerUserId={request.dispatch_handler_user_id}
+            handlerName={request.dispatch_handler_name}
+            currentUserId={currentUserId}
+            currentUserName={currentUserName}
+            canAssignHandler={canAssignHandler}
+            canReassignRecall={canReassignRecall}
+            canExecuteSelf={canExecuteSelf}
+            canExecuteAny={canExecuteAny}
+            canRecallByTeacherPolicy={canRecallByTeacherPolicy}
+            handlerOptions={dispatchUserOptions}
+            plannedItems={outboundPlannedItems}
+            warehouseId={request.warehouse_id}
+            requesterId={request.requester_id}
+            receiptConfirmedAt={request.receipt_confirmed_at}
+            receiptConfirmedBy={request.receipt_confirmed_by}
+            compact={listBare}
+          />
+        ) : null}
         <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-4">
           <p className="mb-3 text-[11px] font-black uppercase tracking-wide text-slate-600">출고 처리 이력</p>
           <p className="mb-3 text-[10px] font-bold leading-snug text-slate-500">

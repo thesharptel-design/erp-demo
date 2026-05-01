@@ -7,15 +7,16 @@ import TableFilterCombobox from '@/components/TableFilterCombobox'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import PageHeader from '@/components/PageHeader'
 import InlineAlertMirror from '@/components/InlineAlertMirror'
+import ApprovalPageLayout from '@/components/approvals/ApprovalPageLayout'
+import ApprovalInboxTableRow from '@/components/approvals/ApprovalInboxTableRow'
 import {
   getApprovalDocTypeRule,
   getApprovalDocTypeLabel,
   getApprovalInboxDocTypeFilterOptions,
   getApprovalComposePopupWindowName,
 } from '@/lib/approval-doc-type-rules'
-import { openApprovalDocFromInbox, openApprovalShellPopup } from '@/lib/approval-popup'
+import { openApprovalShellPopup } from '@/lib/approval-popup'
 import {
   APPROVAL_INBOX_STATUS_FILTER_OPTIONS,
   formatApprovalProgressChain,
@@ -51,11 +52,17 @@ type ApprovalsDocRow = ApprovalDocLike & {
 };
 
 const DOC_TYPE_FILTER_OPTIONS = getApprovalInboxDocTypeFilterOptions();
+const GENERAL_DOC_TYPE_FILTER_OPTIONS = DOC_TYPE_FILTER_OPTIONS.filter(
+  (option) => option.value === '' || option.value !== 'outbound_request'
+).map((option) =>
+  option.value === '' ? { value: '', label: '전체' } : option
+);
+const DEFAULT_GENERAL_DOC_TYPE_CSV = GENERAL_DOC_TYPE_FILTER_OPTIONS
+  .map((option) => option.value)
+  .filter(Boolean)
+  .join(',');
 const GENERAL_DRAFT_COMPOSE_HREF = getApprovalDocTypeRule('draft_doc')?.composeHref ?? '/approvals/new';
 const GENERAL_DRAFT_COMPOSE_WINDOW_NAME = getApprovalComposePopupWindowName('draft_doc');
-const OUTBOUND_DRAFT_COMPOSE_HREF =
-  getApprovalDocTypeRule('outbound_request')?.composeHref ?? '/outbound-requests/new';
-const OUTBOUND_DRAFT_COMPOSE_WINDOW_NAME = getApprovalComposePopupWindowName('outbound_request');
 
 const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
 
@@ -64,24 +71,6 @@ const COMBO_EMPTY = [{ value: '', label: '전체' }];
 function inboxDisplayText(value: string | null | undefined, empty = '—') {
   const s = value == null ? '' : String(value).trim();
   return s || empty;
-}
-
-/** 말줄임 + 브라우저 기본 툴팁(호버·포커스 시 전체 문구) */
-function InboxTruncated({
-  text,
-  className,
-  empty,
-}: {
-  text: string | null | undefined;
-  className?: string;
-  empty?: string;
-}) {
-  const display = inboxDisplayText(text, empty ?? '—');
-  return (
-    <span className={`block min-w-0 cursor-default truncate ${className ?? ''}`} title={display}>
-      {display}
-    </span>
-  );
 }
 
 function mapRpcRowToDoc(
@@ -204,9 +193,12 @@ export default function ApprovalsPage() {
       const pDraftDate =
         draftDateRaw.length >= 8 && /^\d{4}-\d{2}-\d{2}$/.test(draftDateRaw) ? draftDateRaw : null;
 
+      const selectedDocType = filterDocType.trim();
+      const pDocType = selectedDocType || DEFAULT_GENERAL_DOC_TYPE_CSV || null;
+
       const { data: rawPayload, error } = await supabase.rpc('approval_inbox_query', {
         p_doc_no: filterDocNo.trim() || null,
-        p_doc_type: filterDocType.trim() || null,
+        p_doc_type: pDocType,
         p_title: filterTitle.trim() || null,
         p_draft_date: pDraftDate,
         p_approver_line: filterApproverLine.trim() || null,
@@ -407,17 +399,15 @@ export default function ApprovalsPage() {
     openApprovalShellPopup(GENERAL_DRAFT_COMPOSE_HREF, GENERAL_DRAFT_COMPOSE_WINDOW_NAME);
   };
 
-  const openOutboundDraftPopup = () => {
-    openApprovalShellPopup(OUTBOUND_DRAFT_COMPOSE_HREF, OUTBOUND_DRAFT_COMPOSE_WINDOW_NAME);
-  };
-
   const colCount = 7;
+  const visibleDocs = useMemo(() => docs, [docs]);
+  const visibleCount = visibleDocs.length;
   const rangeStart = totalCount === 0 ? 0 : (safePage - 1) * pageSize + 1;
   const rangeEnd = Math.min(safePage * pageSize, totalCount);
 
   const hintOptions = useMemo(() => {
     const uniqStrings = (pick: (d: ApprovalsDocRow) => string) =>
-      [...new Set(docs.map((d) => pick(d)).filter(Boolean))].slice(0, 40);
+      [...new Set(visibleDocs.map((d) => pick(d)).filter(Boolean))].slice(0, 40);
     return {
       docNo: [
         { value: '', label: '전체' },
@@ -444,7 +434,7 @@ export default function ApprovalsPage() {
           .map((v) => ({ value: v, label: v.length > 100 ? `${v.slice(0, 100)}…` : v })),
       ],
     };
-  }, [docs]);
+  }, [visibleDocs]);
 
   const stripDraftCompletePrefix = useCallback((progress: string) => {
     return progress
@@ -512,55 +502,44 @@ export default function ApprovalsPage() {
   }, []);
 
   return (
-    <div className="mx-auto flex min-h-[calc(100dvh-10.5rem)] max-w-[1800px] flex-col gap-4 bg-background p-4 font-sans md:p-6">
-      <PageHeader
-        title={
-          <span className="inline-flex flex-wrap items-center gap-2">
-            통합 결재문서함
-            {viewerIsAdmin ? (
-              <Badge
-                variant="outline"
-                className="border-violet-300 bg-violet-50 text-[11px] font-semibold uppercase tracking-wide text-violet-800"
-                title="시스템 관리자 계정으로 조직 전체 문서를 조회 중입니다."
-              >
-                관리자 · 전체 문서
-              </Badge>
-            ) : null}
-          </span>
-        }
-        description={
-          <>
-            <span>
-              {viewerIsAdmin
-                ? '관리자는 조직의 모든 결재 문서를 볼 수 있습니다. 일반 사용자는 기안·결재·참조·협조로 지정된 문서만 표시됩니다.'
-                : '기안했거나 결재·참조·협조 등 결재선에 포함된 문서만 표시됩니다.'}
-            </span>
-            <span className="mt-2 block text-xs text-muted-foreground">
-              필터·페이지·건수는 서버에서 계산됩니다.
-            </span>
-          </>
-        }
-        actions={
-          <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" size="sm" onClick={openDraftPopup}>
-              일반 기안 작성
-            </Button>
-            <Button
-              type="button"
-              variant="default"
-              size="sm"
-              className="bg-blue-600 text-white hover:bg-blue-700 focus-visible:ring-blue-500/40"
-              onClick={openOutboundDraftPopup}
+    <ApprovalPageLayout
+      title={
+        <span className="inline-flex flex-wrap items-center gap-2">
+          일반기안문서함
+          {viewerIsAdmin ? (
+            <Badge
+              variant="outline"
+              className="border-violet-300 bg-violet-50 text-[11px] font-semibold uppercase tracking-wide text-violet-800"
+              title="시스템 관리자 계정으로 조직 전체 문서를 조회 중입니다."
             >
-              출고 요청 작성
-            </Button>
-            <Button type="button" variant="outline" size="sm" disabled={loading} onClick={handleRefresh}>
-              새로고침
-            </Button>
-          </div>
-        }
-      />
-
+              관리자 · 전체 문서
+            </Badge>
+          ) : null}
+        </span>
+      }
+      description={
+        <>
+          <span>
+            {viewerIsAdmin
+              ? '관리자는 일반기안 문서를 조직 전체 기준으로 조회할 수 있습니다.'
+              : '일반기안 중 기안했거나 결재·참조·협조 결재선에 포함된 문서가 표시됩니다.'}
+          </span>
+          <span className="mt-2 block text-xs text-muted-foreground">
+            필터·페이지·건수는 서버에서 계산됩니다.
+          </span>
+        </>
+      }
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" size="sm" onClick={openDraftPopup}>
+            일반 기안 작성
+          </Button>
+          <Button type="button" variant="outline" size="sm" disabled={loading} onClick={handleRefresh}>
+            새로고침
+          </Button>
+        </div>
+      }
+    >
       {fetchError ? <InlineAlertMirror message={fetchError} variant="error" /> : null}
 
       <Card className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-border shadow-sm">
@@ -570,7 +549,7 @@ export default function ApprovalsPage() {
               {!loading ? (
                 <span>
                   전체 <span className="font-semibold text-foreground">{totalCount}</span>건 · {rangeStart}-{rangeEnd}
-                  번째 표시 · {safePage}/{totalPages} 페이지
+                  번째 표시 · 일반기안 표시 <span className="font-semibold text-foreground">{visibleCount}</span>건 · {safePage}/{totalPages} 페이지
                 </span>
               ) : (
                 <span>불러오는 중…</span>
@@ -643,7 +622,7 @@ export default function ApprovalsPage() {
                   <TableFilterCombobox
                     value={filterDocType}
                     onChange={setFilterDocTypeP}
-                    options={DOC_TYPE_FILTER_OPTIONS}
+                    options={GENERAL_DOC_TYPE_FILTER_OPTIONS}
                     placeholder="유형"
                     showClearOption={false}
                     listMaxHeightClass="max-h-56 overflow-y-auto"
@@ -739,7 +718,7 @@ export default function ApprovalsPage() {
                     문서가 없습니다.
                   </td>
                 </tr>
-              ) : docs.length === 0 ? (
+              ) : visibleDocs.length === 0 ? (
                 <tr>
                   <td
                     colSpan={colCount}
@@ -749,118 +728,30 @@ export default function ApprovalsPage() {
                   </td>
                 </tr>
               ) : (
-                docs.map((doc) => {
+                visibleDocs.map((doc) => {
                   const pres = getApprovalDocDetailedStatusPresentation(doc, doc.linesForStatusPresentation);
                   const typeLabel = getApprovalDocTypeLabel(doc.doc_type);
                   const draftDate = doc.drafted_at?.slice(0, 10) ?? '';
                   const pendingNames = getPendingActorNames(doc.progressLabel);
                   const collapsedLine = getCollapsedApproverLineText(doc.approverLineNames);
+                  const activeProgress = keepOnlyActiveProgress(doc.progressLabel);
                   return (
-                    <tr key={doc.id} className="transition-colors hover:bg-muted/40">
-                      <td className="px-3 py-3 font-semibold md:px-4 md:py-4">
-                        <a
-                          href={getDocDetailOpenHref(doc, inboxViewerId)}
-                          onClick={(e) => {
-                            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-                            if (e.button !== 0) return;
-                            e.preventDefault();
-                            openApprovalDocFromInbox(doc, inboxViewerId);
-                          }}
-                          className="block min-w-0 truncate text-primary underline-offset-2 hover:underline"
-                          title={inboxDisplayText(doc.doc_no)}
-                        >
-                          {inboxDisplayText(doc.doc_no)}
-                        </a>
-                      </td>
-                      <td className="px-2 py-3 text-center text-xs font-medium text-muted-foreground md:py-4">
-                        <InboxTruncated text={typeLabel} className="mx-auto max-w-full" />
-                      </td>
-                      <td className="px-3 py-3 font-semibold text-foreground md:px-4 md:py-4">
-                        <div className="min-w-0 space-y-1">
-                          <a
-                            href={getDocDetailOpenHref(doc, inboxViewerId)}
-                            onClick={(e) => {
-                              if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-                              if (e.button !== 0) return;
-                              e.preventDefault();
-                              openApprovalDocFromInbox(doc, inboxViewerId);
-                            }}
-                            className="block min-w-0"
-                            title={inboxDisplayText(doc.title)}
-                          >
-                            <InboxTruncated text={doc.title} className="cursor-pointer text-[15px] font-bold text-primary underline-offset-2 hover:underline" />
-                          </a>
-                          {doc.recent_reject_comment && (
-                            <p
-                              className="block min-w-0 truncate text-xs font-medium text-destructive"
-                              title={`반려 코멘트: ${doc.recent_reject_comment}`}
-                            >
-                              반려 코멘트: {doc.recent_reject_comment}
-                            </p>
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-2.5 py-3 text-sm font-medium text-foreground md:px-3 md:py-4">
-                        <div className="relative inline-block max-w-full align-top">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setExpandedApproverLineDocId((prev) => (prev === doc.id ? null : doc.id))
-                            }
-                            className="block max-w-full truncate rounded-sm text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
-                            title={doc.approverLineNames}
-                            aria-expanded={expandedApproverLineDocId === doc.id}
-                          >
-                            {collapsedLine}
-                          </button>
-                          {expandedApproverLineDocId === doc.id ? (
-                            <div className="pointer-events-none absolute left-0 top-full z-20 mt-0 max-w-[22rem] whitespace-nowrap rounded-md border border-border bg-popover px-2.5 py-1.5 text-xs font-medium text-popover-foreground shadow-lg">
-                              {renderApproverLineWithPendingHighlight(doc.approverLineNames, pendingNames)}
-                            </div>
-                          ) : null}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 text-xs font-medium leading-relaxed text-foreground md:px-4 md:py-4">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <div className="min-w-0 flex-1">
-                            <InboxTruncated text={keepOnlyActiveProgress(doc.progressLabel)} />
-                          </div>
-                          <span
-                            aria-label={doc.hasLineOpinion ? '결재·협조 의견 있음' : '결재·협조 의견 없음'}
-                            title={
-                              doc.hasLineOpinion
-                                ? '등록된 결재·협조 의견이 있습니다.'
-                                : '등록된 의견이 없습니다.'
-                            }
-                            className={`shrink-0 select-none rounded-md border px-2 py-0.5 text-[10px] font-semibold ${
-                              doc.hasLineOpinion
-                                ? 'border-primary/40 bg-primary/10 text-primary'
-                                : 'border-border bg-muted text-muted-foreground'
-                            }`}
-                          >
-                            의견
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-2 py-3 text-center md:py-4">
-                        <div
-                          className="flex flex-wrap items-center justify-center gap-1"
-                          title={pres.badges.map((b) => b.label).join(' · ')}
-                        >
-                          {pres.badges.map((b, i) => (
-                            <span
-                              key={i}
-                              className={`${b.className} inline-block max-w-full truncate align-middle`}
-                            >
-                              {b.label}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-2 py-3 text-xs font-medium text-muted-foreground md:px-3 md:py-4">
-                        <InboxTruncated text={draftDate || null} />
-                      </td>
-                    </tr>
+                    <ApprovalInboxTableRow
+                      key={doc.id}
+                      doc={doc}
+                      inboxViewerId={inboxViewerId}
+                      typeLabel={typeLabel}
+                      draftDate={draftDate}
+                      collapsedLine={collapsedLine}
+                      activeProgress={activeProgress}
+                      pendingNames={pendingNames}
+                      statusBadges={pres.badges}
+                      expanded={expandedApproverLineDocId === doc.id}
+                      onToggleExpanded={(docId) =>
+                        setExpandedApproverLineDocId((prev) => (prev === docId ? null : docId))
+                      }
+                      renderApproverLineWithPendingHighlight={renderApproverLineWithPendingHighlight}
+                    />
                   );
                 })
               )}
@@ -919,6 +810,6 @@ export default function ApprovalsPage() {
           ) : null}
         </CardContent>
       </Card>
-    </div>
+    </ApprovalPageLayout>
   );
 }

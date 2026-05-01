@@ -1008,7 +1008,7 @@ export default function DashboardPage() {
         <div className="flex flex-col rounded-xl border border-border bg-card p-5 shadow-sm">
           <div className="mb-4 flex items-end justify-between border-b border-border pb-3">
             <h2 className="flex items-center gap-2 text-sm font-semibold"><span className="h-2 w-2 rounded-full bg-orange-500"></span>최근 결재 문서</h2>
-            <Link href="/approvals" className="text-[10px] font-medium text-muted-foreground hover:text-primary underline">전체보기 →</Link>
+            <Link href="/approvals" className="text-[10px] font-medium text-muted-foreground hover:text-primary underline">일반기안 보기 →</Link>
           </div>
           <div className="space-y-2 flex-1">
             {data.approvals.length === 0 ? <p className="py-4 text-center text-xs font-bold text-muted-foreground">데이터가 없습니다.</p> : 

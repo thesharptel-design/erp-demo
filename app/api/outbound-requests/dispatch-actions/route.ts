@@ -15,6 +15,12 @@ type DispatchActionBody = {
   action?: DispatchActionType
   handler_user_id?: string | null
   note?: string | null
+  line_overrides?: Array<{
+    req_item_id?: number
+    selected_lot?: string | null
+    selected_sn?: string | null
+    selected_exp?: string | null
+  }>
 }
 
 type DispatchState = 'queue' | 'assigned' | 'in_progress' | 'completed'
@@ -22,6 +28,7 @@ type DispatchState = 'queue' | 'assigned' | 'in_progress' | 'completed'
 type OutboundRequestRow = {
   id: number
   requester_id: string
+  warehouse_id: number
   status: string
   outbound_completed: boolean
   approval_doc_id: number | null
@@ -29,12 +36,48 @@ type OutboundRequestRow = {
   dispatch_state: DispatchState | null
   dispatch_handler_user_id: string | null
   dispatch_handler_name: string | null
+  receipt_confirmed_at: string | null
+  receipt_confirmed_by: string | null
   updated_at: string | null
 }
 
 type ApprovalDocRow = {
   id: number
   status: string
+}
+
+type OutboundItemRow = {
+  id: number
+  item_id: number
+  qty: number
+  remarks: string | null
+  items?: {
+    is_lot_managed?: boolean | null
+    is_sn_managed?: boolean | null
+    is_exp_managed?: boolean | null
+  } | null
+}
+
+function parseOutboundItemMeta(remarks: string | null | undefined): {
+  selected_lot: string | null
+  selected_sn: string | null
+  selected_exp: string | null
+} {
+  if (!remarks) return { selected_lot: null, selected_sn: null, selected_exp: null }
+  try {
+    const parsed = JSON.parse(remarks) as {
+      selected_lot?: unknown
+      selected_sn?: unknown
+      selected_exp?: unknown
+    }
+    return {
+      selected_lot: typeof parsed.selected_lot === 'string' ? parsed.selected_lot : null,
+      selected_sn: typeof parsed.selected_sn === 'string' ? parsed.selected_sn : null,
+      selected_exp: typeof parsed.selected_exp === 'string' ? parsed.selected_exp : null,
+    }
+  } catch {
+    return { selected_lot: null, selected_sn: null, selected_exp: null }
+  }
 }
 
 type AppUserPermissionRow = Pick<
@@ -81,7 +124,8 @@ export async function POST(request: NextRequest) {
   try {
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-    if (!supabaseUrl || !serviceRoleKey) {
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+    if (!supabaseUrl || !serviceRoleKey || !anonKey) {
       return NextResponse.json({ error: '서버 환경변수가 설정되지 않았습니다.' }, { status: 500 })
     }
 
@@ -94,6 +138,14 @@ export async function POST(request: NextRequest) {
       auth: { autoRefreshToken: false, persistSession: false },
     })
     const jwt = authHeader.replace('Bearer ', '')
+    const authedClient = createClient(supabaseUrl, anonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      global: {
+        headers: {
+          Authorization: `Bearer ${jwt}`,
+        },
+      },
+    })
 
     const {
       data: { user },
@@ -156,8 +208,9 @@ export async function POST(request: NextRequest) {
     const { data: requestRow, error: requestError } = await adminClient
       .from('outbound_requests')
       .select(`
-        id, requester_id, status, outbound_completed, approval_doc_id, remarks, updated_at,
-        dispatch_state, dispatch_handler_user_id, dispatch_handler_name
+        id, requester_id, warehouse_id, status, outbound_completed, approval_doc_id, remarks, updated_at,
+        dispatch_state, dispatch_handler_user_id, dispatch_handler_name,
+        receipt_confirmed_at, receipt_confirmed_by
       `)
       .eq('id', requestId)
       .single()
@@ -201,7 +254,10 @@ export async function POST(request: NextRequest) {
     let nextAssignedAt: string | null = null
     let nextStartedAt: string | null = null
     let nextCompletedAt: string | null = null
+    let nextReceiptConfirmedAt: string | null = outboundRequest.receipt_confirmed_at
+    let nextReceiptConfirmedBy: string | null = outboundRequest.receipt_confirmed_by
     let historyComment = note ?? ''
+    let fulfilledByRpc = false
 
     if (action === 'assign' || action === 'reassign') {
       const targetHandlerId = asTrimmed(body.handler_user_id)
@@ -232,6 +288,8 @@ export async function POST(request: NextRequest) {
       nextAssignedAt = now
       nextStartedAt = null
       nextCompletedAt = null
+      nextReceiptConfirmedAt = null
+      nextReceiptConfirmedBy = null
       historyComment =
         action === 'assign'
           ? `담당자 지정: ${nextHandlerName ?? nextHandlerId}${note ? ` / ${note}` : ''}`
@@ -248,6 +306,8 @@ export async function POST(request: NextRequest) {
       nextAssignedAt = null
       nextStartedAt = null
       nextCompletedAt = null
+      nextReceiptConfirmedAt = null
+      nextReceiptConfirmedBy = null
       historyComment = `담당자 회수${note ? ` / ${note}` : ''}`
     } else if (action === 'execute_self') {
       nextStatus = 'approved'
@@ -258,6 +318,8 @@ export async function POST(request: NextRequest) {
       nextAssignedAt = now
       nextStartedAt = now
       nextCompletedAt = null
+      nextReceiptConfirmedAt = null
+      nextReceiptConfirmedBy = null
       historyComment = `직접 처리 시작: ${nextHandlerName ?? currentUser.id}${note ? ` / ${note}` : ''}`
     } else if (action === 'complete') {
       const handlerId = outboundRequest.dispatch_handler_user_id
@@ -268,6 +330,89 @@ export async function POST(request: NextRequest) {
       if (outboundRequest.status === 'completed' || outboundRequest.outbound_completed) {
         return NextResponse.json({ error: '이미 완료된 요청입니다.' }, { status: 409 })
       }
+      if (outboundRequest.dispatch_state !== 'in_progress') {
+        return NextResponse.json({ error: '출고시작 이후 인수확인중 상태에서만 완료할 수 있습니다.' }, { status: 409 })
+      }
+      if (!outboundRequest.receipt_confirmed_at || !outboundRequest.receipt_confirmed_by) {
+        return NextResponse.json(
+          { error: '인수확인이 필요합니다. 출고결재문서함에서 수령확인을 먼저 진행해 주세요.' },
+          { status: 409 }
+        )
+      }
+      const { data: itemRows, error: itemErr } = await adminClient
+        .from('outbound_request_items')
+        .select('id, item_id, qty, remarks, items(is_lot_managed, is_sn_managed, is_exp_managed)')
+        .eq('outbound_request_id', outboundRequest.id)
+      if (itemErr) {
+        return NextResponse.json({ error: itemErr.message }, { status: 500 })
+      }
+      const normalizedItems = (itemRows ?? []) as OutboundItemRow[]
+      const overrideMap = new Map<number, { selected_lot: string | null; selected_sn: string | null; selected_exp: string | null }>()
+      for (const row of body.line_overrides ?? []) {
+        const reqItemId = Number(row.req_item_id ?? 0)
+        if (!Number.isInteger(reqItemId) || reqItemId <= 0) continue
+        overrideMap.set(reqItemId, {
+          selected_lot: asTrimmed(row.selected_lot),
+          selected_sn: asTrimmed(row.selected_sn),
+          selected_exp: asTrimmed(row.selected_exp),
+        })
+      }
+      if (normalizedItems.length === 0) {
+        return NextResponse.json({ error: '출고 품목이 없어 완료 처리할 수 없습니다.' }, { status: 409 })
+      }
+      const lines: Array<{ inventory_id: number; item_id: number; qty: number }> = []
+      for (const row of normalizedItems) {
+        const itemId = Number(row.item_id)
+        const qty = Number(row.qty)
+        if (!Number.isFinite(itemId) || itemId <= 0 || !Number.isFinite(qty) || qty <= 0) continue
+        const baseMeta = parseOutboundItemMeta(row.remarks)
+        const override = overrideMap.get(Number(row.id))
+        const meta = {
+          selected_lot: override?.selected_lot ?? baseMeta.selected_lot,
+          selected_sn: override?.selected_sn ?? baseMeta.selected_sn,
+          selected_exp: override?.selected_exp ?? baseMeta.selected_exp,
+        }
+        const itemOptions = row.items ?? null
+        if (itemOptions?.is_lot_managed && !meta.selected_lot) {
+          return NextResponse.json({ error: `LOT 관리 품목 선택이 필요합니다. item_id=${itemId}` }, { status: 409 })
+        }
+        if (itemOptions?.is_sn_managed && !meta.selected_sn) {
+          return NextResponse.json({ error: `SN 관리 품목 선택이 필요합니다. item_id=${itemId}` }, { status: 409 })
+        }
+        if (itemOptions?.is_exp_managed && !meta.selected_exp) {
+          return NextResponse.json({ error: `EXP 관리 품목 선택이 필요합니다. item_id=${itemId}` }, { status: 409 })
+        }
+        let invQuery = adminClient
+          .from('inventory')
+          .select('id, current_qty')
+          .eq('warehouse_id', outboundRequest.warehouse_id)
+          .eq('item_id', itemId)
+          .limit(1)
+        if (meta.selected_lot) invQuery = invQuery.eq('lot_no', meta.selected_lot)
+        if (meta.selected_sn) invQuery = invQuery.eq('serial_no', meta.selected_sn)
+        if (meta.selected_exp) invQuery = invQuery.eq('exp_date', meta.selected_exp)
+        const { data: invRows, error: invErr } = await invQuery
+        if (invErr) return NextResponse.json({ error: invErr.message }, { status: 500 })
+        const inv = Array.isArray(invRows) ? invRows[0] : null
+        if (!inv?.id) {
+          return NextResponse.json(
+            { error: `재고 매핑 실패: item_id=${itemId} (${meta.selected_lot ?? '-'} / ${meta.selected_sn ?? '-'})` },
+            { status: 409 }
+          )
+        }
+        if (Number(inv.current_qty ?? 0) < qty) {
+          return NextResponse.json({ error: `재고 부족: item_id=${itemId}` }, { status: 409 })
+        }
+        lines.push({ inventory_id: Number(inv.id), item_id: itemId, qty })
+      }
+      const { error: rpcError } = await authedClient.rpc('execute_outbound_request_fulfillment', {
+        p_outbound_request_id: outboundRequest.id,
+        p_lines: lines,
+      })
+      if (rpcError) {
+        return NextResponse.json({ error: rpcError.message }, { status: 409 })
+      }
+      fulfilledByRpc = true
       nextStatus = 'completed'
       nextCompletedFlag = true
       nextState = 'completed'
@@ -281,26 +426,47 @@ export async function POST(request: NextRequest) {
       historyComment = `출고 완료${note ? ` / ${note}` : ''}`
     }
 
-    const outboundUpdateQuery = adminClient
-      .from('outbound_requests')
-      .update({
-        status: nextStatus,
-        outbound_completed: nextCompletedFlag,
-        remarks: note ?? outboundRequest.remarks,
-        dispatch_state: nextState,
-        dispatch_handler_user_id: nextHandlerId,
-        dispatch_handler_name: nextHandlerName,
-        dispatch_last_actor_id: currentUser.id,
-        dispatch_last_action_at: now,
-        dispatch_assigned_at: nextAssignedAt,
-        dispatch_started_at: nextStartedAt,
-        dispatch_completed_at: nextCompletedAt,
-        updated_at: now,
-      })
-
-    const outboundUpdate = await applyOutboundDispatchConcurrencyGuard(outboundUpdateQuery, outboundRequest)
-      .select('id')
-      .maybeSingle()
+    const outboundUpdate = fulfilledByRpc
+      ? await adminClient
+          .from('outbound_requests')
+          .update({
+            remarks: note ?? outboundRequest.remarks,
+            dispatch_state: nextState,
+            dispatch_handler_user_id: nextHandlerId,
+            dispatch_handler_name: nextHandlerName,
+            dispatch_last_actor_id: currentUser.id,
+            dispatch_last_action_at: now,
+            dispatch_assigned_at: nextAssignedAt,
+            dispatch_started_at: nextStartedAt,
+            dispatch_completed_at: nextCompletedAt,
+            receipt_confirmed_at: nextReceiptConfirmedAt,
+            receipt_confirmed_by: nextReceiptConfirmedBy,
+            updated_at: now,
+          })
+          .eq('id', outboundRequest.id)
+          .select('id')
+          .maybeSingle()
+      : await applyOutboundDispatchConcurrencyGuard(
+            adminClient.from('outbound_requests').update({
+              status: nextStatus,
+              outbound_completed: nextCompletedFlag,
+              remarks: note ?? outboundRequest.remarks,
+              dispatch_state: nextState,
+              dispatch_handler_user_id: nextHandlerId,
+              dispatch_handler_name: nextHandlerName,
+              dispatch_last_actor_id: currentUser.id,
+              dispatch_last_action_at: now,
+              dispatch_assigned_at: nextAssignedAt,
+              dispatch_started_at: nextStartedAt,
+              dispatch_completed_at: nextCompletedAt,
+              receipt_confirmed_at: nextReceiptConfirmedAt,
+              receipt_confirmed_by: nextReceiptConfirmedBy,
+              updated_at: now,
+            }),
+            outboundRequest
+          )
+            .select('id')
+            .maybeSingle()
 
     if (outboundUpdate.error) {
       return NextResponse.json({ error: outboundUpdate.error.message }, { status: 500 })

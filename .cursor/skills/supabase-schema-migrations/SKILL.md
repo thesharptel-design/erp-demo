@@ -11,6 +11,10 @@ description: >-
 
 # Supabase schema and migrations
 
+## Related project skill
+
+RLS 설계 원칙, 서비스 롤, 쿼리 패턴(`select` 컬럼 명시, 페이지네이션), 소프트 삭제·에러 메시지 등 **데이터 무결성·보안 관점**은 `.cursor/skills/supabase-data-integrity/SKILL.md`를 함께 따른다. 이 스킬은 마이그레이션·스키마 드리프트·MCP DDL 절차에 우선한다.
+
 ## User requirement (verbatim)
 
 db관련 마이그레이션이 있을때나 db를 직접 수정할필요가 있을때는 supabase db table scheme를 체크해서 변수의 중복이나 꼬임 누락이 없게해서 항상 최적화를 할수 있도록 해줘. 이는 빠른 속도를 위함이어서 매우 중요한 사안이야.

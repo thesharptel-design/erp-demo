@@ -45,6 +45,7 @@ type ApprovalLineLite = {
 };
 type OutboundApprovalDocLite = {
   id: number;
+  status: string | null;
   drafted_at: string | null;
   approval_lines?: ApprovalLineLite[] | null;
 };
@@ -52,6 +53,7 @@ type OutboundRequestRow = Database['public']['Tables']['outbound_requests']['Row
   app_users?: { user_name: string | null } | null;
   warehouses?: { name: string | null } | null;
   approval_doc?: OutboundApprovalDocLite | null;
+  approval_doc_title?: string | null;
   approver_line_display?: string;
   drafted_date_display?: string;
 };
@@ -218,32 +220,24 @@ export default function OutboundInstructionsPage() {
   }, []);
 
   const fetchApprovedRequests = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('outbound_requests')
-      .select(`
-        *,
-        app_users:requester_id (user_name),
-        warehouses:warehouse_id(name),
-        approval_doc:approval_doc_id (
-          id,
-          drafted_at,
-          approval_lines (
-            line_no,
-            status,
-            approver_role,
-            approver_id
-          )
-        )
-      `)
-      .in('status', ['approved', 'completed'])
-      .order('created_at', { ascending: true });
-
-    if (error || !data) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    const token = session?.access_token;
+    if (!token) {
+      setApprovedRequests([]);
+      return;
+    }
+    const response = await fetch('/api/outbound-requests/instruction-list', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
       setApprovedRequests([]);
       return;
     }
 
-    const rows = data as OutboundRequestRow[];
+    const rows = (payload as { rows?: OutboundRequestRow[] }).rows ?? [];
     const approverIds = [...new Set(
       rows
         .flatMap((row) => row.approval_doc?.approval_lines ?? [])
@@ -662,6 +656,12 @@ export default function OutboundInstructionsPage() {
   };
 
   const handleRefresh = useCallback(() => {
+    setFilterReqNo('');
+    setFilterTitle('');
+    setFilterApproverLine('');
+    setFilterState('');
+    setFilterDraftDate('');
+    setActiveBucket('pending');
     void initData();
   }, [initData]);
 
@@ -844,7 +844,10 @@ export default function OutboundInstructionsPage() {
                 >
                   {filteredVisibleRequests.map((req) => {
                     const dispatchInfo = getOutboundDispatchStatePresentation(req.dispatch_state);
-                    const titleText = (req.purpose ?? '').trim() || '(제목 없음)';
+                    const titleText =
+                      String(req.approval_doc_title ?? '').trim() ||
+                      String(req.purpose ?? '').trim() ||
+                      '(제목 없음)';
                     const panelReady = selectedRequest?.id === req.id;
                     const approverLine = (req.approver_line_display ?? '').trim() || '—';
                     const draftedDate = req.drafted_date_display ?? '-';
@@ -854,30 +857,30 @@ export default function OutboundInstructionsPage() {
                       <AccordionItem key={req.id} value={String(req.id)} className="border-0">
                         <AccordionTrigger className="px-3 py-3 hover:no-underline sm:px-4">
                           <div className="grid min-w-0 flex-1 gap-1.5 text-left md:grid-cols-[11rem_minmax(14rem,1fr)_minmax(16rem,1.1fr)_7rem_7.5rem] md:items-center md:gap-3">
-                            <button
-                              type="button"
+                            <a
+                              href={`/outbound-requests/view/${req.id}?from=instructions`}
                               className="w-fit max-w-full truncate font-mono text-left text-xs text-primary underline-offset-2 hover:underline md:text-[13px]"
                               onClick={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                openOutboundRequestDetailViewPopup(req.id);
+                                openOutboundRequestDetailViewPopup(req.id, { source: 'instructions' });
                               }}
                               title={req.req_no ?? '—'}
                             >
                               {req.req_no ?? '—'}
-                            </button>
-                            <button
-                              type="button"
+                            </a>
+                            <a
+                              href={`/outbound-requests/view/${req.id}?from=instructions`}
                               className="min-w-0 truncate text-left text-sm font-semibold text-primary underline-offset-2 hover:underline md:text-[13px]"
                               onClick={(e) => {
                                 e.preventDefault();
                                 e.stopPropagation();
-                                openOutboundRequestDetailViewPopup(req.id);
+                                openOutboundRequestDetailViewPopup(req.id, { source: 'instructions' });
                               }}
                               title={titleText}
                             >
                               {titleText}
-                            </button>
+                            </a>
                             <div className="min-w-0 break-words text-xs font-medium leading-relaxed text-foreground md:text-[12px]">
                               {approverLine}
                             </div>
@@ -934,6 +937,7 @@ export default function OutboundInstructionsPage() {
                             canExecuteAny={canExecuteAny}
                             canRecallByTeacherPolicy={canRecallByTeacherPolicy}
                             handlerOptions={handlerOptions}
+                            warehouseId={req.warehouse_id}
                             compact
                           />
 

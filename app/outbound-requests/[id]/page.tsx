@@ -6,7 +6,7 @@ export default async function OutboundRequestDetailPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ fromAttachment?: string; fromDocNo?: string; fromDocTitle?: string }>
+  searchParams: Promise<{ fromAttachment?: string; fromDocNo?: string; fromDocTitle?: string; from?: string }>
 }) {
   const supabase = await createServerSupabaseClient()
   const { id } = await params
@@ -16,5 +16,13 @@ export default async function OutboundRequestDetailPage({
     sourceDocNo: qs.fromDocNo ? String(qs.fromDocNo) : null,
     sourceTitle: qs.fromDocTitle ? String(qs.fromDocTitle) : null,
   }
-  return <OutboundDetailShared supabase={supabase} id={id} shellMode="app" attachmentFrom={attachmentFrom} />
+  return (
+    <OutboundDetailShared
+      supabase={supabase}
+      id={id}
+      shellMode="app"
+      attachmentFrom={attachmentFrom}
+      showDispatchControlBox={false}
+    />
+  )
 }

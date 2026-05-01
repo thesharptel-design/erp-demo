@@ -104,6 +104,7 @@ function NewOutboundPageInner() {
     itemOptions,
     addItemRow,
     removeItemRow,
+    notifyIfReservedSelection,
     submitForApproval,
     saveDraftNow,
     deleteDraftDocument,
@@ -230,6 +231,9 @@ function NewOutboundPageInner() {
             선택 가능한 창고가 없습니다. 창고 권한을 확인하거나 관리자에게 문의하세요.
           </DraftFormWarningBanner>
         ) : null}
+        <DraftFormWarningBanner>
+          SN/LOT/EXP 관리 품목은 기안 시 랜덤 선택됩니다. 실제 출고 단계에서 출고권자가 값을 다시 선택할 수 있습니다.
+        </DraftFormWarningBanner>
 
         <ApprovalDraftPaper
           docType="outbound_request"
@@ -394,14 +398,16 @@ function NewOutboundPageInner() {
                                       value={String(si.item_id || '')}
                                       onChange={(next) => {
                                         const nextArr = [...selectedItems]
-                                        nextArr[idx] = {
+                                        const nextLine = {
                                           ...nextArr[idx],
                                           item_id: next,
                                           selected_lot: '',
                                           selected_exp: '',
                                           selected_sn: '',
                                         }
+                                        nextArr[idx] = nextLine
                                         setSelectedItems(nextArr)
+                                        notifyIfReservedSelection(nextLine)
                                       }}
                                       options={itemOptions}
                                       placeholder="품목 선택"
@@ -413,8 +419,10 @@ function NewOutboundPageInner() {
                                         value={selectedLot}
                                         onChange={(next) => {
                                           const nextArr = [...selectedItems]
-                                          nextArr[idx] = { ...nextArr[idx], selected_lot: next }
+                                          const nextLine = { ...nextArr[idx], selected_lot: next }
+                                          nextArr[idx] = nextLine
                                           setSelectedItems(nextArr)
+                                          notifyIfReservedSelection(nextLine)
                                         }}
                                         options={lotOptions.map((v) => ({ value: v, label: `LOT: ${v}` }))}
                                         placeholder="LOT 선택(선택사항)"
@@ -427,8 +435,10 @@ function NewOutboundPageInner() {
                                         value={selectedExp}
                                         onChange={(next) => {
                                           const nextArr = [...selectedItems]
-                                          nextArr[idx] = { ...nextArr[idx], selected_exp: next }
+                                          const nextLine = { ...nextArr[idx], selected_exp: next }
+                                          nextArr[idx] = nextLine
                                           setSelectedItems(nextArr)
+                                          notifyIfReservedSelection(nextLine)
                                         }}
                                         options={expOptions.map((v) => ({ value: v, label: `EXP: ${v}` }))}
                                         placeholder="EXP 선택(선택사항)"
@@ -441,8 +451,10 @@ function NewOutboundPageInner() {
                                         value={selectedSn}
                                         onChange={(next) => {
                                           const nextArr = [...selectedItems]
-                                          nextArr[idx] = { ...nextArr[idx], selected_sn: next }
+                                          const nextLine = { ...nextArr[idx], selected_sn: next }
+                                          nextArr[idx] = nextLine
                                           setSelectedItems(nextArr)
+                                          notifyIfReservedSelection(nextLine)
                                         }}
                                         options={snOptions.map((v) => ({ value: v, label: `SN: ${v}` }))}
                                         placeholder="SN 선택(선택사항)"

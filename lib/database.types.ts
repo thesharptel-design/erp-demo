@@ -72,6 +72,8 @@ export type Database = {
           dispatch_assigned_at: string | null
           dispatch_started_at: string | null
           dispatch_completed_at: string | null
+          receipt_confirmed_at: string | null
+          receipt_confirmed_by: string | null
           dispatch_last_actor_id: string | null
           dispatch_last_action_at: string | null
           warehouse_id: number
