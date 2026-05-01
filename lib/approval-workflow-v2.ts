@@ -29,15 +29,31 @@ export type ApprovalWorkflowLineLike = {
   status: string | null
 }
 
-export const APPROVAL_ACTIVE_DOC_STATUSES = new Set(['submitted', 'in_review', 'in_progress'])
-export const APPROVAL_EFFECTIVE_DOC_STATUSES = new Set(['approved', 'effective'])
-export const APPROVAL_PROCESSED_LINE_STATUSES = new Set([
+export const APPROVAL_DOC_STATUSES = [
+  'draft',
+  'submitted',
+  'in_review',
+  'in_progress',
+  'approved',
+  'effective',
+  'closed',
+  'rejected',
+] as const
+
+export const APPROVAL_LINE_STATUSES = [
+  'waiting',
+  'pending',
   'confirmed',
   'approved',
   'rejected',
   'skipped',
   'cancelled',
-])
+  'invalidated',
+] as const
+
+export const APPROVAL_ACTIVE_DOC_STATUSES = new Set(['submitted', 'in_review', 'in_progress'])
+export const APPROVAL_EFFECTIVE_DOC_STATUSES = new Set(['approved', 'effective'])
+export const APPROVAL_PROCESSED_LINE_STATUSES = new Set(['confirmed', 'approved', 'rejected', 'skipped', 'cancelled'])
 
 export function sameApprovalUser(a: string | null | undefined, b: string | null | undefined): boolean {
   return String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase()

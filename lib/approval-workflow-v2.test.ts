@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  APPROVAL_DOC_STATUSES,
+  APPROVAL_LINE_STATUSES,
   findLastApproverLineForUser,
   getApprovalActionLines,
   getApprovalRejectTargets,
@@ -23,6 +25,10 @@ const lines = [
 
 describe('approval-workflow-v2', () => {
   it('classifies document and line states', () => {
+    expect(APPROVAL_DOC_STATUSES).toContain('effective')
+    expect(APPROVAL_DOC_STATUSES).toContain('closed')
+    expect(APPROVAL_LINE_STATUSES).toContain('confirmed')
+    expect(APPROVAL_LINE_STATUSES).toContain('skipped')
     expect(isApprovalActiveDoc('submitted')).toBe(true)
     expect(isApprovalActiveDoc('effective')).toBe(false)
     expect(isApprovalEffectiveDoc('effective')).toBe(true)
