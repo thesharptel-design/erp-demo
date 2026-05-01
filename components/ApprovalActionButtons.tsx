@@ -4,21 +4,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import type { ApprovalDocLike, ApprovalLineLike } from '@/lib/approval-status'
+import { getApprovalRoleLabel } from '@/lib/approval-roles'
 import {
-  getApprovalRoleLabel,
-  isFinalApprovalRole,
-  isPostCooperatorRole,
-  isPreCooperatorRole,
-  normalizeApprovalRole,
-} from '@/lib/approval-roles'
-import {
-  getApprovalActionLines,
-  getApprovalRejectTargets,
-  isApprovalActionLineRole,
-  isApprovalActiveDoc,
-  isApprovalEffectiveDoc,
-  isApprovalProcessedLine,
-  sameApprovalUser,
+  getApprovalActionAvailability,
   type ApprovalWorkflowAction,
 } from '@/lib/approval-workflow-v2'
 import { useSingleSubmit } from '@/hooks/useSingleSubmit'
@@ -73,10 +61,6 @@ function formatClientError(e: unknown): string {
     if (typeof msg === 'string' && msg.trim()) return msg
   }
   return '처리 중 오류가 발생했습니다.'
-}
-
-function getActionFlow(lines: FlowLine[]) {
-  return getApprovalActionLines(lines.filter((line) => isApprovalActionLineRole(line.approver_role)))
 }
 
 function getRoleButtonClass(kind: 'primary' | 'success' | 'danger' | 'warning' | 'neutral') {
@@ -154,33 +138,23 @@ export default function ApprovalActionButtons({
 
   if (!currentUserId) return null
 
-  const isWriter = sameApprovalUser(doc.writer_id, currentUserId)
-  const actionFlow = getActionFlow(orderedFlow)
-  const pendingLine = actionFlow.find((line) => line.status === 'pending') ?? null
-  const myPendingLine = pendingLine && sameApprovalUser(pendingLine.approver_id, currentUserId) ? pendingLine : null
-  const hasProcessedLine = actionFlow.some((line) => isApprovalProcessedLine(line))
-  const lastApproverLine = actionFlow.filter((line) => isFinalApprovalRole(line.approver_role)).at(-1) ?? null
-  const isLastApprover = Boolean(lastApproverLine && sameApprovalUser(lastApproverLine.approver_id, currentUserId))
-  const activeDoc = isApprovalActiveDoc(doc.status)
-  const effectiveDoc = isApprovalEffectiveDoc(doc.status)
-  const canRecall = isWriter && activeDoc && !hasProcessedLine
-  const canRequestCancel = isWriter && activeDoc && hasProcessedLine
-  const canPreConfirm = Boolean(myPendingLine && isPreCooperatorRole(myPendingLine.approver_role) && activeDoc)
-  const canApprove = Boolean(myPendingLine && isFinalApprovalRole(myPendingLine.approver_role) && activeDoc)
-  const canOverrideApprove = activeDoc && isLastApprover
-  const canReject = activeDoc && (canApprove || isLastApprover)
-  const canPostConfirm = effectiveDoc && actionFlow.some(
-    (line) =>
-      sameApprovalUser(line.approver_id, currentUserId) &&
-      isPostCooperatorRole(line.approver_role) &&
-      (line.status === 'pending' || line.status === 'waiting')
-  )
-  const isReferenceOnly = participants.some(
-    (participant) =>
-      sameApprovalUser(participant.user_id, currentUserId) && normalizeApprovalRole(participant.role) === 'reference'
-  )
-
-  const rejectTargets = getApprovalRejectTargets(actionFlow, myPendingLine ?? lastApproverLine)
+  const {
+    isWriter,
+    canRecall,
+    canRequestCancel,
+    canPreConfirm,
+    canApprove,
+    canOverrideApprove,
+    canReject,
+    canPostConfirm,
+    isReferenceOnly,
+    rejectTargets,
+  } = getApprovalActionAvailability({
+    doc,
+    lines: orderedFlow,
+    participants,
+    currentUserId,
+  })
 
   async function runAction(action: ApprovalWorkflowAction, extra?: Record<string, unknown>) {
     if (!actionsAllowed) {

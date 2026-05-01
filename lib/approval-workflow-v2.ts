@@ -29,6 +29,28 @@ export type ApprovalWorkflowLineLike = {
   status: string | null
 }
 
+export type ApprovalWorkflowParticipantLike = {
+  user_id: string | null
+  role: string | null
+}
+
+export type ApprovalActionAvailability<T extends ApprovalWorkflowLineLike = ApprovalWorkflowLineLike> = {
+  actionFlow: T[]
+  pendingLine: T | null
+  myPendingLine: T | null
+  lastApproverLine: T | null
+  rejectTargets: T[]
+  isWriter: boolean
+  isReferenceOnly: boolean
+  canRecall: boolean
+  canRequestCancel: boolean
+  canPreConfirm: boolean
+  canApprove: boolean
+  canOverrideApprove: boolean
+  canReject: boolean
+  canPostConfirm: boolean
+}
+
 export const APPROVAL_DOC_STATUSES = [
   'draft',
   'submitted',
@@ -125,4 +147,60 @@ export function getApprovalRejectTargets<T extends ApprovalWorkflowLineLike>(
 export function isApprovalActionLineRole(role: string | null | undefined): boolean {
   const normalized = normalizeApprovalRole(role)
   return normalized === 'pre_cooperator' || normalized === 'approver' || normalized === 'post_cooperator'
+}
+
+export function getApprovalActionAvailability<T extends ApprovalWorkflowLineLike>(input: {
+  doc: ApprovalWorkflowDocLike & { writer_id?: string | null }
+  lines: T[]
+  participants?: ApprovalWorkflowParticipantLike[]
+  currentUserId: string | null | undefined
+}): ApprovalActionAvailability<T> {
+  const currentUserId = input.currentUserId
+  const actionFlow = getApprovalActionLines(input.lines.filter((line) => isApprovalActionLineRole(line.approver_role)))
+  const pendingLine = actionFlow.find((line) => line.status === 'pending') ?? null
+  const myPendingLine =
+    pendingLine && sameApprovalUser(pendingLine.approver_id, currentUserId) ? pendingLine : null
+  const hasProcessedLine = actionFlow.some((line) => isApprovalProcessedLine(line))
+  const lastApproverLine = actionFlow.filter((line) => isFinalApprovalRole(line.approver_role)).at(-1) ?? null
+  const isLastApprover = Boolean(lastApproverLine && sameApprovalUser(lastApproverLine.approver_id, currentUserId))
+  const activeDoc = isApprovalActiveDoc(input.doc)
+  const effectiveDoc = isApprovalEffectiveDoc(input.doc)
+  const isWriter = sameApprovalUser(input.doc.writer_id, currentUserId)
+  const canRecall = isWriter && activeDoc && !hasProcessedLine
+  const canRequestCancel = isWriter && activeDoc && hasProcessedLine
+  const canPreConfirm = Boolean(myPendingLine && isPreCooperatorRole(myPendingLine.approver_role) && activeDoc)
+  const canApprove = Boolean(myPendingLine && isFinalApprovalRole(myPendingLine.approver_role) && activeDoc)
+  const canOverrideApprove = activeDoc && isLastApprover
+  const canReject = activeDoc && (canApprove || isLastApprover)
+  const canPostConfirm =
+    effectiveDoc &&
+    actionFlow.some(
+      (line) =>
+        sameApprovalUser(line.approver_id, currentUserId) &&
+        isPostCooperatorRole(line.approver_role) &&
+        (line.status === 'pending' || line.status === 'waiting')
+    )
+  const isReferenceOnly = Boolean(
+    input.participants?.some(
+      (participant) =>
+        sameApprovalUser(participant.user_id, currentUserId) && normalizeApprovalRole(participant.role) === 'reference'
+    )
+  )
+
+  return {
+    actionFlow,
+    pendingLine,
+    myPendingLine,
+    lastApproverLine,
+    rejectTargets: getApprovalRejectTargets(actionFlow, myPendingLine ?? lastApproverLine),
+    isWriter,
+    isReferenceOnly,
+    canRecall,
+    canRequestCancel,
+    canPreConfirm,
+    canApprove,
+    canOverrideApprove,
+    canReject,
+    canPostConfirm,
+  }
 }

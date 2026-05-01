@@ -81,6 +81,7 @@ Run this with one general draft and one outbound request draft.
 - If old rows have `reviewer`, the app treats them as `reference`.
 - The server endpoint is the authority for action permission; UI hiding is only convenience.
 - Shared workflow helpers are the source of truth for active/effective document states, processed line states, current line lookup, final approver lookup, and rejection targets.
+- Approval button visibility now uses the shared workflow helper, so UI exposure and server-side workflow rules are easier to keep aligned.
 - DB status constraints now mirror the v2 workflow status lists in `lib/approval-workflow-v2.ts`.
 - Notification fanout should not be allowed to make a valid approval mutation fail.
 - Approval action notifications now use the signed-in user's JWT client for RPC fanout, not the service-role client.
