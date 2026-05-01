@@ -11,6 +11,16 @@ import {
   isPreCooperatorRole,
   normalizeApprovalRole,
 } from '@/lib/approval-roles'
+import {
+  getApprovalActionLines,
+  getApprovalRejectTargets,
+  isApprovalActionLineRole,
+  isApprovalActiveDoc,
+  isApprovalEffectiveDoc,
+  isApprovalProcessedLine,
+  sameApprovalUser,
+  type ApprovalWorkflowAction,
+} from '@/lib/approval-workflow-v2'
 import { useSingleSubmit } from '@/hooks/useSingleSubmit'
 
 type ApprovalParticipantLike = {
@@ -28,19 +38,6 @@ type FlowLine = {
   acted_at?: string | null
   opinion?: string | null
 }
-
-type ApiAction =
-  | 'recall_before_first_action'
-  | 'request_cancel_after_action'
-  | 'confirm_pre_cooperation'
-  | 'approve_document'
-  | 'override_approve_document'
-  | 'reject_document'
-  | 'confirm_post_cooperation'
-
-const ACTIVE_DOC_STATUSES = new Set(['submitted', 'in_review', 'in_progress'])
-const EFFECTIVE_DOC_STATUSES = new Set(['approved', 'effective'])
-const PROCESSED_LINE_STATUSES = new Set(['confirmed', 'approved', 'rejected', 'skipped', 'cancelled'])
 
 const TOOLTIP = {
   recall:
@@ -78,25 +75,8 @@ function formatClientError(e: unknown): string {
   return '처리 중 오류가 발생했습니다.'
 }
 
-function sameUser(a: string | null | undefined, b: string | null | undefined) {
-  return String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase()
-}
-
-function isActiveStatus(status: string) {
-  return ACTIVE_DOC_STATUSES.has(String(status ?? ''))
-}
-
-function isEffectiveStatus(status: string) {
-  return EFFECTIVE_DOC_STATUSES.has(String(status ?? ''))
-}
-
 function getActionFlow(lines: FlowLine[]) {
-  return [...lines]
-    .filter((line) => {
-      const role = normalizeApprovalRole(line.approver_role)
-      return role === 'pre_cooperator' || role === 'approver' || role === 'post_cooperator'
-    })
-    .sort((a, b) => a.line_no - b.line_no)
+  return getApprovalActionLines(lines.filter((line) => isApprovalActionLineRole(line.approver_role)))
 }
 
 function getRoleButtonClass(kind: 'primary' | 'success' | 'danger' | 'warning' | 'neutral') {
@@ -174,15 +154,15 @@ export default function ApprovalActionButtons({
 
   if (!currentUserId) return null
 
-  const isWriter = sameUser(doc.writer_id, currentUserId)
+  const isWriter = sameApprovalUser(doc.writer_id, currentUserId)
   const actionFlow = getActionFlow(orderedFlow)
   const pendingLine = actionFlow.find((line) => line.status === 'pending') ?? null
-  const myPendingLine = pendingLine && sameUser(pendingLine.approver_id, currentUserId) ? pendingLine : null
-  const hasProcessedLine = actionFlow.some((line) => PROCESSED_LINE_STATUSES.has(line.status))
+  const myPendingLine = pendingLine && sameApprovalUser(pendingLine.approver_id, currentUserId) ? pendingLine : null
+  const hasProcessedLine = actionFlow.some((line) => isApprovalProcessedLine(line))
   const lastApproverLine = actionFlow.filter((line) => isFinalApprovalRole(line.approver_role)).at(-1) ?? null
-  const isLastApprover = Boolean(lastApproverLine && sameUser(lastApproverLine.approver_id, currentUserId))
-  const activeDoc = isActiveStatus(doc.status)
-  const effectiveDoc = isEffectiveStatus(doc.status)
+  const isLastApprover = Boolean(lastApproverLine && sameApprovalUser(lastApproverLine.approver_id, currentUserId))
+  const activeDoc = isApprovalActiveDoc(doc.status)
+  const effectiveDoc = isApprovalEffectiveDoc(doc.status)
   const canRecall = isWriter && activeDoc && !hasProcessedLine
   const canRequestCancel = isWriter && activeDoc && hasProcessedLine
   const canPreConfirm = Boolean(myPendingLine && isPreCooperatorRole(myPendingLine.approver_role) && activeDoc)
@@ -191,23 +171,18 @@ export default function ApprovalActionButtons({
   const canReject = activeDoc && (canApprove || isLastApprover)
   const canPostConfirm = effectiveDoc && actionFlow.some(
     (line) =>
-      sameUser(line.approver_id, currentUserId) &&
+      sameApprovalUser(line.approver_id, currentUserId) &&
       isPostCooperatorRole(line.approver_role) &&
       (line.status === 'pending' || line.status === 'waiting')
   )
   const isReferenceOnly = participants.some(
     (participant) =>
-      sameUser(participant.user_id, currentUserId) && normalizeApprovalRole(participant.role) === 'reference'
+      sameApprovalUser(participant.user_id, currentUserId) && normalizeApprovalRole(participant.role) === 'reference'
   )
 
-  const rejectTargets = actionFlow.filter((line) => {
-    const actorLine = myPendingLine ?? lastApproverLine
-    if (!actorLine) return false
-    if (line.line_no >= actorLine.line_no) return false
-    return line.status === 'confirmed' || line.status === 'approved'
-  })
+  const rejectTargets = getApprovalRejectTargets(actionFlow, myPendingLine ?? lastApproverLine)
 
-  async function runAction(action: ApiAction, extra?: Record<string, unknown>) {
+  async function runAction(action: ApprovalWorkflowAction, extra?: Record<string, unknown>) {
     if (!actionsAllowed) {
       alert(actionDeniedMessage)
       return

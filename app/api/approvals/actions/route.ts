@@ -1,25 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import {
-  isApprovalActionRole,
   isFinalApprovalRole,
   isPostCooperatorRole,
   isPreCooperatorRole,
-  normalizeApprovalRole,
 } from '@/lib/approval-roles'
+import {
+  findLastApproverLineForUser,
+  getApprovalActionLines,
+  getNextWaitingBeforePost,
+  getPendingApprovalWorkflowLine,
+  getPostCooperatorWorkflowLines,
+  isApprovalActiveDoc,
+  isApprovalEffectiveDoc,
+  isApprovalProcessedLine,
+  sameApprovalUser,
+  type ApprovalRejectType,
+  type ApprovalWorkflowAction,
+} from '@/lib/approval-workflow-v2'
 
 type AdminClient = SupabaseClient<any, 'public', 'public'>
-
-type ApprovalAction =
-  | 'recall_before_first_action'
-  | 'request_cancel_after_action'
-  | 'confirm_pre_cooperation'
-  | 'approve_document'
-  | 'override_approve_document'
-  | 'reject_document'
-  | 'confirm_post_cooperation'
-
-type RejectType = 'direct' | 'sequential' | 'targeted'
 
 type ApprovalDocRow = {
   id: number
@@ -43,10 +43,6 @@ type ApprovalLineRow = {
   opinion: string | null
 }
 
-const ACTIVE_DOC_STATUSES = new Set(['submitted', 'in_review', 'in_progress'])
-const EFFECTIVE_DOC_STATUSES = new Set(['approved', 'effective'])
-const PROCESSED_LINE_STATUSES = new Set(['confirmed', 'approved', 'rejected', 'skipped', 'cancelled'])
-
 function jsonError(message: string, status = 400) {
   return NextResponse.json({ success: false, error: message }, { status })
 }
@@ -57,18 +53,6 @@ function asTrimmed(value: unknown): string {
 
 function lineActorId(line: ApprovalLineRow): string {
   return String(line.approver_id ?? '').toLowerCase()
-}
-
-function sameUser(a: string | null | undefined, b: string | null | undefined): boolean {
-  return String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase()
-}
-
-function isActiveDoc(doc: ApprovalDocRow): boolean {
-  return ACTIVE_DOC_STATUSES.has(String(doc.status ?? ''))
-}
-
-function isEffectiveDoc(doc: ApprovalDocRow): boolean {
-  return EFFECTIVE_DOC_STATUSES.has(String(doc.status ?? ''))
 }
 
 async function getCurrentUser(request: NextRequest, adminClient: AdminClient) {
@@ -204,32 +188,8 @@ async function updateLine(
   if (error) throw error
 }
 
-function getActionLines(lines: ApprovalLineRow[]) {
-  return [...lines]
-    .filter((line) => isApprovalActionRole(line.approver_role))
-    .sort((a, b) => a.line_no - b.line_no)
-}
-
-function getPendingLine(lines: ApprovalLineRow[]) {
-  return getActionLines(lines).find((line) => line.status === 'pending') ?? null
-}
-
-function getNextWaitingBeforePost(lines: ApprovalLineRow[], afterLineNo: number) {
-  return getActionLines(lines).find((line) => {
-    if (line.line_no <= afterLineNo) return false
-    if (line.status !== 'waiting') return false
-    return isPreCooperatorRole(line.approver_role) || isFinalApprovalRole(line.approver_role)
-  }) ?? null
-}
-
-function getPostCooperatorLines(lines: ApprovalLineRow[]) {
-  return [...lines]
-    .filter((line) => isPostCooperatorRole(line.approver_role))
-    .sort((a, b) => a.line_no - b.line_no)
-}
-
 async function markPostCooperatorsPending(adminClient: AdminClient, docId: number, lines: ApprovalLineRow[]) {
-  const postLines = getPostCooperatorLines(lines).filter((line) => line.status === 'waiting')
+  const postLines = getPostCooperatorWorkflowLines(lines).filter((line) => line.status === 'waiting')
   if (postLines.length === 0) return
   const { error } = await adminClient
     .from('approval_lines')
@@ -237,13 +197,6 @@ async function markPostCooperatorsPending(adminClient: AdminClient, docId: numbe
     .eq('approval_doc_id', docId)
     .in('id', postLines.map((line) => line.id))
   if (error) throw error
-}
-
-function findLastApproverLineForUser(lines: ApprovalLineRow[], userId: string) {
-  const approvers = getActionLines(lines).filter((line) => isFinalApprovalRole(line.approver_role))
-  const lastApprover = approvers[approvers.length - 1] ?? null
-  if (!lastApprover || !sameUser(lastApprover.approver_id, userId)) return null
-  return lastApprover
 }
 
 async function loadDocBundle(adminClient: AdminClient, docId: number) {
@@ -283,9 +236,9 @@ export async function POST(request: NextRequest) {
 
   const body = (await request.json().catch(() => ({}))) as {
     docId?: number
-    action?: ApprovalAction
+    action?: ApprovalWorkflowAction
     opinion?: string | null
-    rejectType?: RejectType | null
+    rejectType?: ApprovalRejectType | null
     targetLineNo?: number | null
   }
   const docId = Number(body.docId ?? 0)
@@ -301,13 +254,13 @@ export async function POST(request: NextRequest) {
     const actorIdLower = actorId.toLowerCase()
     const now = new Date().toISOString()
     const title = asTrimmed(doc.title) || asTrimmed(doc.doc_no) || '결재 문서'
-    const pendingLine = getPendingLine(lines)
-    const isWriter = sameUser(doc.writer_id, actorId)
+    const pendingLine = getPendingApprovalWorkflowLine(lines)
+    const isWriter = sameApprovalUser(doc.writer_id, actorId)
 
     if (action === 'recall_before_first_action') {
       if (!isWriter) return jsonError('기안자만 기안회수를 할 수 있습니다.', 403)
-      if (!isActiveDoc(doc)) return jsonError('진행중 문서만 회수할 수 있습니다.', 409)
-      const hasProcessed = lines.some((line) => PROCESSED_LINE_STATUSES.has(line.status))
+      if (!isApprovalActiveDoc(doc)) return jsonError('진행중 문서만 회수할 수 있습니다.', 409)
+      const hasProcessed = lines.some((line) => isApprovalProcessedLine(line))
       if (hasProcessed) return jsonError('이미 협조/결재가 시작되어 회수할 수 없습니다. 취소요청을 사용하세요.', 409)
 
       await updateDocStatus(adminClient, doc, {
@@ -333,7 +286,7 @@ export async function POST(request: NextRequest) {
 
     if (action === 'request_cancel_after_action') {
       if (!isWriter) return jsonError('기안자만 취소요청을 보낼 수 있습니다.', 403)
-      if (!isActiveDoc(doc)) return jsonError('진행중 문서에서만 취소요청을 보낼 수 있습니다.', 409)
+      if (!isApprovalActiveDoc(doc)) return jsonError('진행중 문서에서만 취소요청을 보낼 수 있습니다.', 409)
       const reason = asTrimmed(body.opinion)
       if (reason.length < 2) return jsonError('취소요청 사유를 입력하세요.')
       const hasProcessed = lines.some((line) => line.status === 'confirmed' || line.status === 'approved')
@@ -359,7 +312,7 @@ export async function POST(request: NextRequest) {
 
     if (action === 'confirm_pre_cooperation') {
       if (!pendingLine) return jsonError('현재 처리할 결재라인이 없습니다.', 409)
-      if (!sameUser(pendingLine.approver_id, actorId)) return jsonError('현재 본인 차례가 아닙니다.', 403)
+      if (!sameApprovalUser(pendingLine.approver_id, actorId)) return jsonError('현재 본인 차례가 아닙니다.', 403)
       if (!isPreCooperatorRole(pendingLine.approver_role)) {
         return jsonError('사전협조자만 협조확인을 할 수 있습니다.', 403)
       }
@@ -396,7 +349,7 @@ export async function POST(request: NextRequest) {
 
     if (action === 'approve_document') {
       if (!pendingLine) return jsonError('현재 처리할 결재라인이 없습니다.', 409)
-      if (!sameUser(pendingLine.approver_id, actorId)) return jsonError('현재 본인 차례가 아닙니다.', 403)
+      if (!sameApprovalUser(pendingLine.approver_id, actorId)) return jsonError('현재 본인 차례가 아닙니다.', 403)
       if (!isFinalApprovalRole(pendingLine.approver_role)) return jsonError('결재자만 승인할 수 있습니다.', 403)
 
       await updateLine(adminClient, pendingLine, {
@@ -423,7 +376,7 @@ export async function POST(request: NextRequest) {
         await markPostCooperatorsPending(adminClient, doc.id, lines)
         await updateDocStatus(adminClient, doc, {
           status: 'effective',
-          current_line_no: getPostCooperatorLines(lines)[0]?.line_no ?? null,
+          current_line_no: getPostCooperatorWorkflowLines(lines)[0]?.line_no ?? null,
           completed_at: now,
         })
         await fanoutQuiet(adminClient, {
@@ -452,11 +405,11 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'override_approve_document') {
-      if (!isActiveDoc(doc)) return jsonError('진행중 문서에서만 전결승인할 수 있습니다.', 409)
+      if (!isApprovalActiveDoc(doc)) return jsonError('진행중 문서에서만 전결승인할 수 있습니다.', 409)
       const actorLine = findLastApproverLineForUser(lines, actorId)
       if (!actorLine) return jsonError('최종 결재자만 전결승인할 수 있습니다.', 403)
 
-      const skipLines = getActionLines(lines).filter((line) => {
+      const skipLines = getApprovalActionLines(lines).filter((line) => {
         if (line.id === actorLine.id) return false
         if (isPostCooperatorRole(line.approver_role)) return false
         return line.status === 'waiting' || line.status === 'pending'
@@ -486,7 +439,7 @@ export async function POST(request: NextRequest) {
       await markPostCooperatorsPending(adminClient, doc.id, lines)
       await updateDocStatus(adminClient, doc, {
         status: 'effective',
-        current_line_no: getPostCooperatorLines(lines)[0]?.line_no ?? null,
+        current_line_no: getPostCooperatorWorkflowLines(lines)[0]?.line_no ?? null,
         completed_at: now,
       })
       await logHistory(adminClient, {
@@ -507,7 +460,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'reject_document') {
-      if (!isActiveDoc(doc)) return jsonError('진행중 문서에서만 반려할 수 있습니다.', 409)
+      if (!isApprovalActiveDoc(doc)) return jsonError('진행중 문서에서만 반려할 수 있습니다.', 409)
       const rejectType = body.rejectType ?? 'direct'
       const actorLine =
         pendingLine && lineActorId(pendingLine) === actorIdLower && isFinalApprovalRole(pendingLine.approver_role)
@@ -578,9 +531,9 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'confirm_post_cooperation') {
-      if (!isEffectiveDoc(doc)) return jsonError('최종승인 후 사후확인만 가능합니다.', 409)
-      const myPostLine = getPostCooperatorLines(lines).find(
-        (line) => sameUser(line.approver_id, actorId) && (line.status === 'pending' || line.status === 'waiting')
+      if (!isApprovalEffectiveDoc(doc)) return jsonError('최종승인 후 사후확인만 가능합니다.', 409)
+      const myPostLine = getPostCooperatorWorkflowLines(lines).find(
+        (line) => sameApprovalUser(line.approver_id, actorId) && (line.status === 'pending' || line.status === 'waiting')
       )
       if (!myPostLine) return jsonError('확인할 사후협조 차례가 없습니다.', 403)
       await updateLine(adminClient, myPostLine, {
@@ -588,7 +541,7 @@ export async function POST(request: NextRequest) {
         acted_at: now,
         opinion: asTrimmed(body.opinion) || null,
       })
-      const postLines = getPostCooperatorLines(lines)
+      const postLines = getPostCooperatorWorkflowLines(lines)
       const allPostDone = postLines.every((line) => line.id === myPostLine.id || line.status === 'confirmed')
       await updateDocStatus(adminClient, doc, {
         status: allPostDone ? 'closed' : 'effective',
