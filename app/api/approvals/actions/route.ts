@@ -18,6 +18,18 @@ import {
   type ApprovalRejectType,
   type ApprovalWorkflowAction,
 } from '@/lib/approval-workflow-v2'
+import {
+  approvalDocumentInboxPath,
+  fanoutWorkApprovalNotification,
+  workApprovalCancelRequestDedupeKey,
+  workApprovalFinalDedupeKey,
+  workApprovalLineTurnDedupeKey,
+  workApprovalOverrideApproveDedupeKey,
+  workApprovalPostConfirmRequestDedupeKey,
+  workApprovalRejectDedupeKey,
+  type WorkApprovalRecipientMode,
+  type WorkFanoutRpcClient,
+} from '@/lib/work-approval-notifications'
 
 type AdminClient = SupabaseClient<any, 'public', 'public'>
 
@@ -55,10 +67,15 @@ function lineActorId(line: ApprovalLineRow): string {
   return String(line.approver_id ?? '').toLowerCase()
 }
 
-async function getCurrentUser(request: NextRequest, adminClient: AdminClient) {
+function getBearerToken(request: NextRequest) {
   const authHeader = request.headers.get('Authorization')
   if (!authHeader?.startsWith('Bearer ')) return null
-  const jwt = authHeader.replace('Bearer ', '')
+  return authHeader.replace('Bearer ', '')
+}
+
+async function getCurrentUser(request: NextRequest, adminClient: AdminClient) {
+  const jwt = getBearerToken(request)
+  if (!jwt) return null
   const {
     data: { user },
     error,
@@ -124,26 +141,27 @@ async function logHistory(
 }
 
 async function fanoutQuiet(
-  adminClient: AdminClient,
+  supabase: WorkFanoutRpcClient,
   input: {
     actorId: string
     docId: number
-    recipientMode: string
+    recipientMode: WorkApprovalRecipientMode
     type: string
     title: string
+    dedupeKey: string
     lineNo?: number | null
   }
 ) {
   try {
-    await adminClient.rpc('fanout_work_approval_notification', {
-      p_actor_id: input.actorId,
-      p_approval_doc_id: input.docId,
-      p_recipient_mode: input.recipientMode,
-      p_type: input.type,
-      p_title: input.title,
-      p_target_url: `/approvals/${input.docId}`,
-      p_dedupe_key: null,
-      p_payload: {
+    await fanoutWorkApprovalNotification(supabase, {
+      actorId: input.actorId,
+      approvalDocId: input.docId,
+      recipientMode: input.recipientMode,
+      type: input.type,
+      title: input.title,
+      targetUrl: approvalDocumentInboxPath(input.docId),
+      dedupeKey: input.dedupeKey,
+      payload: {
         approval_doc_id: input.docId,
         line_no: input.lineNo ?? null,
       },
@@ -223,12 +241,24 @@ async function loadDocBundle(adminClient: AdminClient, docId: number) {
 export async function POST(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY
-  if (!supabaseUrl || !serviceRoleKey) {
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  if (!supabaseUrl || !serviceRoleKey || !anonKey) {
     return jsonError('서버 환경변수가 설정되지 않았습니다.', 500)
   }
 
+  const jwt = getBearerToken(request)
+  if (!jwt) return jsonError('로그인이 필요합니다.', 401)
+
   const adminClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
+  })
+  const authedClient = createClient(supabaseUrl, anonKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+    global: {
+      headers: {
+        Authorization: `Bearer ${jwt}`,
+      },
+    },
   })
 
   const user = await getCurrentUser(request, adminClient)
@@ -299,11 +329,12 @@ export async function POST(request: NextRequest) {
         comment: reason,
         dedupeKey: `doc:${doc.id}:cancel_requested_by_writer:${actorId}:${reason}`,
       })
-      await fanoutQuiet(adminClient, {
+      await fanoutQuiet(authedClient, {
         actorId,
         docId: doc.id,
         recipientMode: 'doc_current_line',
         type: 'work_approval_cancel_requested',
+        dedupeKey: workApprovalCancelRequestDedupeKey(doc.id),
         title: `기안자 취소요청: ${title}`,
         lineNo: doc.current_line_no,
       })
@@ -328,11 +359,12 @@ export async function POST(request: NextRequest) {
           status: 'in_progress',
           current_line_no: nextLine.line_no,
         })
-        await fanoutQuiet(adminClient, {
+        await fanoutQuiet(authedClient, {
           actorId,
           docId: doc.id,
           recipientMode: 'pending_lines',
           type: 'work_approval_line_turn',
+          dedupeKey: workApprovalLineTurnDedupeKey(doc.id, nextLine.line_no),
           title: `결재 대기: ${title}`,
           lineNo: nextLine.line_no,
         })
@@ -364,11 +396,12 @@ export async function POST(request: NextRequest) {
           status: 'in_progress',
           current_line_no: nextLine.line_no,
         })
-        await fanoutQuiet(adminClient, {
+        await fanoutQuiet(authedClient, {
           actorId,
           docId: doc.id,
           recipientMode: 'pending_lines',
           type: 'work_approval_line_turn',
+          dedupeKey: workApprovalLineTurnDedupeKey(doc.id, nextLine.line_no),
           title: `결재 대기: ${title}`,
           lineNo: nextLine.line_no,
         })
@@ -379,18 +412,20 @@ export async function POST(request: NextRequest) {
           current_line_no: getPostCooperatorWorkflowLines(lines)[0]?.line_no ?? null,
           completed_at: now,
         })
-        await fanoutQuiet(adminClient, {
+        await fanoutQuiet(authedClient, {
           actorId,
           docId: doc.id,
           recipientMode: 'writer',
           type: 'work_approval_completed',
+          dedupeKey: workApprovalFinalDedupeKey(doc.id),
           title: `최종승인: ${title}`,
         })
-        await fanoutQuiet(adminClient, {
+        await fanoutQuiet(authedClient, {
           actorId,
           docId: doc.id,
           recipientMode: 'pending_lines',
           type: 'work_approval_post_confirm_requested',
+          dedupeKey: workApprovalPostConfirmRequestDedupeKey(doc.id),
           title: `사후확인 요청: ${title}`,
         })
       }
@@ -449,11 +484,12 @@ export async function POST(request: NextRequest) {
         comment: body.opinion,
         dedupeKey: `doc:${doc.id}:override_approve:${actorLine.id}:${actorId}`,
       })
-      await fanoutQuiet(adminClient, {
+      await fanoutQuiet(authedClient, {
         actorId,
         docId: doc.id,
         recipientMode: 'actionable_all_except_actor',
         type: 'work_approval_override_approved',
+        dedupeKey: workApprovalOverrideApproveDedupeKey(doc.id),
         title: `전결승인: ${title}`,
       })
       return NextResponse.json({ success: true })
@@ -469,6 +505,8 @@ export async function POST(request: NextRequest) {
       if (!actorLine) return jsonError('결재자만 반려할 수 있습니다.', 403)
       const reason = asTrimmed(body.opinion)
       if (reason.length < 2) return jsonError('반려 사유를 입력하세요.')
+
+      let rejectionTargetLineNo: number | null = null
 
       if (rejectType === 'direct') {
         await updateLine(adminClient, actorLine, { status: 'rejected', acted_at: now, opinion: reason })
@@ -487,6 +525,7 @@ export async function POST(request: NextRequest) {
             ? processedBefore.find((line) => line.line_no === Number(body.targetLineNo ?? 0))
             : processedBefore[processedBefore.length - 1]
         if (!targetLine) return jsonError('되돌릴 이전 처리자를 찾을 수 없습니다.', 409)
+        rejectionTargetLineNo = targetLine.line_no
         await updateLine(adminClient, targetLine, { status: 'pending', acted_at: null })
         const laterLineIds = lines
           .filter((line) => line.line_no > targetLine.line_no)
@@ -519,13 +558,14 @@ export async function POST(request: NextRequest) {
         comment: reason,
         dedupeKey: `doc:${doc.id}:${actionType}:${actorLine.id}:${actorId}:${reason}`,
       })
-      await fanoutQuiet(adminClient, {
+      await fanoutQuiet(authedClient, {
         actorId,
         docId: doc.id,
         recipientMode: rejectType === 'direct' ? 'writer' : 'doc_current_line',
         type: 'work_approval_rejected',
+        dedupeKey: workApprovalRejectDedupeKey(doc.id, actionType, actorLine.line_no),
         title: `반려: ${title}`,
-        lineNo: doc.current_line_no,
+        lineNo: rejectionTargetLineNo,
       })
       return NextResponse.json({ success: true })
     }

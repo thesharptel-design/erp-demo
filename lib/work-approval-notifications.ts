@@ -23,6 +23,18 @@ export function workApprovalFinalDedupeKey(docId: number) {
   return `work:approval_doc:${docId}:final_approved`
 }
 
+export function workApprovalPostConfirmRequestDedupeKey(docId: number) {
+  return `work:approval_doc:${docId}:post_confirm_request_v1`
+}
+
+export function workApprovalOverrideApproveDedupeKey(docId: number) {
+  return `work:approval_doc:${docId}:override_approved_v1`
+}
+
+export function workApprovalRejectDedupeKey(docId: number, actionType: string, actorLineNo: number) {
+  return `work:approval_doc:${docId}:${actionType}:line:${actorLineNo}`
+}
+
 export function workApprovalCancelRequestDedupeKey(docId: number) {
   return `work:approval_doc:${docId}:cancel_request_v1`
 }

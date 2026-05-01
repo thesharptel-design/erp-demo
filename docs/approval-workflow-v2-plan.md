@@ -83,5 +83,8 @@ Run this with one general draft and one outbound request draft.
 - Shared workflow helpers are the source of truth for active/effective document states, processed line states, current line lookup, final approver lookup, and rejection targets.
 - DB status constraints now mirror the v2 workflow status lists in `lib/approval-workflow-v2.ts`.
 - Notification fanout should not be allowed to make a valid approval mutation fail.
+- Approval action notifications now use the signed-in user's JWT client for RPC fanout, not the service-role client.
+- Approval action notifications now use deterministic dedupe keys so retrying an action does not create duplicate event rows.
 - Sequential/targeted rejection keeps the document in progress, moves the chosen previous processed line back to `pending`, and resets later lines to `waiting`.
+- Sequential/targeted rejection notifications target the returned `pending` line instead of the stale previous `current_line_no`.
 - Post-effective cancel/correction/void should remain hidden until the client explicitly enables that policy.

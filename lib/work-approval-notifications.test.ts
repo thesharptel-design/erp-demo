@@ -7,6 +7,9 @@ import {
   workApprovalCancelWriterHandoffDedupeKey,
   workApprovalFinalDedupeKey,
   workApprovalLineTurnDedupeKey,
+  workApprovalOverrideApproveDedupeKey,
+  workApprovalPostConfirmRequestDedupeKey,
+  workApprovalRejectDedupeKey,
   workApprovalSubmitDedupeKey,
 } from '@/lib/work-approval-notifications'
 
@@ -21,6 +24,20 @@ describe('work approval notification dedupe keys', () => {
 
   it('final approved key is stable per doc', () => {
     expect(workApprovalFinalDedupeKey(99)).toBe('work:approval_doc:99:final_approved')
+  })
+
+  it('post-confirm request key is stable per doc', () => {
+    expect(workApprovalPostConfirmRequestDedupeKey(99)).toBe('work:approval_doc:99:post_confirm_request_v1')
+  })
+
+  it('override approval key is stable per doc', () => {
+    expect(workApprovalOverrideApproveDedupeKey(99)).toBe('work:approval_doc:99:override_approved_v1')
+  })
+
+  it('reject key includes action type and actor line number', () => {
+    expect(workApprovalRejectDedupeKey(11, 'reject_targeted', 4)).toBe(
+      'work:approval_doc:11:reject_targeted:line:4'
+    )
   })
 
   it('inbox path matches approvals detail route', () => {
