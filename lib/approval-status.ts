@@ -229,23 +229,29 @@ export function getUnifiedApprovalWorkflowBadges(
     return one('반려', 'bg-red-50 text-red-700 border-red-300 font-black')
   }
 
-  const hasCoop = L.some((l) => normalizeApprovalRole(l.approver_role) === 'cooperator')
+  const hasCoop = L.some((l) => {
+    const role = normalizeApprovalRole(l.approver_role)
+    return role === 'pre_cooperator' || role === 'post_cooperator'
+  })
   const allCoopDone = !L.some(
-    (l) => normalizeApprovalRole(l.approver_role) === 'cooperator' && l.status !== 'approved'
+    (l) => {
+      const role = normalizeApprovalRole(l.approver_role)
+      return (role === 'pre_cooperator' || role === 'post_cooperator') && !['approved', 'confirmed'].includes(l.status)
+    }
   )
 
   const approverLines = L.filter((l) => normalizeApprovalRole(l.approver_role) === 'approver')
   const allApproversApproved =
     approverLines.length > 0 && approverLines.every((l) => l.status === 'approved')
 
-  if (doc.status === 'approved') {
+  if (doc.status === 'approved' || doc.status === 'effective' || doc.status === 'closed') {
     if (hasCoop && !allCoopDone) {
       return one('결재완료/협조대기', 'bg-emerald-50 text-emerald-900 border-emerald-400 font-black')
     }
     return one('최종승인', 'bg-green-100 text-green-800 border-green-400 font-black')
   }
 
-  if (doc.status === 'submitted' || doc.status === 'in_review') {
+  if (doc.status === 'submitted' || doc.status === 'in_review' || doc.status === 'in_progress') {
     /**
      * 최종 결재자 승인 후 협조만 남는 경우: `approval_docs`는 아직 `in_review`인데
      * 다음 `pending`이 협조 라인일 수 있음 → "결재,협조진행중"으로 떨어지지 않도록 처리.
@@ -468,8 +474,9 @@ export function formatInboxApproverLineDisplay(
 function progressRoleSuffix(role: string): string {
   const n = normalizeApprovalRole(role)
   if (n === 'approver') return '결재'
-  if (n === 'reviewer') return '참조'
-  if (n === 'cooperator') return '협조'
+  if (n === 'reference') return '참조'
+  if (n === 'pre_cooperator') return '사전협조'
+  if (n === 'post_cooperator') return '사후협조'
   return '결재'
 }
 

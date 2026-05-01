@@ -131,7 +131,7 @@ export async function GET(request: NextRequest) {
         const docStatus = String(doc?.status ?? '').toLowerCase()
         const requestDone = row.status === 'completed' || row.dispatch_state === 'completed'
         const requestApproved = row.status === 'approved'
-        const docApproved = docStatus === 'approved'
+        const docApproved = ['approved', 'effective', 'closed'].includes(docStatus)
         const include = docApproved || requestApproved || requestDone
         if (!include) return null
         const writerName = userNameById.get(String(row.requester_id)) || null

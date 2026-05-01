@@ -29,6 +29,7 @@ import {
   getUnifiedApprovalWorkflowBadges,
   type ApprovalDocLike,
 } from '@/lib/approval-status'
+import { normalizeApprovalRole } from '@/lib/approval-roles'
 import { isProbablyRichHtml } from '@/lib/html-content'
 import { hasOutboundPermission, type CurrentUserPermissions } from '@/lib/permissions'
 
@@ -369,7 +370,8 @@ export async function getOutboundRequestDetail(supabase: SupabaseClient, id: str
     lines,
     participants,
   })
-  const isPreDispatchApprovalFlow = doc ? doc.status !== 'approved' : request.status !== 'approved'
+  const isApprovalEffective = doc ? ['approved', 'effective', 'closed'].includes(doc.status) : request.status === 'approved'
+  const isPreDispatchApprovalFlow = !isApprovalEffective
   const canView = canOutboundView || (isPreDispatchApprovalFlow && canViewByApprovalFlow)
 
   if (!canView) {
@@ -578,52 +580,42 @@ export async function OutboundDetailShared({
   const postApprovalCancelRowOutbound = postCancelPaper.row
   const contentIsHtml = Boolean(contentForPaper && isProbablyRichHtml(contentForPaper))
 
-  const lineMapByNo = new Map(lines.map((line) => [line.line_no, line]))
-  const displayLines =
-    participants.length > 0
-      ? participants.map((participant) => {
-          const matchedLine = lineMapByNo.get(participant.line_no)
-          return {
-            line_no: participant.line_no,
-            approver_id: participant.user_id,
-            approver_role: participant.role,
-            status: matchedLine?.status ?? 'waiting',
-            acted_at: matchedLine?.acted_at ?? null,
-            opinion: matchedLine?.opinion ?? null,
-          }
-        })
-      : lines.map((line) => ({
-          line_no: line.line_no,
-          approver_id: line.approver_id,
-          approver_role: line.approver_role,
-          status: line.status,
-          acted_at: line.acted_at ?? null,
-          opinion: line.opinion ?? null,
-        }))
+  const displayLines = lines.map((line) => ({
+    line_no: line.line_no,
+    approver_id: line.approver_id,
+    approver_role: line.approver_role,
+    status: line.status,
+    acted_at: line.acted_at ?? null,
+    opinion: line.opinion ?? null,
+  }))
 
   const stampLines = displayLines
-    .filter((line) => line.approver_role === 'approver' || line.approver_role === 'cooperator')
+    .filter((line) => {
+      const role = normalizeApprovalRole(line.approver_role)
+      return role === 'approver' || role === 'pre_cooperator' || role === 'post_cooperator'
+    })
     .sort((a, b) => a.line_no - b.line_no)
   const stampColumns = stampLines.map((line) => {
     const profile = userMap.get(normUserIdKey(line.approver_id))
     const userName = profile?.user_name ?? '—'
-    const isCoop = line.approver_role === 'cooperator'
+    const role = normalizeApprovalRole(line.approver_role)
+    const isCoop = role === 'pre_cooperator' || role === 'post_cooperator'
     const uid = normUserIdKey(line.approver_id)
     return {
       id: `${line.line_no}-${line.approver_id}`,
-      role: isCoop ? ('cooperator' as const) : ('approver' as const),
+      role: isCoop ? (role as 'pre_cooperator' | 'post_cooperator') : ('approver' as const),
       name: userName,
       employeeNo: profile?.employee_no ?? null,
       sealUrl: sealUrlMap.get(uid) ?? sealUrlMap.get(line.approver_id) ?? null,
       status: getDetailLineStatus(line.approver_role, line.status),
       actedAt: line.acted_at,
-      showSeal: line.status === 'approved',
+      showSeal: line.status === 'approved' || line.status === 'confirmed',
       readStatus: isCoop ? cooperatorReadBadge(line.status) : undefined,
       opinionText: isCoop ? line.opinion : undefined,
     }
   })
   const reviewerNames = participants
-    .filter((p) => p.role === 'reviewer')
+    .filter((p) => normalizeApprovalRole(p.role) === 'reference')
     .map((p) => userMap.get(normUserIdKey(p.user_id))?.user_name)
     .filter(Boolean)
     .join(', ')

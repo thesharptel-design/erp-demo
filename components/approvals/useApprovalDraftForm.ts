@@ -73,7 +73,20 @@ function participantsToApprovalOrder(
   const sorted = [...rows].sort((a, b) => a.line_no - b.line_no)
   return sorted.map((r) => ({
     id: `srv-${r.line_no}-${r.user_id}`,
-    role: (r.role === 'reviewer' || r.role === 'cooperator' || r.role === 'approver' ? r.role : 'approver') as ApprovalRole,
+    role: (
+      r.role === 'pre_cooperator' ||
+      r.role === 'cooperator' ||
+      r.role === 'approver' ||
+      r.role === 'post_cooperator' ||
+      r.role === 'reference' ||
+      r.role === 'reviewer'
+        ? r.role === 'cooperator'
+          ? 'pre_cooperator'
+          : r.role === 'reviewer'
+            ? 'reference'
+            : r.role
+        : 'approver'
+    ) as ApprovalRole,
     userId: r.user_id,
   }))
 }
@@ -294,13 +307,23 @@ export function useApprovalDraftForm({
       setServerDraftDocId(parsed.serverDraftDocId)
     }
     if (Array.isArray(parsed.approvalOrder) && parsed.approvalOrder.length > 0) {
-      const normalizedOrder = parsed.approvalOrder
+      const normalizedOrder: ApprovalOrderItem[] = parsed.approvalOrder
         .map((line) => ({
           id: String(line.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
-          role:
-            line.role === 'reviewer' || line.role === 'cooperator' || line.role === 'approver'
-              ? line.role
-              : 'approver',
+          role: (() => {
+            const role = String(line.role)
+            if (role === 'reviewer') return 'reference'
+            if (role === 'cooperator') return 'pre_cooperator'
+            if (
+              role === 'reference' ||
+              role === 'pre_cooperator' ||
+              role === 'approver' ||
+              role === 'post_cooperator'
+            ) {
+              return role
+            }
+            return 'approver'
+          })() as ApprovalRole,
           userId: String(line.userId || ''),
         }))
         .filter((line) => line.role)

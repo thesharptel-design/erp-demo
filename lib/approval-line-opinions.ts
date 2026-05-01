@@ -16,6 +16,7 @@ export type ApprovalOpinionRowVm = {
 function lineStatusLabel(status: string) {
   const x = String(status || '').toLowerCase()
   if (x === 'approved') return '승인'
+  if (x === 'confirmed') return '확인'
   if (x === 'rejected') return '반려'
   if (x === 'pending') return '진행중'
   if (x === 'waiting') return '대기'
@@ -25,7 +26,7 @@ function lineStatusLabel(status: string) {
 
 function isProcessedApprovalLine(l: { status: string; acted_at?: string | null }): boolean {
   const st = String(l.status || '').toLowerCase()
-  if (st === 'approved' || st === 'rejected' || st === 'cancelled') return true
+  if (st === 'approved' || st === 'confirmed' || st === 'rejected' || st === 'cancelled') return true
   const at = l.acted_at
   return at != null && String(at).trim() !== ''
 }

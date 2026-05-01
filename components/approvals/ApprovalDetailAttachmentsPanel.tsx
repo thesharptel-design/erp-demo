@@ -146,12 +146,16 @@ export default function ApprovalDetailAttachmentsPanel({
       .from('approval_docs')
       .select('id, doc_no, title, doc_type, status, writer_id')
       .eq('writer_id', currentUserId)
-      .eq('status', 'approved')
+      .in('status', ['approved', 'effective', 'closed'])
       .neq('id', docId ?? 0)
       .order('drafted_at', { ascending: false })
       .limit(60)
     if (error) return
-    setEligibleDocs(((data ?? []) as RelatedDocRow[]).filter((row) => row.status === 'approved'))
+    setEligibleDocs(
+      ((data ?? []) as RelatedDocRow[]).filter((row) =>
+        ['approved', 'effective', 'closed'].includes(String(row.status ?? ''))
+      )
+    )
   }, [canManage, currentUserId, docId])
 
   useEffect(() => {

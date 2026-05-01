@@ -361,7 +361,7 @@ async function promoteOutboundResubmitFromComposeDoc(
 
   const { data: head, error: selErr } = await supabase
     .from('approval_docs')
-    .select('id, status, remarks, doc_type, writer_id')
+    .select('id, doc_no, status, remarks, doc_type, writer_id')
     .eq('id', resubmitFromDocId)
     .eq('writer_id', writerId)
     .single()
@@ -377,7 +377,7 @@ async function promoteOutboundResubmitFromComposeDoc(
         remarksStr === '웹 출고요청'))
   if (!eligible) return null
 
-  const docNo = await generateNextDroDocNo(supabase as any)
+  const docNo = String(head.doc_no ?? '').trim() || (await generateNextDroDocNo(supabase as any))
   const now = new Date().toISOString()
   const purposePlain = plainTextFromHtml(content).slice(0, 4000) || title.trim()
   const reqDate = now.slice(0, 10)
@@ -459,7 +459,7 @@ async function promoteOutboundResubmitFromComposeDoc(
   await supabase.from('approval_histories').insert({
     approval_doc_id: docId,
     actor_id: writerId,
-    action_type: 'submit',
+    action_type: 'resubmit',
     action_comment: '출고요청 재상신',
     action_at: now,
   })

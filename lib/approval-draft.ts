@@ -355,7 +355,7 @@ async function promoteResubmitFromComposeDoc(
 
   const { data: head, error: selErr } = await supabase
     .from('approval_docs')
-    .select('id, status, remarks, doc_type, writer_id')
+    .select('id, doc_no, status, remarks, doc_type, writer_id')
     .eq('id', resubmitFromDocId)
     .eq('writer_id', writerId)
     .single()
@@ -372,7 +372,7 @@ async function promoteResubmitFromComposeDoc(
         remarksStr === '웹 수정 문서'))
   if (!eligible) return null
 
-  const docNo = await generateNextAppDocNo(supabase as any)
+  const docNo = String(head.doc_no ?? '').trim() || (await generateNextAppDocNo(supabase as any))
   const now = new Date().toISOString()
 
   const { data: updated, error: upErr } = await supabase
@@ -430,7 +430,7 @@ async function promoteResubmitFromComposeDoc(
   await supabase.from('approval_histories').insert({
     approval_doc_id: docId,
     actor_id: writerId,
-    action_type: 'submit',
+    action_type: 'resubmit',
     action_comment: '기안서 재상신',
     action_at: now,
   })
@@ -589,7 +589,7 @@ export function buildReferenceSummaryForDraft(
   deptMap: Map<number, string>
 ): string {
   return approvalOrder
-    .filter((l) => l.role === 'reviewer' && l.userId.trim())
+    .filter((l) => l.role === 'reference' && l.userId.trim())
     .map((l) => {
       const u = users.find((x) => x.id === l.userId)
       if (!u) return ''

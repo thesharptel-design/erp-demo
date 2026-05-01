@@ -10,8 +10,13 @@ export function getDocStatusLabel(status: string) {
       return '상신 완료'
     case 'in_review':
       return '검토/결재 중'
+    case 'in_progress':
+      return '진행중'
     case 'approved':
+    case 'effective':
       return '결재완료'
+    case 'closed':
+      return '최종종결'
     case 'rejected':
       return '반려/취소'
     default:
@@ -26,7 +31,26 @@ export function getActionLabel(actionType: string) {
     case 'approve':
       return '승인'
     case 'reject':
-      return '반려'
+    case 'reject_direct':
+      return '직권반려'
+    case 'reject_sequential':
+      return '순차반려'
+    case 'reject_targeted':
+      return '선택반려'
+    case 'recall_before_first_action':
+      return '기안회수'
+    case 'cancel_requested_by_writer':
+      return '기안자 취소요청'
+    case 'confirm_pre_cooperation':
+      return '협조확인'
+    case 'override_approve':
+      return '전결승인'
+    case 'skip_by_override':
+      return '전결생략'
+    case 'confirm_post_cooperation':
+      return '사후확인'
+    case 'close':
+      return '최종종결'
     case 'approve_revoke':
       return '승인 철회'
     case 'recall':
@@ -89,7 +113,9 @@ export function canViewApprovalDoc(params: {
 export function getDetailLineStatus(role: string, status: string): ReactNode {
   if (role === 'drafter') return <span className="font-bold text-gray-600">기안완료</span>
   if (status === 'pending') return <span className="font-black text-blue-600">대기중</span>
+  if (status === 'confirmed') return <span className="font-black text-emerald-600">확인</span>
   if (status === 'approved') return <span className="font-black text-green-600">승인</span>
+  if (status === 'skipped') return <span className="font-black text-amber-600">전결생략</span>
   if (status === 'rejected') return <span className="font-black text-red-600">반려</span>
   return <span className="font-bold text-gray-400">대기</span>
 }
@@ -97,6 +123,8 @@ export function getDetailLineStatus(role: string, status: string): ReactNode {
 export function getDocStatusBadgeClass(status: string) {
   switch (status) {
     case 'approved':
+    case 'effective':
+    case 'closed':
       return 'bg-emerald-100 text-emerald-900'
     case 'rejected':
       return 'bg-red-50 text-red-800'
@@ -108,8 +136,8 @@ export function getDocStatusBadgeClass(status: string) {
 }
 
 export function cooperatorReadBadge(status: string): ReactNode {
-  if (status === 'approved') {
-    return <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-black text-green-800">읽음</span>
+  if (status === 'approved' || status === 'confirmed') {
+    return <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-black text-green-800">확인</span>
   }
   if (status === 'rejected') {
     return <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-black text-red-800">반려</span>

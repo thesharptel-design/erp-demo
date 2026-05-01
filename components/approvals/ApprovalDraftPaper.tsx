@@ -79,7 +79,7 @@ type ApprovalDraftPaperProps = {
 
 function formatReferenceLine(order: ApprovalOrderItem[], resolveLineUser: (id: string) => ApprovalDraftAppUser | undefined) {
   const parts = order
-    .filter((l) => l.role === 'reviewer' && l.userId.trim())
+    .filter((l) => l.role === 'reference' && l.userId.trim())
     .map((l) => {
       const u = resolveLineUser(l.userId)
       if (!u) return ''
@@ -125,7 +125,9 @@ export default function ApprovalDraftPaper({
   docTypeSelectDisabled = false,
 }: ApprovalDraftPaperProps) {
   /** 기안 다음 열: 결재선 순서대로 협조·결재 모두 표시 (참조는 별도 란) */
-  const stampSlots = approvalOrder.filter((l) => l.role === 'approver' || l.role === 'cooperator')
+  const stampSlots = approvalOrder.filter(
+    (l) => l.role === 'approver' || l.role === 'pre_cooperator' || l.role === 'post_cooperator'
+  )
   const approvalStampColCount = 1 + stampSlots.length
   const requiresExecutionDate = docType === 'leave_request'
 
@@ -164,8 +166,8 @@ export default function ApprovalDraftPaper({
                 </tbody>
               </table>
 
-              <div className="flex min-h-0 min-w-0 items-center justify-center overflow-x-auto bg-card lg:min-h-0">
-                <table className="w-full min-w-0 table-fixed border-collapse text-center text-xs sm:min-w-[260px]">
+              <div className="flex min-h-0 min-w-0 items-stretch justify-center overflow-x-auto bg-card lg:min-h-0">
+                <table className="h-full w-full min-w-0 table-fixed border-collapse text-center text-xs sm:min-w-[260px]">
                   <colgroup>
                     {Array.from({ length: approvalStampColCount }).map((_, i) => (
                       <col key={i} style={{ width: `${100 / approvalStampColCount}%` }} />
@@ -176,7 +178,11 @@ export default function ApprovalDraftPaper({
                       <th className="border-r border-border px-1.5 py-1.5 font-black text-foreground sm:px-2 sm:py-2">기안</th>
                       {stampSlots.map((line) => (
                         <th key={line.id} className="border-l border-border px-1.5 py-1.5 font-black text-foreground sm:px-2 sm:py-2">
-                          {line.role === 'cooperator' ? '협조' : '결재'}
+                          {line.role === 'pre_cooperator'
+                            ? '사전협조'
+                            : line.role === 'post_cooperator'
+                              ? '사후협조'
+                              : '결재'}
                         </th>
                       ))}
                     </tr>

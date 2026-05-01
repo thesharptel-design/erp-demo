@@ -24,6 +24,7 @@ import {
   getIsAdmin,
 } from '@/lib/approval-document-detail-helpers'
 import { formatWriterDepartmentLabel } from '@/lib/approval-draft'
+import { normalizeApprovalRole } from '@/lib/approval-roles'
 import { isProbablyRichHtml } from '@/lib/html-content'
 
 type ApprovalDoc = {
@@ -68,6 +69,7 @@ type ApprovalParticipant = {
 
 type AppUserProfile = {
   id: string
+  email?: string | null
   user_name: string | null
   employee_no?: string | null
   dept_id: number | null
@@ -89,7 +91,8 @@ export async function getApprovalDetail(supabase: SupabaseClient, id: string) {
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  const currentUserId = user?.id ?? null
+  const authUserId = user?.id ?? null
+  const authUserEmail = String(user?.email ?? '').trim().toLowerCase()
 
   const [
     { data: doc, error: docError },
@@ -103,7 +106,7 @@ export async function getApprovalDetail(supabase: SupabaseClient, id: string) {
     supabase
       .from('app_users')
       .select(
-        'id, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, seal_image_path, can_manage_permissions, can_admin_manage'
+        'id, email, user_name, employee_no, dept_id, department, user_kind, training_program, school_name, teacher_subject, role_name, seal_image_path, can_manage_permissions, can_admin_manage'
       ),
     supabase.from('departments').select('id, dept_name'),
     supabase.from('approval_lines').select('*').eq('approval_doc_id', docId).order('line_no'),
@@ -113,7 +116,19 @@ export async function getApprovalDetail(supabase: SupabaseClient, id: string) {
 
   if (docError) return null
 
-  const isAdmin = getIsAdmin((users ?? []) as AppUserProfile[], currentUserId)
+  const userProfiles = ((users as AppUserProfile[]) ?? []) as AppUserProfile[]
+  const currentUserProfile =
+    (authUserId
+      ? userProfiles.find((u) => String(u.id ?? '').trim().toLowerCase() === authUserId.toLowerCase()) ?? null
+      : null) ??
+    (authUserEmail
+      ? userProfiles.find(
+          (u) => String((u as AppUserProfile & { email?: string | null }).email ?? '').trim().toLowerCase() === authUserEmail
+        ) ?? null
+      : null)
+  // approval_docs/lines/participants는 app_users.id 기준이므로 상세 권한도 같은 키로 맞춘다.
+  const currentUserId = currentUserProfile?.id ?? authUserId
+  const isAdmin = getIsAdmin(userProfiles, currentUserId)
   const canView = canViewApprovalDoc({
     isAdmin,
     currentUserId,
@@ -125,7 +140,7 @@ export async function getApprovalDetail(supabase: SupabaseClient, id: string) {
 
   return {
     doc: doc as ApprovalDoc,
-    users: (users as AppUserProfile[]) ?? [],
+    users: userProfiles,
     departments: departments ?? [],
     lines: (lines as ApprovalLine[]) ?? [],
     participants: (participants as ApprovalParticipant[]) ?? [],
@@ -171,28 +186,14 @@ export async function ApprovalDetailShared({
   const userMap = new Map(users.map((u) => [u.id, u]))
   const deptMap = new Map(departments.map((d: { id: number; dept_name: string }) => [d.id, d.dept_name]))
   const draftedDate = new Date(doc.drafted_at).toISOString().split('T')[0]
-  const lineMapByNo = new Map(lines.map((line) => [line.line_no, line]))
-  const displayLines =
-    participants.length > 0
-      ? participants.map((participant) => {
-          const matchedLine = lineMapByNo.get(participant.line_no)
-          return {
-            line_no: participant.line_no,
-            approver_id: participant.user_id,
-            approver_role: participant.role,
-            status: matchedLine?.status ?? 'waiting',
-            acted_at: matchedLine?.acted_at ?? null,
-            opinion: matchedLine?.opinion ?? null,
-          }
-        })
-      : lines.map((line) => ({
-          line_no: line.line_no,
-          approver_id: line.approver_id,
-          approver_role: line.approver_role,
-          status: line.status,
-          acted_at: line.acted_at ?? null,
-          opinion: line.opinion ?? null,
-        }))
+  const displayLines = lines.map((line) => ({
+    line_no: line.line_no,
+    approver_id: line.approver_id,
+    approver_role: line.approver_role,
+    status: line.status,
+    acted_at: line.acted_at ?? null,
+    opinion: line.opinion ?? null,
+  }))
   const writerProfile = userMap.get(doc.writer_id)
   const sealUrlMap = new Map<string, string>()
   for (const user of users) {
@@ -207,27 +208,31 @@ export async function ApprovalDetailShared({
   const writerEmployeeNo = writerProfile?.employee_no ?? null
   const writerDeptName = formatWriterDepartmentLabel(writerProfile, deptMap, { docDeptId: doc.dept_id })
   const stampLines = displayLines
-    .filter((line) => line.approver_role === 'approver' || line.approver_role === 'cooperator')
+    .filter((line) => {
+      const role = normalizeApprovalRole(line.approver_role)
+      return role === 'approver' || role === 'pre_cooperator' || role === 'post_cooperator'
+    })
     .sort((a, b) => a.line_no - b.line_no)
   const stampColumns = stampLines.map((line) => {
     const profile = userMap.get(line.approver_id)
     const userName = profile?.user_name ?? '—'
-    const isCoop = line.approver_role === 'cooperator'
+    const role = normalizeApprovalRole(line.approver_role)
+    const isCoop = role === 'pre_cooperator' || role === 'post_cooperator'
     return {
       id: `${line.line_no}-${line.approver_id}`,
-      role: isCoop ? ('cooperator' as const) : ('approver' as const),
+      role: isCoop ? (role as 'pre_cooperator' | 'post_cooperator') : ('approver' as const),
       name: userName,
       employeeNo: profile?.employee_no ?? null,
       sealUrl: sealUrlMap.get(line.approver_id) ?? null,
       status: getDetailLineStatus(line.approver_role, line.status),
       actedAt: line.acted_at,
-      showSeal: line.status === 'approved',
+      showSeal: line.status === 'approved' || line.status === 'confirmed',
       readStatus: isCoop ? cooperatorReadBadge(line.status) : undefined,
       opinionText: isCoop ? line.opinion : undefined,
     }
   })
   const reviewerNames = participants
-    .filter((p) => p.role === 'reviewer')
+    .filter((p) => normalizeApprovalRole(p.role) === 'reference')
     .map((p) => userMap.get(p.user_id)?.user_name)
     .filter(Boolean)
     .join(', ')

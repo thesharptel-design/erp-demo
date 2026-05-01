@@ -4,7 +4,7 @@ import BoardPostBodyWithLightbox from '@/components/groupware/BoardPostBodyWithL
 /** 기안 옆 날인 테이블: 결재·협조를 결재선 순서대로 한 열씩 표시 */
 export type ApprovalPaperStampColumn = {
   id: string
-  role: 'approver' | 'cooperator'
+  role: 'approver' | 'pre_cooperator' | 'post_cooperator'
   name: string
   employeeNo?: string | null
   sealUrl: string | null
@@ -174,8 +174,8 @@ export default function ApprovalDocumentPaperView({
                 </tbody>
               </table>
 
-              <div className="flex min-h-0 min-w-0 items-center justify-center overflow-x-auto bg-card lg:min-h-0">
-                <table className="w-full min-w-0 table-fixed border-collapse text-center text-xs sm:min-w-[260px]">
+              <div className="flex min-h-0 min-w-0 items-stretch justify-center overflow-x-auto bg-card lg:min-h-0">
+                <table className="h-full w-full min-w-0 table-fixed border-collapse text-center text-xs sm:min-w-[260px]">
                   <colgroup>
                     {Array.from({ length: stampColCount }).map((_, i) => (
                       <col key={i} style={{ width: `${100 / stampColCount}%` }} />
@@ -186,7 +186,11 @@ export default function ApprovalDocumentPaperView({
                       <th className="border-r border-border px-1.5 py-1.5 font-black text-foreground sm:px-2 sm:py-2">기안</th>
                       {stampColumns.map((col) => (
                         <th key={col.id} className="border-l border-border px-1.5 py-1.5 font-black text-foreground sm:px-2 sm:py-2">
-                          {col.role === 'cooperator' ? '협조' : '결재'}
+                          {col.role === 'pre_cooperator'
+                            ? '사전협조'
+                            : col.role === 'post_cooperator'
+                              ? '사후협조'
+                              : '결재'}
                         </th>
                       ))}
                     </tr>
@@ -227,7 +231,7 @@ export default function ApprovalDocumentPaperView({
                         <td key={`sig-${col.id}`} className="border-l border-border bg-muted/45 px-1 py-3 align-top sm:px-2 sm:py-4">
                           <div className="flex flex-col items-center gap-0.5">
                             <SealOrInitials name={col.name} sealUrl={col.sealUrl} show={col.showSeal} />
-                            {col.role === 'cooperator' && col.readStatus ? (
+                            {(col.role === 'pre_cooperator' || col.role === 'post_cooperator') && col.readStatus ? (
                               <div className="[&>*]:inline-flex">{col.readStatus}</div>
                             ) : null}
                             <div className="text-[10px] font-bold text-muted-foreground">{col.status}</div>
@@ -236,7 +240,7 @@ export default function ApprovalDocumentPaperView({
                                 {new Date(col.actedAt).toLocaleString('ko-KR')}
                               </div>
                             )}
-                            {col.role === 'cooperator' && col.opinionText?.trim() ? (
+                            {(col.role === 'pre_cooperator' || col.role === 'post_cooperator') && col.opinionText?.trim() ? (
                               <p className="max-w-full px-0.5 text-left text-[9px] font-bold leading-snug break-words text-foreground">
                                 {col.opinionText}
                               </p>

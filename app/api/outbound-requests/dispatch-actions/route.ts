@@ -232,7 +232,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '연결된 결재문서를 확인할 수 없습니다.' }, { status: 400 })
     }
     const approvalDoc = docRow as ApprovalDocRow
-    if (approvalDoc.status !== 'approved') {
+    if (!['approved', 'effective', 'closed'].includes(String(approvalDoc.status))) {
       return NextResponse.json({ error: '결재 완료된 요청만 출고 통제할 수 있습니다.' }, { status: 409 })
     }
 
