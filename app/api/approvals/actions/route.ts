@@ -345,7 +345,7 @@ export async function POST(request: NextRequest) {
       if (!pendingLine) return jsonError('현재 처리할 결재라인이 없습니다.', 409)
       if (!sameApprovalUser(pendingLine.approver_id, actorId)) return jsonError('현재 본인 차례가 아닙니다.', 403)
       if (!isPreCooperatorRole(pendingLine.approver_role)) {
-        return jsonError('사전협조자만 협조확인을 할 수 있습니다.', 403)
+        return jsonError('협조자만 협조확인을 할 수 있습니다.', 403)
       }
       await updateLine(adminClient, pendingLine, {
         status: 'confirmed',
@@ -575,7 +575,7 @@ export async function POST(request: NextRequest) {
       const myPostLine = getPostCooperatorWorkflowLines(lines).find(
         (line) => sameApprovalUser(line.approver_id, actorId) && (line.status === 'pending' || line.status === 'waiting')
       )
-      if (!myPostLine) return jsonError('확인할 사후협조 차례가 없습니다.', 403)
+      if (!myPostLine) return jsonError('확인할 협조 차례가 없습니다.', 403)
       await updateLine(adminClient, myPostLine, {
         status: 'confirmed',
         acted_at: now,

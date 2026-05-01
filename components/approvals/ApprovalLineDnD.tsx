@@ -85,9 +85,7 @@ export default function ApprovalLineDnD({
                 ? '결재자 선택 (필수)'
                 : line.role === 'reference'
                   ? '참조자 선택'
-                  : line.role === 'post_cooperator'
-                    ? '사후협조자 선택'
-                    : '사전협조자 선택'
+                  : '협조자 선택'
             }
           />
           <button

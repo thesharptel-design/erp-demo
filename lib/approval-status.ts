@@ -475,8 +475,8 @@ function progressRoleSuffix(role: string): string {
   const n = normalizeApprovalRole(role)
   if (n === 'approver') return '결재'
   if (n === 'reference') return '참조'
-  if (n === 'pre_cooperator') return '사전협조'
-  if (n === 'post_cooperator') return '사후협조'
+  if (n === 'pre_cooperator') return '협조'
+  if (n === 'post_cooperator') return '협조'
   return '결재'
 }
 

@@ -15,9 +15,9 @@ const ROLE_ORDER: Record<ApprovalRole, number> = {
 }
 
 const ROLE_LABEL: Record<ApprovalRole, string> = {
-  pre_cooperator: '사전협조',
+  pre_cooperator: '협조',
   approver: '결재',
-  post_cooperator: '사후협조',
+  post_cooperator: '협조',
   reference: '참조',
 }
 

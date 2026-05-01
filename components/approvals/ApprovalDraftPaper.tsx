@@ -178,11 +178,7 @@ export default function ApprovalDraftPaper({
                       <th className="border-r border-border px-1.5 py-1.5 font-black text-foreground sm:px-2 sm:py-2">기안</th>
                       {stampSlots.map((line) => (
                         <th key={line.id} className="border-l border-border px-1.5 py-1.5 font-black text-foreground sm:px-2 sm:py-2">
-                          {line.role === 'pre_cooperator'
-                            ? '사전협조'
-                            : line.role === 'post_cooperator'
-                              ? '사후협조'
-                              : '결재'}
+                          {line.role === 'pre_cooperator' || line.role === 'post_cooperator' ? '협조' : '결재'}
                         </th>
                       ))}
                     </tr>
