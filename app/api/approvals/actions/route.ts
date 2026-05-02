@@ -8,6 +8,7 @@ import {
 import {
   findLastApproverLineForUser,
   getApprovalActionLines,
+  getApprovalCancelRequestRecipient,
   getFinalApprovalCompletion,
   getNextWaitingBeforePost,
   getPendingApprovalWorkflowLine,
@@ -322,6 +323,10 @@ export async function POST(request: NextRequest) {
       if (reason.length < 2) return jsonError('취소요청 사유를 입력하세요.')
       const hasProcessed = lines.some((line) => line.status === 'confirmed' || line.status === 'approved')
       if (!hasProcessed) return jsonError('아직 아무도 처리하지 않았습니다. 기안회수를 사용하세요.', 409)
+      const cancelRequestRecipient = getApprovalCancelRequestRecipient(doc, lines)
+      if (!cancelRequestRecipient) {
+        return jsonError('취소요청을 받을 현재 결재자를 찾을 수 없습니다.', 409)
+      }
       await updateDocStatus(adminClient, doc, { remarks: '기안자 취소요청' })
       await logHistory(adminClient, {
         docId: doc.id,
@@ -333,11 +338,11 @@ export async function POST(request: NextRequest) {
       await fanoutQuiet(authedClient, {
         actorId,
         docId: doc.id,
-        recipientMode: 'doc_current_line',
+        recipientMode: cancelRequestRecipient.recipientMode,
         type: 'work_approval_cancel_requested',
         dedupeKey: workApprovalCancelRequestDedupeKey(doc.id),
         title: `기안자 취소요청: ${title}`,
-        lineNo: doc.current_line_no,
+        lineNo: cancelRequestRecipient.lineNo,
       })
       return NextResponse.json({ success: true })
     }

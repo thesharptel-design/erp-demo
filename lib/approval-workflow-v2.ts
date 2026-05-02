@@ -58,6 +58,11 @@ export type ApprovalFinalCompletion = {
   hasPostCooperators: boolean
 }
 
+export type ApprovalCancelRequestRecipient = {
+  recipientMode: 'pending_lines' | 'doc_current_line'
+  lineNo: number | null
+}
+
 export const APPROVAL_DOC_STATUSES = [
   'draft',
   'submitted',
@@ -117,6 +122,28 @@ export function getApprovalActionLines<T extends ApprovalWorkflowLineLike>(lines
 
 export function getPendingApprovalWorkflowLine<T extends ApprovalWorkflowLineLike>(lines: T[]): T | null {
   return getApprovalActionLines(lines).find((line) => line.status === 'pending') ?? null
+}
+
+export function getApprovalCancelRequestRecipient<T extends ApprovalWorkflowLineLike>(
+  doc: ApprovalWorkflowDocLike & { current_line_no?: number | null },
+  lines: T[]
+): ApprovalCancelRequestRecipient | null {
+  const pendingLine = getPendingApprovalWorkflowLine(lines)
+  if (pendingLine) {
+    return {
+      recipientMode: 'pending_lines',
+      lineNo: pendingLine.line_no,
+    }
+  }
+
+  if (doc.current_line_no != null) {
+    return {
+      recipientMode: 'doc_current_line',
+      lineNo: doc.current_line_no,
+    }
+  }
+
+  return null
 }
 
 export function getNextWaitingBeforePost<T extends ApprovalWorkflowLineLike>(

@@ -4,6 +4,7 @@ import {
   APPROVAL_LINE_STATUSES,
   findLastApproverLineForUser,
   getApprovalActionAvailability,
+  getApprovalCancelRequestRecipient,
   getApprovalActionLines,
   getApprovalRejectTargets,
   getFinalApprovalCompletion,
@@ -98,6 +99,32 @@ describe('approval-workflow-v2', () => {
     })
     expect(afterAction.canRecall).toBe(false)
     expect(afterAction.canRequestCancel).toBe(true)
+  })
+
+  it('targets cancel requests to the actual pending line before falling back to document current line', () => {
+    expect(
+      getApprovalCancelRequestRecipient({ status: 'in_progress', current_line_no: 99 }, lines)
+    ).toEqual({
+      recipientMode: 'pending_lines',
+      lineNo: 3,
+    })
+
+    expect(
+      getApprovalCancelRequestRecipient(
+        { status: 'in_progress', current_line_no: 4 },
+        lines.map((line) => ({ ...line, status: line.status === 'pending' ? 'waiting' : line.status }))
+      )
+    ).toEqual({
+      recipientMode: 'doc_current_line',
+      lineNo: 4,
+    })
+
+    expect(
+      getApprovalCancelRequestRecipient(
+        { status: 'in_progress', current_line_no: null },
+        lines.map((line) => ({ ...line, status: line.status === 'pending' ? 'waiting' : line.status }))
+      )
+    ).toBeNull()
   })
 
   it('keeps pre-cooperators on confirm only while approvers get approval actions', () => {

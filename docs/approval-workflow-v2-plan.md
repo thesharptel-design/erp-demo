@@ -90,6 +90,7 @@ Run this with one general draft and one outbound request draft.
 - Notification fanout should not be allowed to make a valid approval mutation fail.
 - Approval action notifications now use the signed-in user's JWT client for RPC fanout, not the service-role client.
 - Approval action notifications now use deterministic dedupe keys so retrying an action does not create duplicate event rows.
+- Writer cancel requests now notify the actual pending approval line first, falling back to `current_line_no` only for legacy/stale rows.
 - Sequential/targeted rejection keeps the document in progress, moves the chosen previous processed line back to `pending`, and resets later lines to `waiting`.
 - Sequential/targeted rejection notifications target the returned `pending` line instead of the stale previous `current_line_no`.
 - Final approval closes the document immediately when there is no post-confirm 협조; if post-confirm 협조 exists, it stays `effective` until those confirmations are complete.
