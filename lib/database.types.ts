@@ -4,6 +4,34 @@
  */
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[]
 
+export type ApprovalHistoryActionType =
+  | 'submit'
+  | 'approve'
+  | 'reject'
+  | 'recall'
+  | 'cancel'
+  | 'cancel_request'
+  | 'cancel_relay'
+  | 'direct_cancel_final'
+  | 'outbound_cancel_done'
+  | 'approve_revoke'
+  | 'outbound_assign_handler'
+  | 'outbound_reassign_handler'
+  | 'outbound_recall_handler'
+  | 'outbound_execute_self'
+  | 'outbound_complete'
+  | 'recall_before_first_action'
+  | 'cancel_requested_by_writer'
+  | 'confirm_pre_cooperation'
+  | 'override_approve'
+  | 'reject_direct'
+  | 'reject_sequential'
+  | 'reject_targeted'
+  | 'skip_by_override'
+  | 'confirm_post_cooperation'
+  | 'resubmit'
+  | 'close'
+
 export type Database = {
   public: {
     Tables: {
@@ -41,6 +69,19 @@ export type Database = {
         }
         Insert: Partial<Database['public']['Tables']['approval_lines']['Row']>
         Update: Partial<Database['public']['Tables']['approval_lines']['Row']>
+      }
+      approval_histories: {
+        Row: {
+          id: number
+          approval_doc_id: number
+          actor_id: string
+          action_type: ApprovalHistoryActionType
+          action_comment: string | null
+          action_at: string
+          dedupe_key: string | null
+        }
+        Insert: Partial<Database['public']['Tables']['approval_histories']['Row']>
+        Update: Partial<Database['public']['Tables']['approval_histories']['Row']>
       }
       approval_participants: {
         Row: {

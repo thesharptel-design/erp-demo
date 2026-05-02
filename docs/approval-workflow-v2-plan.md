@@ -89,6 +89,7 @@ Run this with one general draft and one outbound request draft.
 - Detail status/action label tests now run under the active Vitest include pattern and cover v2 labels like `effective`, `closed`, and the three rejection actions.
 - Detail-page resubmit buttons now use the document-type rule registry instead of duplicating draft/rejected checks in each page.
 - DB status constraints now mirror the v2 workflow status lists in `lib/approval-workflow-v2.ts`.
+- Local Supabase database types now include `approval_histories` and the v2 action-type union, so future history reads/writes get better type checking.
 - Notification fanout should not be allowed to make a valid approval mutation fail.
 - Approval action notifications now use the signed-in user's JWT client for RPC fanout, not the service-role client.
 - Approval action notifications now use deterministic dedupe keys so retrying an action does not create duplicate event rows.
