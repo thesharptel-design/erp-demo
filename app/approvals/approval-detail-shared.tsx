@@ -17,6 +17,7 @@ import {
   getUnifiedApprovalWorkflowBadges,
   type ApprovalDocLike,
 } from '@/lib/approval-status'
+import { getApprovalDocTypeRule } from '@/lib/approval-doc-type-rules'
 import {
   canViewApprovalDoc,
   cooperatorReadBadge,
@@ -179,9 +180,14 @@ export async function ApprovalDetailShared({
 
   const { doc, users, departments, lines, participants, histories, currentUserId } = result
 
-  const canWriterEditResubmit =
-    Boolean(currentUserId && doc.writer_id === currentUserId) &&
-    ['draft', 'rejected'].includes(doc.status)
+  const resubmitHref =
+    getApprovalDocTypeRule(doc.doc_type)?.resubmitHrefResolver({
+      approvalDocId: doc.id,
+      outboundRequestId: null,
+      writerId: doc.writer_id,
+      currentUserId,
+      status: doc.status,
+    }) ?? null
 
   const userMap = new Map(users.map((u) => [u.id, u]))
   const deptMap = new Map(departments.map((d: { id: number; dept_name: string }) => [d.id, d.dept_name]))
@@ -364,13 +370,9 @@ export async function ApprovalDetailShared({
             <ApprovalCloseButton />
           ) : (
             <>
-              {canWriterEditResubmit && (
+              {resubmitHref && (
                 <Link
-                  href={
-                    doc.doc_type === 'outbound_request'
-                      ? `/outbound-requests/new?resubmit=${doc.id}`
-                      : `/approvals/new?resubmit=${doc.id}`
-                  }
+                  href={resubmitHref}
                   className="rounded-lg border-2 border-blue-600 bg-blue-50 px-4 py-2 text-sm font-black text-blue-900 hover:bg-blue-100"
                 >
                   수정·재상신

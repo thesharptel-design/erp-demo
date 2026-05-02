@@ -29,6 +29,7 @@ import {
   getUnifiedApprovalWorkflowBadges,
   type ApprovalDocLike,
 } from '@/lib/approval-status'
+import { getApprovalDocTypeRule } from '@/lib/approval-doc-type-rules'
 import { normalizeApprovalRole } from '@/lib/approval-roles'
 import { isProbablyRichHtml } from '@/lib/html-content'
 import { hasOutboundPermission, type CurrentUserPermissions } from '@/lib/permissions'
@@ -757,9 +758,15 @@ export async function OutboundDetailShared({
   const showAttachmentNotice = Boolean(
     attachmentFrom?.enabled && (attachmentFrom.sourceDocNo?.trim() || attachmentFrom.sourceTitle?.trim())
   )
-  const canWriterEditResubmit =
-    Boolean(currentUserId && doc && doc.writer_id === currentUserId) &&
-    ['draft', 'rejected'].includes(String(doc?.status ?? ''))
+  const resubmitHref = doc
+    ? getApprovalDocTypeRule(doc.doc_type)?.resubmitHrefResolver({
+        approvalDocId: doc.id,
+        outboundRequestId: request.id,
+        writerId: doc.writer_id,
+        currentUserId,
+        status: doc.status,
+      }) ?? null
+    : null
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
@@ -932,9 +939,9 @@ export async function OutboundDetailShared({
             <ApprovalCloseButton fallbackHref="/outbound-requests" />
           ) : (
             <>
-              {canWriterEditResubmit && doc ? (
+              {resubmitHref ? (
                 <Link
-                  href={`/outbound-requests/new?resubmit=${doc.id}`}
+                  href={resubmitHref}
                   className="rounded-lg border-2 border-blue-600 bg-blue-50 px-4 py-2 text-sm font-black text-blue-900 hover:bg-blue-100"
                 >
                   수정 후 재상신
