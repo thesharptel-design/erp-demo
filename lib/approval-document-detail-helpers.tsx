@@ -13,8 +13,9 @@ export function getDocStatusLabel(status: string) {
     case 'in_progress':
       return '진행중'
     case 'approved':
-    case 'effective':
       return '결재완료'
+    case 'effective':
+      return '효력발생'
     case 'closed':
       return '최종종결'
     case 'rejected':
@@ -31,6 +32,7 @@ export function getActionLabel(actionType: string) {
     case 'approve':
       return '승인'
     case 'reject':
+      return '반려'
     case 'reject_direct':
       return '직권반려'
     case 'reject_sequential':

@@ -86,6 +86,7 @@ Run this with one general draft and one outbound request draft.
 - Approval button visibility now uses the shared workflow helper, so UI exposure and server-side workflow rules are easier to keep aligned.
 - Approval action buttons now share one tooltip-aware button wrapper, so every workflow action keeps hover 설명 and aria label together.
 - Approval action panels now disappear completely when the signed-in user has no available workflow action, avoiding empty opinion boxes after final approval.
+- Detail status/action label tests now run under the active Vitest include pattern and cover v2 labels like `effective`, `closed`, and the three rejection actions.
 - Detail-page resubmit buttons now use the document-type rule registry instead of duplicating draft/rejected checks in each page.
 - DB status constraints now mirror the v2 workflow status lists in `lib/approval-workflow-v2.ts`.
 - Notification fanout should not be allowed to make a valid approval mutation fail.

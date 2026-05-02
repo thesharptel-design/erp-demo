@@ -1,4 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+vi.mock('@/lib/permissions', () => ({
+  isSystemAdminUser: (user: { role_name?: string | null; can_manage_permissions?: boolean | null; can_admin_manage?: boolean | null }) =>
+    user.role_name === 'admin' || user.can_manage_permissions === true || user.can_admin_manage === true,
+}))
+
 import { canViewApprovalDoc, getActionLabel, getDocStatusLabel } from '@/lib/approval-document-detail-helpers'
 
 describe('approval document detail access guards', () => {
@@ -79,6 +85,8 @@ describe('detail helper labels', () => {
     expect(getDocStatusLabel('submitted')).toBe('상신 완료')
     expect(getDocStatusLabel('in_review')).toBe('검토/결재 중')
     expect(getDocStatusLabel('approved')).toBe('결재완료')
+    expect(getDocStatusLabel('effective')).toBe('효력발생')
+    expect(getDocStatusLabel('closed')).toBe('최종종결')
     expect(getDocStatusLabel('rejected')).toBe('반려/취소')
   })
 
@@ -86,6 +94,14 @@ describe('detail helper labels', () => {
     expect(getActionLabel('submit')).toBe('상신')
     expect(getActionLabel('approve')).toBe('승인')
     expect(getActionLabel('reject')).toBe('반려')
+    expect(getActionLabel('reject_direct')).toBe('직권반려')
+    expect(getActionLabel('reject_sequential')).toBe('순차반려')
+    expect(getActionLabel('reject_targeted')).toBe('선택반려')
+    expect(getActionLabel('confirm_pre_cooperation')).toBe('협조확인')
+    expect(getActionLabel('confirm_post_cooperation')).toBe('사후확인')
+    expect(getActionLabel('override_approve')).toBe('전결승인')
+    expect(getActionLabel('skip_by_override')).toBe('전결생략')
+    expect(getActionLabel('close')).toBe('최종종결')
     expect(getActionLabel('approve_revoke')).toBe('승인 철회')
     expect(getActionLabel('cancel_request')).toBe('취소 요청')
     expect(getActionLabel('cancel_relay')).toBe('역순 취소 처리')
@@ -93,7 +109,7 @@ describe('detail helper labels', () => {
     expect(getActionLabel('outbound_assign_handler')).toBe('출고 담당자 지정')
     expect(getActionLabel('outbound_reassign_handler')).toBe('출고 담당자 변경')
     expect(getActionLabel('outbound_recall_handler')).toBe('출고 담당자 회수')
-    expect(getActionLabel('outbound_execute_self')).toBe('출고 직접 처리 시작')
+    expect(getActionLabel('outbound_execute_self')).toBe('출고 시작')
     expect(getActionLabel('outbound_complete')).toBe('출고 처리 완료')
   })
 })
