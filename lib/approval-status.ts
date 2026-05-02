@@ -63,6 +63,8 @@ export const APPROVAL_RECALL_REMARK_MARKER = '기안 회수됨'
 
 /** `direct_cancel_final_approval` RPC과 동일: 일반 반려(`결재자 반려`)와 구분 */
 export const APPROVAL_POST_APPROVAL_CANCEL_REMARK = '결재 취소'
+export const APPROVAL_WRITER_CANCEL_REQUEST_REMARK = '기안자 취소요청'
+export const APPROVAL_LEGACY_CANCEL_REQUEST_REMARK = '취소 요청 중'
 
 const LEGACY_POST_APPROVAL_CANCEL_OPINION_MARKER = '\n\n[결재 취소 의견]:'
 
@@ -73,6 +75,11 @@ export function isRejectedAsPostApprovalCancel(
     doc.status === 'rejected' &&
     String(doc.remarks ?? '').trim() === APPROVAL_POST_APPROVAL_CANCEL_REMARK
   )
+}
+
+export function isApprovalWriterCancelRequestRemark(remarks: string | null | undefined): boolean {
+  const r = remarks || ''
+  return r.includes(APPROVAL_WRITER_CANCEL_REQUEST_REMARK) || r.includes(APPROVAL_LEGACY_CANCEL_REQUEST_REMARK)
 }
 
 /** 구버전 RPC가 본문에 붙인 `[결재 취소 의견]:` 구간 제거·파싱 */
@@ -281,7 +288,7 @@ export function getApprovalDocDetailedStatusLabel(
 ): string {
   const remarks = doc.remarks || ''
   if (doc.status === 'draft' && remarks.includes(APPROVAL_RECALL_REMARK_MARKER)) return '상신취소·작성복귀'
-  if (remarks.includes('취소 요청 중')) return '기안자 취소요청'
+  if (isApprovalWriterCancelRequestRemark(remarks)) return '기안자 취소요청'
   if (remarks.includes('취소완료') && !remarks.includes('재고환원')) return remarks
   if (remarks.includes('취소승인')) return remarks
   if (remarks.includes('재고환원') || remarks.includes('결재 중 취소됨')) return '취소 완료됨'
@@ -304,7 +311,7 @@ export function getApprovalDocDetailedStatusPresentation(
     return one('상신취소·작성복귀', 'bg-amber-50 text-amber-900 border-amber-400 font-black')
   }
 
-  if (remarks.includes('취소 요청 중')) {
+  if (isApprovalWriterCancelRequestRemark(remarks)) {
     return one('기안자 취소요청', 'bg-red-100 text-red-600 animate-pulse border-red-200')
   }
   if (remarks.includes('취소완료') && !remarks.includes('재고환원')) {
@@ -343,7 +350,7 @@ export function getOutboundRequestRowPresentation(input: {
 
   const remarks = doc.remarks || ''
 
-  if (remarks.includes('취소 요청 중')) {
+  if (isApprovalWriterCancelRequestRemark(remarks)) {
     return { label: '기안자 취소요청', className: badge('bg-red-100 text-red-600 animate-pulse border-red-200') }
   }
   if (remarks.includes('취소완료') && !remarks.includes('재고환원')) {
@@ -402,7 +409,7 @@ export function getOutboundDispatchStatePresentation(
 /** 결재 취소 릴레이 UI (`ApprovalActionButtons`)와 동일한 문자열 기준 */
 export function isApprovalCancellationRemarkProcess(remarks: string | null | undefined) {
   const r = remarks || ''
-  return r.includes('취소 요청') || r.includes('취소완료') || r.includes('취소승인')
+  return isApprovalWriterCancelRequestRemark(r) || r.includes('취소 요청') || r.includes('취소완료') || r.includes('취소승인')
 }
 
 /** `orderedApprovalFlow` 한 행과 동일한 최소 필드 */
@@ -505,7 +512,7 @@ export function formatCancellationProgressChain(doc: ApprovalProgressDocInput): 
     const tail = r.trim() || '역순취소단계'
     return `기안완료 › 최종승인완료 › 역순취소진행 › ${tail}`
   }
-  if (r.includes('취소 요청')) {
+  if (isApprovalWriterCancelRequestRemark(r) || r.includes('취소 요청')) {
     return '기안완료 › 최종승인완료 › 취소요청(결재선 역순·처리대기)'
   }
 

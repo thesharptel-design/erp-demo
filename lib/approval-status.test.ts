@@ -216,6 +216,14 @@ describe('getApprovalDocDetailedStatusLabel', () => {
         doc_type: 'outbound_request',
       })
     ).toBe('기안자 취소요청')
+    expect(
+      getApprovalDocDetailedStatusLabel({
+        status: 'in_progress',
+        remarks: '기안자 취소요청',
+        current_line_no: 2,
+        doc_type: 'draft_doc',
+      })
+    ).toBe('기안자 취소요청')
   })
 
   it('maps in_review without lines to unified 진행중', () => {
@@ -241,6 +249,9 @@ describe('getApprovalDocDetailedStatusLabel', () => {
 describe('formatCancellationProgressChain', () => {
   it('maps cancel request and relay remarks', () => {
     expect(formatCancellationProgressChain({ status: 'approved', remarks: '취소 요청 중', current_line_no: 1 })).toContain(
+      '취소요청'
+    )
+    expect(formatCancellationProgressChain({ status: 'in_progress', remarks: '기안자 취소요청', current_line_no: 2 })).toContain(
       '취소요청'
     )
     expect(
@@ -336,6 +347,12 @@ describe('getApprovalDocDetailedStatusPresentation', () => {
       []
     )
     expect(pres.badges.map((b) => b.label)).toEqual(['기안자 취소요청'])
+
+    const v2Pres = getApprovalDocDetailedStatusPresentation(
+      { status: 'in_progress', remarks: '기안자 취소요청', current_line_no: 2, doc_type: 'draft_doc' },
+      []
+    )
+    expect(v2Pres.badges.map((b) => b.label)).toEqual(['기안자 취소요청'])
   })
 
   it('uses full remarks as label for 취소완료 relay step without 재고환원', () => {

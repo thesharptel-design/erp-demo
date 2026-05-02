@@ -15,6 +15,7 @@ import {
   buildPostApprovalCancelPaperRow,
   getDocTypeLabel,
   getUnifiedApprovalWorkflowBadges,
+  isApprovalWriterCancelRequestRemark,
   type ApprovalDocLike,
 } from '@/lib/approval-status'
 import { getApprovalDocTypeRule } from '@/lib/approval-doc-type-rules'
@@ -331,7 +332,7 @@ export async function ApprovalDetailShared({
       <ApprovalDocumentPaperView
         docStatusLabel={docStatusBand.label}
         docStatusClassName={docStatusBand.className}
-        showCancelRequestBadge={Boolean(doc.remarks?.includes('취소 요청'))}
+        showCancelRequestBadge={isApprovalWriterCancelRequestRemark(doc.remarks)}
         writerName={writerName}
         writerEmployeeNo={writerEmployeeNo}
         writerDeptName={writerDeptName}
