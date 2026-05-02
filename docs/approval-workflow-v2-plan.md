@@ -84,6 +84,7 @@ Run this with one general draft and one outbound request draft.
 - The server endpoint is the authority for action permission; UI hiding is only convenience.
 - Shared workflow helpers are the source of truth for active/effective document states, processed line states, current line lookup, final approver lookup, and rejection targets.
 - Approval button visibility now uses the shared workflow helper, so UI exposure and server-side workflow rules are easier to keep aligned.
+- Approval action buttons now share one tooltip-aware button wrapper, so every workflow action keeps hover 설명 and aria label together.
 - Approval action panels now disappear completely when the signed-in user has no available workflow action, avoiding empty opinion boxes after final approval.
 - Detail-page resubmit buttons now use the document-type rule registry instead of duplicating draft/rejected checks in each page.
 - DB status constraints now mirror the v2 workflow status lists in `lib/approval-workflow-v2.ts`.

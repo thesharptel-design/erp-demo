@@ -73,6 +73,35 @@ function getRoleButtonClass(kind: 'primary' | 'success' | 'danger' | 'warning' |
   return `${base} border border-gray-200 bg-white text-gray-800 hover:bg-gray-50`
 }
 
+function ActionButton({
+  label,
+  tooltip,
+  kind,
+  disabled,
+  onClick,
+  className = '',
+}: {
+  label: string
+  tooltip: string
+  kind: 'primary' | 'success' | 'danger' | 'warning' | 'neutral'
+  disabled?: boolean
+  onClick: () => void
+  className?: string
+}) {
+  return (
+    <button
+      type="button"
+      title={tooltip}
+      aria-label={`${label}: ${tooltip}`}
+      disabled={disabled}
+      onClick={onClick}
+      className={`${getRoleButtonClass(kind)} ${className}`.trim()}
+    >
+      {label}
+    </button>
+  )
+}
+
 export default function ApprovalActionButtons({
   doc,
   lines,
@@ -202,7 +231,7 @@ export default function ApprovalActionButtons({
   }
 
   return (
-    <div className="space-y-4 rounded-3xl border-2 border-gray-100 bg-white p-6 shadow-sm">
+    <div className="flex flex-col gap-4 rounded-3xl border-2 border-gray-100 bg-white p-6 shadow-sm">
       {hasWorkflowAction && (
         <textarea
           className="w-full rounded-2xl border-0 bg-gray-50 p-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
@@ -216,143 +245,118 @@ export default function ApprovalActionButtons({
       {isWriter && (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           {canRecall && (
-            <button
-              type="button"
-              title={TOOLTIP.recall}
-              aria-label={TOOLTIP.recall}
+            <ActionButton
+              label="기안회수"
+              tooltip={TOOLTIP.recall}
+              kind="warning"
               disabled={processing}
               onClick={() => {
                 if (confirm('아직 아무도 처리하지 않은 문서를 임시저장으로 회수할까요?')) {
                   void runAction('recall_before_first_action')
                 }
               }}
-              className={getRoleButtonClass('warning')}
-            >
-              기안회수
-            </button>
+            />
           )}
           {canRequestCancel && (
-            <button
-              type="button"
-              title={TOOLTIP.cancelRequest}
-              aria-label={TOOLTIP.cancelRequest}
+            <ActionButton
+              label="취소요청"
+              tooltip={TOOLTIP.cancelRequest}
+              kind="danger"
               disabled={processing}
               onClick={() => {
                 if (!requireOpinion('취소요청')) return
                 void runAction('request_cancel_after_action')
               }}
-              className={getRoleButtonClass('danger')}
-            >
-              취소요청
-            </button>
+            />
           )}
         </div>
       )}
 
       {canPreConfirm && (
-        <button
-          type="button"
-          title={TOOLTIP.preConfirm}
-          aria-label={TOOLTIP.preConfirm}
+        <ActionButton
+          label="협조확인"
+          tooltip={TOOLTIP.preConfirm}
+          kind="success"
           disabled={processing}
           onClick={() => void runAction('confirm_pre_cooperation')}
-          className={`${getRoleButtonClass('success')} w-full`}
-        >
-          협조확인
-        </button>
+          className="w-full"
+        />
       )}
 
       {canApprove && (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <button
-            type="button"
-            title={TOOLTIP.approve}
-            aria-label={TOOLTIP.approve}
+          <ActionButton
+            label="승인"
+            tooltip={TOOLTIP.approve}
+            kind="primary"
             disabled={processing}
             onClick={() => void runAction('approve_document')}
-            className={getRoleButtonClass('primary')}
-          >
-            승인
-          </button>
+          />
           {canOverrideApprove && (
-            <button
-              type="button"
-              title={TOOLTIP.overrideApprove}
-              aria-label={TOOLTIP.overrideApprove}
+            <ActionButton
+              label="전결승인"
+              tooltip={TOOLTIP.overrideApprove}
+              kind="warning"
               disabled={processing}
               onClick={() => {
                 if (confirm('남은 미처리 단계를 전결생략으로 기록하고 최종승인할까요?')) {
                   void runAction('override_approve_document')
                 }
               }}
-              className={getRoleButtonClass('warning')}
-            >
-              전결승인
-            </button>
+            />
           )}
         </div>
       )}
 
       {canOverrideApprove && !canApprove && (
-        <button
-          type="button"
-          title={TOOLTIP.overrideApprove}
-          aria-label={TOOLTIP.overrideApprove}
+        <ActionButton
+          label="전결승인"
+          tooltip={TOOLTIP.overrideApprove}
+          kind="warning"
           disabled={processing}
           onClick={() => {
             if (confirm('최종 결재자 권한으로 남은 단계를 생략하고 최종승인할까요?')) {
               void runAction('override_approve_document')
             }
           }}
-          className={`${getRoleButtonClass('warning')} w-full`}
-        >
-          전결승인
-        </button>
+          className="w-full"
+        />
       )}
 
       {canReject && (
-        <div className="space-y-2 rounded-2xl border border-red-100 bg-red-50/50 p-3">
+        <div className="flex flex-col gap-2 rounded-2xl border border-red-100 bg-red-50/50 p-3">
           <p className="text-xs font-black text-red-800">반려 처리</p>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-            <button
-              type="button"
-              title={TOOLTIP.rejectDirect}
-              aria-label={TOOLTIP.rejectDirect}
+            <ActionButton
+              label="직권반려"
+              tooltip={TOOLTIP.rejectDirect}
+              kind="danger"
               disabled={processing}
               onClick={() => {
                 if (!requireOpinion('직권반려')) return
                 void runAction('reject_document', { rejectType: 'direct' })
               }}
-              className={getRoleButtonClass('danger')}
-            >
-              직권반려
-            </button>
-            <button
-              type="button"
-              title={TOOLTIP.rejectSequential}
-              aria-label={TOOLTIP.rejectSequential}
+            />
+            <ActionButton
+              label="순차반려"
+              tooltip={TOOLTIP.rejectSequential}
+              kind="danger"
               disabled={processing || rejectTargets.length === 0}
               onClick={() => {
                 if (!requireOpinion('순차반려')) return
                 void runAction('reject_document', { rejectType: 'sequential' })
               }}
-              className={getRoleButtonClass('danger')}
-            >
-              순차반려
-            </button>
-            <button
-              type="button"
-              title={TOOLTIP.rejectTargeted}
-              aria-label={TOOLTIP.rejectTargeted}
+            />
+            <ActionButton
+              label="선택반려"
+              tooltip={TOOLTIP.rejectTargeted}
+              kind="danger"
               disabled={processing || rejectTargets.length === 0 || targetLineNo === ''}
               onClick={() => {
                 if (!requireOpinion('선택반려')) return
                 void runAction('reject_document', { rejectType: 'targeted', targetLineNo })
               }}
-              className={getRoleButtonClass('danger')}
-            >
-              선택반려
-            </button>
+            />
           </div>
           {rejectTargets.length > 0 && (
             <select
@@ -373,16 +377,14 @@ export default function ApprovalActionButtons({
       )}
 
       {canPostConfirm && (
-        <button
-          type="button"
-          title={TOOLTIP.postConfirm}
-          aria-label={TOOLTIP.postConfirm}
+        <ActionButton
+          label="사후확인"
+          tooltip={TOOLTIP.postConfirm}
+          kind="success"
           disabled={processing}
           onClick={() => void runAction('confirm_post_cooperation')}
-          className={`${getRoleButtonClass('success')} w-full`}
-        >
-          사후확인
-        </button>
+          className="w-full"
+        />
       )}
 
       {isReferenceOnly && !canRecall && !canRequestCancel && !canPreConfirm && !canApprove && !canReject && !canPostConfirm && (
