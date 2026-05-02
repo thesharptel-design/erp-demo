@@ -148,6 +148,7 @@ export default function ApprovalActionButtons({
     canReject,
     canPostConfirm,
     isReferenceOnly,
+    hasWorkflowAction,
     rejectTargets,
   } = getApprovalActionAvailability({
     doc,
@@ -155,6 +156,8 @@ export default function ApprovalActionButtons({
     participants,
     currentUserId,
   })
+
+  if (!hasWorkflowAction && !isReferenceOnly) return null
 
   async function runAction(action: ApprovalWorkflowAction, extra?: Record<string, unknown>) {
     if (!actionsAllowed) {
@@ -200,13 +203,15 @@ export default function ApprovalActionButtons({
 
   return (
     <div className="space-y-4 rounded-3xl border-2 border-gray-100 bg-white p-6 shadow-sm">
-      <textarea
-        className="w-full rounded-2xl border-0 bg-gray-50 p-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
-        placeholder="의견 또는 반려/취소요청 사유를 입력하세요."
-        value={opinion}
-        onChange={(event) => setOpinion(event.target.value)}
-        rows={3}
-      />
+      {hasWorkflowAction && (
+        <textarea
+          className="w-full rounded-2xl border-0 bg-gray-50 p-4 text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder="의견 또는 반려/취소요청 사유를 입력하세요."
+          value={opinion}
+          onChange={(event) => setOpinion(event.target.value)}
+          rows={3}
+        />
+      )}
 
       {isWriter && (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">

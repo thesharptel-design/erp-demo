@@ -42,6 +42,7 @@ export type ApprovalActionAvailability<T extends ApprovalWorkflowLineLike = Appr
   rejectTargets: T[]
   isWriter: boolean
   isReferenceOnly: boolean
+  hasWorkflowAction: boolean
   canRecall: boolean
   canRequestCancel: boolean
   canPreConfirm: boolean
@@ -186,6 +187,14 @@ export function getApprovalActionAvailability<T extends ApprovalWorkflowLineLike
         sameApprovalUser(participant.user_id, currentUserId) && normalizeApprovalRole(participant.role) === 'reference'
     )
   )
+  const hasWorkflowAction =
+    canRecall ||
+    canRequestCancel ||
+    canPreConfirm ||
+    canApprove ||
+    canOverrideApprove ||
+    canReject ||
+    canPostConfirm
 
   return {
     actionFlow,
@@ -195,6 +204,7 @@ export function getApprovalActionAvailability<T extends ApprovalWorkflowLineLike
     rejectTargets: getApprovalRejectTargets(actionFlow, myPendingLine ?? lastApproverLine),
     isWriter,
     isReferenceOnly,
+    hasWorkflowAction,
     canRecall,
     canRequestCancel,
     canPreConfirm,

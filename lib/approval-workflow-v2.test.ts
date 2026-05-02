@@ -124,6 +124,7 @@ describe('approval-workflow-v2', () => {
     expect(afterFinalApproval.canOverrideApprove).toBe(false)
     expect(afterFinalApproval.canReject).toBe(false)
     expect(afterFinalApproval.canApprove).toBe(false)
+    expect(afterFinalApproval.hasWorkflowAction).toBe(false)
   })
 
   it('shows post-confirm only after effective status and marks references as read-only', () => {
@@ -133,6 +134,7 @@ describe('approval-workflow-v2', () => {
       currentUserId: 'post',
     })
     expect(postConfirm.canPostConfirm).toBe(true)
+    expect(postConfirm.hasWorkflowAction).toBe(true)
 
     const reference = getApprovalActionAvailability({
       doc: { status: 'in_progress', writer_id: 'writer' },
@@ -144,5 +146,6 @@ describe('approval-workflow-v2', () => {
     expect(reference.canApprove).toBe(false)
     expect(reference.canReject).toBe(false)
     expect(reference.canPostConfirm).toBe(false)
+    expect(reference.hasWorkflowAction).toBe(false)
   })
 })
