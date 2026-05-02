@@ -66,7 +66,9 @@ Run this with one general draft and one outbound request draft.
 9. After final approval, original cancel/reject/revoke buttons are not visible.
 10. If post-confirm 협조 exists, `사후확인` appears only after final approval.
 11. After all post cooperators confirm, doc becomes `closed`.
-12. Outbound request final approval should not expose direct original cancellation.
+12. If no post-confirm 협조 exists, final approval should make the doc `closed` immediately.
+13. A `closed` doc should not expose `사후확인`, even if stale line data still says `waiting`.
+14. Outbound request final approval should not expose direct original cancellation.
 
 ## Verification Status
 
@@ -91,6 +93,7 @@ Run this with one general draft and one outbound request draft.
 - Sequential/targeted rejection keeps the document in progress, moves the chosen previous processed line back to `pending`, and resets later lines to `waiting`.
 - Sequential/targeted rejection notifications target the returned `pending` line instead of the stale previous `current_line_no`.
 - Final approval closes the document immediately when there is no post-confirm 협조; if post-confirm 협조 exists, it stays `effective` until those confirmations are complete.
+- Post-confirm actions are allowed only while the document is post-confirmable (`approved`/`effective`), never after `closed`.
 - Override approval now also sends post-confirm request notifications when post-confirm 협조 exists.
 - Legacy `/api/outbound-requests/submit` now returns `410 Gone` so it cannot create outbound approval docs without v2 approval lines.
 - Post-effective cancel/correction/void should remain hidden until the client explicitly enables that policy.

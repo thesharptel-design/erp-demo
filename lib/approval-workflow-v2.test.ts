@@ -12,6 +12,7 @@ import {
   getPostCooperatorWorkflowLines,
   isApprovalActiveDoc,
   isApprovalEffectiveDoc,
+  isApprovalPostConfirmableDoc,
   isApprovalProcessedLine,
   sameApprovalUser,
 } from './approval-workflow-v2'
@@ -35,6 +36,7 @@ describe('approval-workflow-v2', () => {
     expect(isApprovalActiveDoc('effective')).toBe(false)
     expect(isApprovalEffectiveDoc('effective')).toBe(true)
     expect(isApprovalEffectiveDoc('closed')).toBe(false)
+    expect(isApprovalPostConfirmableDoc('closed')).toBe(false)
     expect(isApprovalProcessedLine('confirmed')).toBe(true)
     expect(isApprovalProcessedLine('waiting')).toBe(false)
   })
@@ -161,5 +163,18 @@ describe('approval-workflow-v2', () => {
     expect(reference.canReject).toBe(false)
     expect(reference.canPostConfirm).toBe(false)
     expect(reference.hasWorkflowAction).toBe(false)
+  })
+
+  it('keeps closed documents locked even if a stale post-confirm line is still waiting', () => {
+    const stalePostConfirm = getApprovalActionAvailability({
+      doc: { status: 'closed', writer_id: 'writer' },
+      lines,
+      currentUserId: 'post',
+    })
+
+    expect(stalePostConfirm.canPostConfirm).toBe(false)
+    expect(stalePostConfirm.canApprove).toBe(false)
+    expect(stalePostConfirm.canReject).toBe(false)
+    expect(stalePostConfirm.hasWorkflowAction).toBe(false)
   })
 })

@@ -81,7 +81,7 @@ export const APPROVAL_LINE_STATUSES = [
 ] as const
 
 export const APPROVAL_ACTIVE_DOC_STATUSES = new Set(['submitted', 'in_review', 'in_progress'])
-export const APPROVAL_EFFECTIVE_DOC_STATUSES = new Set(['approved', 'effective'])
+export const APPROVAL_POST_CONFIRMABLE_DOC_STATUSES = new Set(['approved', 'effective'])
 export const APPROVAL_PROCESSED_LINE_STATUSES = new Set(['confirmed', 'approved', 'rejected', 'skipped', 'cancelled'])
 
 export function sameApprovalUser(a: string | null | undefined, b: string | null | undefined): boolean {
@@ -94,8 +94,14 @@ export function isApprovalActiveDoc(docOrStatus: ApprovalWorkflowDocLike | strin
 }
 
 export function isApprovalEffectiveDoc(docOrStatus: ApprovalWorkflowDocLike | string | null | undefined): boolean {
+  return isApprovalPostConfirmableDoc(docOrStatus)
+}
+
+export function isApprovalPostConfirmableDoc(
+  docOrStatus: ApprovalWorkflowDocLike | string | null | undefined
+): boolean {
   const status = typeof docOrStatus === 'string' ? docOrStatus : docOrStatus?.status
-  return APPROVAL_EFFECTIVE_DOC_STATUSES.has(String(status ?? ''))
+  return APPROVAL_POST_CONFIRMABLE_DOC_STATUSES.has(String(status ?? ''))
 }
 
 export function isApprovalProcessedLine(lineOrStatus: ApprovalWorkflowLineLike | string | null | undefined): boolean {
@@ -183,7 +189,7 @@ export function getApprovalActionAvailability<T extends ApprovalWorkflowLineLike
   const lastApproverLine = actionFlow.filter((line) => isFinalApprovalRole(line.approver_role)).at(-1) ?? null
   const isLastApprover = Boolean(lastApproverLine && sameApprovalUser(lastApproverLine.approver_id, currentUserId))
   const activeDoc = isApprovalActiveDoc(input.doc)
-  const effectiveDoc = isApprovalEffectiveDoc(input.doc)
+  const postConfirmableDoc = isApprovalPostConfirmableDoc(input.doc)
   const isWriter = sameApprovalUser(input.doc.writer_id, currentUserId)
   const canRecall = isWriter && activeDoc && !hasProcessedLine
   const canRequestCancel = isWriter && activeDoc && hasProcessedLine
@@ -192,7 +198,7 @@ export function getApprovalActionAvailability<T extends ApprovalWorkflowLineLike
   const canOverrideApprove = activeDoc && isLastApprover
   const canReject = activeDoc && (canApprove || isLastApprover)
   const canPostConfirm =
-    effectiveDoc &&
+    postConfirmableDoc &&
     actionFlow.some(
       (line) =>
         sameApprovalUser(line.approver_id, currentUserId) &&
