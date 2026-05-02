@@ -92,4 +92,5 @@ Run this with one general draft and one outbound request draft.
 - Sequential/targeted rejection notifications target the returned `pending` line instead of the stale previous `current_line_no`.
 - Final approval closes the document immediately when there is no post-confirm 협조; if post-confirm 협조 exists, it stays `effective` until those confirmations are complete.
 - Override approval now also sends post-confirm request notifications when post-confirm 협조 exists.
+- Legacy `/api/outbound-requests/submit` now returns `410 Gone` so it cannot create outbound approval docs without v2 approval lines.
 - Post-effective cancel/correction/void should remain hidden until the client explicitly enables that policy.
