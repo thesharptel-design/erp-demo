@@ -8,6 +8,7 @@ import {
 import {
   findLastApproverLineForUser,
   getApprovalActionLines,
+  getFinalApprovalCompletion,
   getNextWaitingBeforePost,
   getPendingApprovalWorkflowLine,
   getPostCooperatorWorkflowLines,
@@ -407,9 +408,10 @@ export async function POST(request: NextRequest) {
         })
       } else {
         await markPostCooperatorsPending(adminClient, doc.id, lines)
+        const finalCompletion = getFinalApprovalCompletion(lines)
         await updateDocStatus(adminClient, doc, {
-          status: 'effective',
-          current_line_no: getPostCooperatorWorkflowLines(lines)[0]?.line_no ?? null,
+          status: finalCompletion.status,
+          current_line_no: finalCompletion.currentLineNo,
           completed_at: now,
         })
         await fanoutQuiet(authedClient, {
@@ -420,14 +422,16 @@ export async function POST(request: NextRequest) {
           dedupeKey: workApprovalFinalDedupeKey(doc.id),
           title: `최종승인: ${title}`,
         })
-        await fanoutQuiet(authedClient, {
-          actorId,
-          docId: doc.id,
-          recipientMode: 'pending_lines',
-          type: 'work_approval_post_confirm_requested',
-          dedupeKey: workApprovalPostConfirmRequestDedupeKey(doc.id),
-          title: `사후확인 요청: ${title}`,
-        })
+        if (finalCompletion.hasPostCooperators) {
+          await fanoutQuiet(authedClient, {
+            actorId,
+            docId: doc.id,
+            recipientMode: 'pending_lines',
+            type: 'work_approval_post_confirm_requested',
+            dedupeKey: workApprovalPostConfirmRequestDedupeKey(doc.id),
+            title: `사후확인 요청: ${title}`,
+          })
+        }
       }
       await logHistory(adminClient, {
         docId: doc.id,
@@ -472,9 +476,10 @@ export async function POST(request: NextRequest) {
         })
       }
       await markPostCooperatorsPending(adminClient, doc.id, lines)
+      const finalCompletion = getFinalApprovalCompletion(lines)
       await updateDocStatus(adminClient, doc, {
-        status: 'effective',
-        current_line_no: getPostCooperatorWorkflowLines(lines)[0]?.line_no ?? null,
+        status: finalCompletion.status,
+        current_line_no: finalCompletion.currentLineNo,
         completed_at: now,
       })
       await logHistory(adminClient, {
@@ -492,6 +497,16 @@ export async function POST(request: NextRequest) {
         dedupeKey: workApprovalOverrideApproveDedupeKey(doc.id),
         title: `전결승인: ${title}`,
       })
+      if (finalCompletion.hasPostCooperators) {
+        await fanoutQuiet(authedClient, {
+          actorId,
+          docId: doc.id,
+          recipientMode: 'pending_lines',
+          type: 'work_approval_post_confirm_requested',
+          dedupeKey: workApprovalPostConfirmRequestDedupeKey(doc.id),
+          title: `사후확인 요청: ${title}`,
+        })
+      }
       return NextResponse.json({ success: true })
     }
 

@@ -52,6 +52,12 @@ export type ApprovalActionAvailability<T extends ApprovalWorkflowLineLike = Appr
   canPostConfirm: boolean
 }
 
+export type ApprovalFinalCompletion = {
+  status: 'effective' | 'closed'
+  currentLineNo: number | null
+  hasPostCooperators: boolean
+}
+
 export const APPROVAL_DOC_STATUSES = [
   'draft',
   'submitted',
@@ -122,6 +128,18 @@ export function getPostCooperatorWorkflowLines<T extends ApprovalWorkflowLineLik
   return [...lines]
     .filter((line) => isPostCooperatorRole(line.approver_role))
     .sort((a, b) => a.line_no - b.line_no)
+}
+
+export function getFinalApprovalCompletion<T extends ApprovalWorkflowLineLike>(
+  lines: T[]
+): ApprovalFinalCompletion {
+  const postLines = getPostCooperatorWorkflowLines(lines)
+  const firstPostLine = postLines[0] ?? null
+  return {
+    status: firstPostLine ? 'effective' : 'closed',
+    currentLineNo: firstPostLine?.line_no ?? null,
+    hasPostCooperators: postLines.length > 0,
+  }
 }
 
 export function findLastApproverLineForUser<T extends ApprovalWorkflowLineLike>(

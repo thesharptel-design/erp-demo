@@ -6,6 +6,7 @@ import {
   getApprovalActionAvailability,
   getApprovalActionLines,
   getApprovalRejectTargets,
+  getFinalApprovalCompletion,
   getNextWaitingBeforePost,
   getPendingApprovalWorkflowLine,
   getPostCooperatorWorkflowLines,
@@ -52,6 +53,19 @@ describe('approval-workflow-v2', () => {
     expect(getPendingApprovalWorkflowLine(lines)?.id).toBe(3)
     expect(getNextWaitingBeforePost(lines, 3)?.id).toBe(4)
     expect(getNextWaitingBeforePost(lines, 4)).toBeNull()
+  })
+
+  it('closes immediately when final approval has no post-cooperator, otherwise waits for post confirmation', () => {
+    expect(getFinalApprovalCompletion(lines)).toEqual({
+      status: 'effective',
+      currentLineNo: 5,
+      hasPostCooperators: true,
+    })
+    expect(getFinalApprovalCompletion(lines.filter((line) => line.approver_role !== 'post_cooperator'))).toEqual({
+      status: 'closed',
+      currentLineNo: null,
+      hasPostCooperators: false,
+    })
   })
 
   it('finds final approver authority and reject targets', () => {
